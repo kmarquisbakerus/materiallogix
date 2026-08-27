@@ -1,0 +1,52 @@
+name: Package Cloudflare upload
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/package-cloudflare-upload.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out current site
+        uses: actions/checkout@v4
+
+      - name: Build Cloudflare Pages upload ZIP
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+
+          root = Path('.')
+          output = root / 'materiallogix-cloudflare-upload.zip'
+          excluded_roots = {'.git', '.github'}
+          excluded_names = {output.name}
+
+          with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
+              for path in sorted(root.rglob('*')):
+                  if not path.is_file():
+                      continue
+                  rel = path.relative_to(root)
+                  if rel.parts and rel.parts[0] in excluded_roots:
+                      continue
+                  if path.name in excluded_names:
+                      continue
+                  archive.write(path, rel.as_posix())
+
+          print(f'Created {output} ({output.stat().st_size} bytes)')
+          PY
+
+      - name: Upload deployable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: materiallogix-cloudflare-upload
+          path: materiallogix-cloudflare-upload.zip
+          if-no-files-found: error
+          retention-days: 7
