@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Material Logic monogram: an M whose center stroke completes an L -
+       structure and judgment in one mark. Hairline weight, champagne on ink. -->
+  <rect x="1.5" y="1.5" width="61" height="61" rx="3" stroke="#c9a86a" stroke-width="1.5"/>
+  <path d="M14 48 V17 L32 36 L50 17 V48" stroke="#c9a86a" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"/>
+  <path d="M32 36 V48 H44" stroke="#eeebe4" stroke-width="2.5" stroke-linecap="square"/>
+</svg>

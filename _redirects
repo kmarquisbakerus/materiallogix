@@ -1,0 +1,3 @@
+/app        /studio/            301
+/app/*      /studio/:splat      301
+/voice      /studio/voice.html  302
