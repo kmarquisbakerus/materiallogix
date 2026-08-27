@@ -1,12 +1,32 @@
-// Shared MaterialLogix Studio product navigation and temporary preview gate.
-// This gate is intentionally lightweight preview access, not production auth.
+// Shared navigation and fail-closed production access boundary. Authentication
+// decisions belong to the same-origin server/edge, never downloadable JavaScript.
 
-const PREVIEW_USER = 'admin';
-const PREVIEW_PASS = 'ABCD09876';
-const PREVIEW_KEY = 'materiallogix:preview-unlocked';
+async function enforceAccessBoundary() {
+  const params = new URLSearchParams(location.search);
+  const local = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
+  const demo = params.get('demo') === '1';
+  if (local || demo) {
+    document.documentElement.dataset.accessMode = demo ? 'demo' : 'local';
+    return;
+  }
 
-function installPreviewGate() {
-  if (sessionStorage.getItem(PREVIEW_KEY) === '1') return;
+  let authenticated = false;
+  try {
+    const response = await fetch('/api/session', {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000)
+    });
+    if (response.ok) {
+      const session = await response.json();
+      authenticated = session?.authenticated === true;
+    }
+  } catch { /* Fail closed. */ }
+  if (authenticated) {
+    document.documentElement.dataset.accessMode = 'authenticated';
+    return;
+  }
 
   const style = document.createElement('style');
   style.textContent = `
@@ -15,40 +35,21 @@ function installPreviewGate() {
     #mlPreviewGate .eyebrow{margin-bottom:10px;font-size:10px;letter-spacing:.24em;text-transform:uppercase;color:#8a7444}
     #mlPreviewGate h1{margin:0 0 8px;font:300 30px/1.08 Fraunces,Georgia,serif;letter-spacing:-.02em}
     #mlPreviewGate p{margin:0 0 22px;color:#8b857c;font-size:13px;line-height:1.55}
-    #mlPreviewGate label{display:block;margin:12px 0 5px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#8b857c}
-    #mlPreviewGate input{width:100%;padding:12px 13px;border:1px solid rgba(255,255,255,.09);border-radius:11px;background:rgba(255,255,255,.035);color:#eeebe4;outline:none;font:400 14px/1.2 Inter,sans-serif}
-    #mlPreviewGate input:focus{border-color:rgba(201,168,106,.65);box-shadow:0 0 0 3px rgba(201,168,106,.08)}
-    #mlPreviewGate button{width:100%;margin-top:18px;padding:12px 14px;border:1px solid rgba(255,255,255,.25);border-radius:11px;background:linear-gradient(180deg,#d8b878,#c9a86a 55%,#b8955a);color:#16120a;font:500 14px/1 Inter,sans-serif;cursor:pointer}
-    #mlPreviewGate .err{min-height:18px;margin:10px 0 0;color:#d38a83;font-size:12px}
+    #mlPreviewGate a{display:block;margin-top:18px;padding:12px 14px;border:1px solid rgba(255,255,255,.25);border-radius:11px;background:linear-gradient(180deg,#d8b878,#c9a86a 55%,#b8955a);color:#16120a;font:500 14px/1 Inter,sans-serif;text-align:center;text-decoration:none}
   `;
   document.head.append(style);
 
   const gate = document.createElement('div');
   gate.id = 'mlPreviewGate';
-  gate.innerHTML = `<form class="gate-card" autocomplete="off"><div class="eyebrow">Private preview</div><h1>MaterialLogix Studio</h1><p>Enter the preview credentials to open the current Studio build.</p><label for="mlPreviewUser">Username</label><input id="mlPreviewUser" name="username" autocomplete="username" autofocus><label for="mlPreviewPass">Password</label><input id="mlPreviewPass" name="password" type="password" autocomplete="current-password"><button type="submit">Open Studio</button><div class="err" role="alert" aria-live="polite"></div></form>`;
+  gate.innerHTML = `<div class="gate-card"><div class="eyebrow">Verified access required</div><h1>MaterialLogix Studio</h1><p>This production workspace requires a server-verified account session. No browser-side password can unlock it.</p><a href="/?access=required">Return to MaterialLogix</a></div>`;
   document.body.append(gate);
 
   const app = document.querySelector('#app');
   if (app) app.setAttribute('aria-hidden', 'true');
 
-  gate.querySelector('form').addEventListener('submit', event => {
-    event.preventDefault();
-    const user = gate.querySelector('#mlPreviewUser').value;
-    const pass = gate.querySelector('#mlPreviewPass').value;
-    if (user === PREVIEW_USER && pass === PREVIEW_PASS) {
-      sessionStorage.setItem(PREVIEW_KEY, '1');
-      if (app) app.removeAttribute('aria-hidden');
-      gate.remove();
-      style.remove();
-      return;
-    }
-    gate.querySelector('.err').textContent = 'Incorrect username or password.';
-    gate.querySelector('#mlPreviewPass').value = '';
-    gate.querySelector('#mlPreviewPass').focus();
-  });
 }
 
-installPreviewGate();
+await enforceAccessBoundary();
 
 const select = document.querySelector('#studioServiceSelect');
 if (select) {
