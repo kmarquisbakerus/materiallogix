@@ -1,15 +1,11 @@
-// Service worker: makes the web app installable and resilient.
-//
-// Strategy is deliberately network-first for everything: this session has
-// already proven how painful stale JS caches are during development, and in
-// production an app about correctness must never run old logic silently.
-// The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
+// Service worker: makes MaterialLogix Studio installable and resilient.
+// Network-first prevents stale application logic; cache is the offline fallback.
 
-const CACHE = 'materiallogix-shell-v2';
+const CACHE = 'materiallogix-shell-v3';
 const SHELL = [
   './', 'index.html', 'voice.html', 'manifest.webmanifest', 'icon.svg',
-  'css/app.css', 'assets/preview-stamp.wav',
-  'js/bootstrap.js', 'js/studio-shell.js',
+  'css/app.css', 'css/glass-surfaces.css', 'assets/preview-stamp.wav',
+  'js/bootstrap.js', 'js/studio-shell.js', 'js/studio-nav.js',
   'js/app.js', 'js/model.js', 'js/store.js', 'js/crop.js', 'js/analyze.js',
   'js/export.js', 'js/clientpage.js', 'js/history.js', 'js/zip.js',
   'js/generate.js', 'js/geometry.js', 'js/device.js', 'js/voice.js',
@@ -30,7 +26,6 @@ self.addEventListener('activate', event => {
 
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
-  // Only same-origin GETs. Bridge calls (:8189) and CDNs pass straight through.
   if (event.request.method !== 'GET' || url.origin !== location.origin) return;
   event.respondWith(
     fetch(event.request)
