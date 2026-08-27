@@ -3,6 +3,18 @@ const rail = document.getElementById('activityRail');
 const terminal = new Set(['complete', 'failed', 'cancelled']);
 let jobs = read();
 
+if (rail) {
+  const toggle = document.querySelector('.activity-toggle') || node('button', 'btn sm activity-toggle', 'Jobs');
+  toggle.type = 'button'; toggle.setAttribute('aria-controls', rail.id); toggle.setAttribute('aria-expanded', 'false');
+  const close = () => { rail.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); };
+  toggle.onclick = () => {
+    const open = rail.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  };
+  if (!toggle.isConnected) document.querySelector('header.topbar .spacer')?.after(toggle);
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+}
+
 function read() { try { const v = JSON.parse(localStorage.getItem(STORE) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } }
 function status(value) { const s = String(value || 'queued').toLowerCase(); return ['ready','completed','succeeded','success'].includes(s) ? 'complete' : ['error','failure'].includes(s) ? 'failed' : s; }
 function progress(s, value) { if (Number.isFinite(value)) return Math.max(0, Math.min(100, Number(value))); return ({ queued:8, submitting:16, uploading:28, processing:54, generating:62, upscaling:66, downloading:88, complete:100, failed:100, cancelled:100 })[s] ?? 28; }
@@ -14,17 +26,17 @@ function monthlyUsage() { const key='cros:usage:'+new Date().toISOString().slice
 function paint() {
   if(!rail) return;
   const active=jobs.filter(j=>!terminal.has(j.status)); const usage=monthlyUsage();
-  const head=node('div','activity-head'); head.append(node('h2','','Jobs & usage'),node('span','spacer')); const clear=node('button','btn sm','Clear finished'); clear.type='button'; clear.onclick=()=>{jobs=jobs.filter(j=>!terminal.has(j.status));persist();}; head.append(clear);
+  const head=node('div','activity-head'); head.append(node('h2','','Jobs & usage'),node('span','spacer')); const close=node('button','btn sm activity-close','Close'); close.type='button'; close.onclick=()=>{rail.classList.remove('open');document.querySelector('.activity-toggle')?.setAttribute('aria-expanded','false');}; const clear=node('button','btn sm','Clear finished'); clear.type='button'; clear.onclick=()=>{jobs=jobs.filter(j=>!terminal.has(j.status));persist();}; head.append(close,clear);
   const summary=node('div','activity-summary');
   for(const [label,value] of [['Running',active.length],['Local',active.filter(j=>j.location==='local').length],['Cloud',active.filter(j=>j.location==='cloud').length],['Units this month',usage.exports || 0]]) { const box=node('div'); box.append(node('span','',label),node('b','',value)); summary.append(box); }
   const list=document.createDocumentFragment();
-  if(!jobs.length) list.append(node('div','activity-empty','Nothing is running. Photo, video, and voice work will appear here automatically.'));
+  if(!jobs.length) list.append(node('div','activity-empty','No active jobs. Photo, video, and voice operations appear here automatically with execution location, progress, and usage.'));
   for(const job of jobs) { const item=node('article',`activity-job ${job.status}`); const row=node('div','row'); row.append(node('i','activity-dot'),node('strong','',job.title),node('span','kind',job.location)); const meta=[job.provider,job.status,job.credits?`${job.credits} credits`:'',job.units?`${job.units} units`:'',job.detail].filter(Boolean).join(' · '); const bar=node('div','activity-progress'); const fill=node('i'); fill.style.width=`${progress(job.status,job.progress)}%`; bar.append(fill); item.append(row,node('p','',meta || job.kind),bar); list.append(item); }
   rail.replaceChildren(head,summary,list);
 }
 function urlOf(input){ return typeof input==='string'?input:input instanceof URL?input.href:input?.url||''; }
-const originalFetch=window.fetch.bind(window);
-window.fetch=async function trackedFetch(input,init={}) { const url=urlOf(input), method=String(init.method || (input instanceof Request?input.method:'GET')).toUpperCase(); let id='',category='';
+const originalFetch=typeof window.fetch==='function'?window.fetch.bind(window):null;
+if(originalFetch) window.fetch=async function trackedFetch(input,init={}) { const url=urlOf(input), method=String(init.method || (input instanceof Request?input.method:'GET')).toUpperCase(); let id='',category='';
   if(method==='POST' && /\/prompt(?:\?|$)/.test(url)) category='comfy';
   else if(method==='POST' && /:8189\/(upscale|tts|video\/)/.test(url)){category='bridge'; const title=url.includes('/tts')?'Voice render':url.includes('/video/')?'Video job':'Photo upscale'; id=start({title,location:'local',status:'processing',detail:'Your computer'});}
   else if(method==='POST' && /\/v1\/render\/submit/.test(url)) category='cloud';

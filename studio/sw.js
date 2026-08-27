@@ -5,11 +5,11 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v3';
+const CACHE = 'materiallogix-shell-v4';
 const SHELL = [
   './', 'index.html', 'voice.html', 'manifest.webmanifest', 'icon.svg',
   'css/app.css', 'assets/preview-stamp.wav',
-  'js/bootstrap.js', 'js/studio-shell.js', 'js/activity.js',
+  'js/bootstrap.js', 'js/studio-shell.js', 'js/activity.js', 'js/privacy.js',
   'js/app.js', 'js/model.js', 'js/store.js', 'js/crop.js', 'js/analyze.js',
   'js/export.js', 'js/clientpage.js', 'js/history.js', 'js/zip.js',
   'js/generate.js', 'js/geometry.js', 'js/device.js', 'js/voice.js',

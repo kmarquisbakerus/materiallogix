@@ -62,3 +62,5 @@ if (select) {
     location.href = target;
   });
 }
+
+await import('./privacy.js');

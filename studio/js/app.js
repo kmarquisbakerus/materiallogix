@@ -15,9 +15,10 @@ import { buildClientPage, applyClientVerdict } from './clientpage.js';
 import { snapshot, snapshotProject, popUndo, log, logMarkdown } from './history.js';
 import { downloadBlob, makeZip, readStoreZip } from './zip.js';
 import { activeLicense, activate, deactivate, covers } from './license.js';
-import { detectComfy, listCheckpoints, generateOne, listUpscaleModels, upscaleOne, detectBridge, upscaleViaBridge } from './generate.js';
+import { bridgeFetch, detectComfy, listCheckpoints, generateOne, listUpscaleModels, upscaleOne, detectBridge, upscaleViaBridge } from './generate.js';
 import { probeDevice, deviceSummary } from './device.js';
 import { analyzeGeometry } from './geometry.js';
+import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, props = {}, ...kids) => {
@@ -437,18 +438,20 @@ function generatePanel() {
   return wrap;
 }
 
-/** Pull the bundled demo assets so a first-run stranger has something real
- *  to judge in ninety seconds. Files come from /samples on the server. */
+/** Load the product-made QA proof in both the packaged app and source checkout. */
 async function loadDemo() {
   const names = ['upscale-qa.png'];
   const files = [];
   for (const n of names) {
-    try {
-      const r = await fetch('samples/' + n);
-      if (!r.ok) continue;
-      const b = await r.blob();
-      files.push(new File([b], n, { type: b.type || 'image/png' }));
-    } catch { /* skip */ }
+    for (const base of ['samples/', 'site/media/']) {
+      try {
+        const r = await fetch(base + n);
+        if (!r.ok) continue;
+        const b = await r.blob();
+        files.push(new File([b], n, { type: b.type || 'image/png' }));
+        break;
+      } catch { /* try the next packaged location */ }
+    }
   }
   if (!files.length) return toast('The product-made QA proof could not be loaded.', true);
   if (!state.project.brief.campaignGoal) {
@@ -788,7 +791,13 @@ async function paintStage() {
 
   if (state.view === 'source' || !surface) {
     const wrap = el('div', { className: 'srcwrap' });
-    wrap.append(el('img', { src: d.url, alt: asset.filename, draggable: false }));
+    const scale = Math.min(1, PREVIEW_MAX / Math.max(d.w, d.h));
+    const sourcePreview = renderCrop(d.source, d.w, d.h, { x: 0, y: 0, w: 1, h: 1 }, {
+      w: Math.max(1, Math.round(d.w * scale)), h: Math.max(1, Math.round(d.h * scale))
+    }, 'crop', null, ensureEditState(asset).adjustments);
+    sourcePreview.setAttribute('role', 'img');
+    sourcePreview.setAttribute('aria-label', `${asset.filename} edited source preview`);
+    wrap.append(sourcePreview);
     if (surface) {
       const p = ensurePlacement(asset, surface.id);
       const rect = el('div', {
@@ -798,6 +807,8 @@ async function paintStage() {
       wrap.append(rect);
       attachSourceDrag(wrap, rect, asset, surface);
     }
+    const edit = ensureEditState(asset);
+    if (edit.pixelGrid.enabled) wrap.append(pixelGridOverlay(pixelGridReview(d.source, d.w, d.h, edit.pixelGrid.columns, edit.pixelGrid.sensitivity)));
     viewport.replaceChildren(wrap);
     attachLoupe(wrap, d, () => ({ x: 0, y: 0, w: 1, h: 1 }));
     return;
@@ -805,8 +816,10 @@ async function paintStage() {
 
   const p = ensurePlacement(asset, surface.id);
   const ps = previewSurface(surface);
-  const canvas = renderCrop(d.source, d.w, d.h, p.crop, ps, p.fill);
+  const edit = ensureEditState(asset);
+  const canvas = renderCrop(d.source, d.w, d.h, p.crop, ps, p.fill, null, edit.adjustments);
   const frame = el('div', { className: 'frame grab' }, canvas);
+  if (edit.pixelGrid.enabled) frame.append(pixelGridOverlay(pixelGridReview(d.source, d.w, d.h, edit.pixelGrid.columns, edit.pixelGrid.sensitivity)));
   if (state.thirds) frame.append(el('div', { className: 'thirds' }));
   const safe = safeOverlay(surface);
   if (safe) frame.append(safe);
@@ -992,7 +1005,7 @@ async function paintCompare() {
     if (!d) { body.append(el('p', { className: 'note' }, 'Cannot decode.')); return p; }
     if (surface) {
       const pl = ensurePlacement(a, surface.id);
-      body.append(renderCrop(d.source, d.w, d.h, pl.crop, previewSurface(surface), pl.fill));
+      body.append(renderCrop(d.source, d.w, d.h, pl.crop, previewSurface(surface), pl.fill, null, ensureEditState(a).adjustments));
     } else {
       body.append(el('img', { src: d.url, alt: a.filename }));
     }
@@ -1029,7 +1042,7 @@ function metricsBlock(asset) {
     cell('Sharpness', String(a.sharpness), el('small', {}, ` · ${sharpLabel}`)),
     cell('Blown highlights', `${(a.exposure.blown * 100).toFixed(1)}%`),
     cell('Skin detail', a.skin ? `${Math.round(a.skin.ratio * 100)}%` : '—',
-      a.skin ? el('small', {}, a.skin.ratio < 0.35 ? ' · waxy' : ' · textured') : null)));
+      a.skin ? el('small', {}, a.skin.ratio < 0.35 ? ' · detail review' : ' · detail retained') : null)));
 
   const sw = el('div', { className: 'swatches' }, ...a.palette.map(c => el('i', { style: `background:${c.hex}`, title: `${c.hex} · ${Math.round(c.pct * 100)}%` })));
   wrap.append(el('div', { style: 'font-size:11px;color:var(--faint);margin-bottom:4px' }, 'Dominant colour'), sw);
@@ -1153,31 +1166,67 @@ function qaBlock(asset) {
 
 function videoBlock(asset) {
   const v = asset.video;
+  const edit = ensureEditState(asset);
   const wrap = el('div', { className: 'block' });
   const bind = (key, label, placeholder = '') => {
     const i = el('input', { type: 'text', value: v[key] || '', placeholder });
-    i.oninput = () => { v[key] = i.value; touchAsset(asset); };
+    let captured = false;
+    const capture = () => { if (!captured) { snapshot(asset, `changed ${label}`); captured = true; } };
+    i.oninput = () => { capture(); v[key] = i.value; touchAsset(asset); };
+    i.onchange = () => { log(asset, `${label} → ${i.value || 'cleared'}`, state.reviewer); captured = false; };
     return el('label', { className: 'field' }, el('span', {}, label), i);
   };
   wrap.append(
-    bind('hook', 'Hook note', 'What must land in the first two seconds'),
-    el('div', { style: 'display:flex;gap:8px' }, bind('trimStart', 'Trim start', '0:00'), bind('trimEnd', 'Trim end', '0:08')),
-    bind('cropNote', 'Crop note', 'e.g. reframe to keep both hands in 9:16'));
+    bind('hook', 'Opening intent', 'Define the message or action for the first two seconds'),
+    el('div', { style: 'display:flex;gap:8px' }, bind('trimStart', 'In point', '0:00'), bind('trimEnd', 'Out point', '0:08')),
+    bind('cropNote', 'Reframing direction', 'For example: retain both hands in the vertical composition'));
+
+  v.spec = v.spec || 'vertical'; v.speed = Number(v.speed || 1); v.fadeIn = Number(v.fadeIn || 0);
+  v.fadeOut = Number(v.fadeOut || 0); v.rotate = Number(v.rotate || 0); v.volumeDb = Number(v.volumeDb || 0);
+  v.audioEq = v.audioEq || 'flat';
+  const select = (key, label, options) => {
+    const input = el('select', {});
+    for (const [value, text] of options) input.append(el('option', { value: String(value), selected: String(v[key]) === String(value) }, text));
+    input.onchange = () => { mutate(asset, `${label} → ${input.options[input.selectedIndex].text}`, () => { v[key] = isNaN(Number(input.value)) ? input.value : Number(input.value); }); };
+    return el('label', { className: 'field' }, el('span', {}, label), input);
+  };
+  wrap.append(el('div', { className: 'video-delivery-grid' },
+    select('spec', 'Delivery frame', [['vertical', 'Vertical 9:16'], ['portrait', 'Portrait 4:5'], ['square', 'Square 1:1'], ['wide', 'Landscape 16:9']]),
+    select('speed', 'Playback speed', [[0.5, '0.5×'], [0.75, '0.75×'], [1, 'Source speed'], [1.25, '1.25×'], [1.5, '1.5×'], [2, '2×']]),
+    select('rotate', 'Orientation', [[0, 'Source orientation'], [90, '90° clockwise'], [180, '180°'], [270, '90° counterclockwise']]),
+    select('audioEq', 'Audio profile', [['flat', 'Full range'], ['voice', 'Dialogue focus'], ['music', 'Music focus']])));
+  if (edit.mode === 'advanced') {
+    const number = (key, label, min, max, step) => {
+      const input = el('input', { type: 'number', min, max, step, value: v[key] || 0 });
+      input.onchange = () => { mutate(asset, `${label} → ${input.value}`, () => { v[key] = Math.min(max, Math.max(min, Number(input.value) || 0)); }); };
+      return el('label', { className: 'field' }, el('span', {}, label), input);
+    };
+    const denoise = el('input', { type: 'checkbox', checked: !!v.denoise });
+    denoise.onchange = () => { mutate(asset, `Audio cleanup ${denoise.checked ? 'on' : 'off'}`, () => { v.denoise = denoise.checked; }); };
+    const captions = el('input', { type: 'checkbox', checked: !!v.burnCaptions });
+    captions.onchange = () => { mutate(asset, `Automatic captions ${captions.checked ? 'on' : 'off'}`, () => { v.burnCaptions = captions.checked; }); };
+    wrap.append(el('div', { className: 'video-delivery-grid' },
+      number('fadeIn', 'Fade in (seconds)', 0, 10, .1), number('fadeOut', 'Fade out (seconds)', 0, 10, .1),
+      number('volumeDb', 'Output gain (dB)', -24, 12, .5)),
+      el('label', { className: 'toggle' }, denoise, 'Reduce consistent background noise'),
+      el('label', { className: 'toggle' }, captions, 'Transcribe and burn captions'));
+  }
 
   const stars = el('div', { className: 'stars' });
   for (let i = 1; i <= 5; i++) {
     const b = el('button', { className: i <= v.believability ? 'on' : '' }, '★');
-    b.onclick = () => { mutate(asset, `believability ${i}/5`, () => { v.believability = v.believability === i ? 0 : i; }); renderReview(); };
+    b.setAttribute('aria-label', `Naturalism rating ${i} of 5`);
+    b.onclick = () => { mutate(asset, `naturalism ${i}/5`, () => { v.believability = v.believability === i ? 0 : i; }); renderReview(); };
     stars.append(b);
   }
-  wrap.append(el('label', { className: 'field' }, el('span', {}, 'Believability'), stars));
+  wrap.append(el('label', { className: 'field' }, el('span', {}, 'Naturalism rating'), stars));
 
   const mkToggle = (key, label) => {
     const cb = el('input', { type: 'checkbox', checked: v[key] });
     cb.onchange = () => { mutate(asset, `${label}: ${cb.checked}`, () => { v[key] = cb.checked; }); };
     return el('label', { className: 'toggle' }, cb, label);
   };
-  wrap.append(mkToggle('looksAI', 'Reads as AI — reject'), mkToggle('recast', 'Request creator / cast replacement'));
+  wrap.append(mkToggle('looksAI', 'Flag synthetic-looking motion or performance'), mkToggle('recast', 'Request a new performance or cast selection'));
 
   // The poster remains the crop reference; automated QA also samples the full
   // timeline so soft, blown, or black sections do not hide between stills.
@@ -1199,15 +1248,76 @@ function videoBlock(asset) {
       el('span', {}, 'Crop reference frame'), scrub, readout));
     if (asset.temporal?.samples?.length) {
       wrap.append(el('p', { className: 'hint' },
-        `Motion QA sampled ${asset.temporal.samples.length} points across ${asset.temporal.duration.toFixed(1)}s. ` +
+        `Temporal quality review sampled ${asset.temporal.samples.length} points across ${asset.temporal.duration.toFixed(1)}s. ` +
         `Lowest sharpness ${asset.temporal.sharpnessMin}; brightness swing ${asset.temporal.lumaRange}.`));
     }
   }
 
   wrap.append(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
-    btn('Play + comment', 'btn sm', () => playWithComments(asset)),
-    btn('Extract identity pack', 'btn sm', () => extractIdentityPack(asset))));
+    btn('Review with timecoded notes', 'btn sm', () => playWithComments(asset)),
+    btn('Create identity reference set', 'btn sm', () => extractIdentityPack(asset)),
+    btn('Render video', 'btn primary sm', () => renderEditedVideo(asset))));
   return wrap;
+}
+
+function parseVideoTime(value) {
+  if (value === '' || value == null) return null;
+  if (typeof value === 'number') return value;
+  const parts = String(value).trim().split(':').map(Number);
+  if (parts.some(Number.isNaN)) return null;
+  return parts.reduce((total, part) => total * 60 + part, 0);
+}
+
+async function renderEditedVideo(asset) {
+  const bridge = await detectBridge();
+  if (!bridge.ok || !bridge.video?.ffmpeg) return toast('Start the MaterialLogix local engine to render video.', true);
+  if (asset.video.burnCaptions && !bridge.video?.whisper) {
+    return toast('Caption transcription requires the local Whisper model. Install it or turn captions off before rendering.', true);
+  }
+  const v = asset.video;
+  const trimStart = parseVideoTime(v.trimStart);
+  const trimEnd = parseVideoTime(v.trimEnd);
+  if (v.trimStart && trimStart == null) return toast('Enter the in point as seconds or timecode, for example 0:03.5.', true);
+  if (v.trimEnd && trimEnd == null) return toast('Enter the out point as seconds or timecode, for example 0:12.', true);
+  if (trimEnd != null && trimEnd <= (trimStart || 0)) return toast('The out point must be later than the in point.', true);
+  const deliveryFrames = {
+    vertical: { w: 1080, h: 1920 }, portrait: { w: 1080, h: 1350 },
+    square: { w: 1080, h: 1080 }, wide: { w: 1920, h: 1080 }
+  };
+  const frame = deliveryFrames[v.spec] || deliveryFrames.vertical;
+  const activePlacement = state.activeSurface ? ensurePlacement(asset, state.activeSurface) : null;
+  const crop = snapToRatio(
+    activePlacement?.crop || defaultCrop(asset.width, asset.height, frame),
+    asset.width, asset.height, frame
+  );
+  const opts = {
+    trimStart: trimStart || 0, trimEnd, spec: v.spec || 'vertical',
+    speed: v.speed || 1, fadeIn: v.fadeIn || 0, fadeOut: v.fadeOut || 0, rotate: v.rotate || 0,
+    volumeDb: v.volumeDb || 0, denoise: !!v.denoise, audioEq: v.audioEq || 'flat', burnCaptions: !!v.burnCaptions,
+    crop, adjustments: ensureEditState(asset).adjustments
+  };
+  try {
+    await busy(async () => {
+      toast('Rendering video with the saved editorial settings…');
+      const source = await store.getBlob(asset.id);
+      const base = `http://${location.hostname}:8189`;
+      const response = await bridgeFetch(`${base}/video/render?opts=${encodeURIComponent(JSON.stringify(opts))}`, {
+        method: 'POST', headers: { 'Content-Type': source.type || 'video/mp4' }, body: source
+      });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `engine ${response.status}`);
+      const blob = await response.blob();
+      const file = new File([blob], asset.filename.replace(/\.[^.]+$/, '') + '-edited.mp4', { type: 'video/mp4' });
+      const rendered = newAsset(state.project.id, file);
+      rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings.`;
+      await store.addAsset(rendered, file);
+      const url = await store.objectUrl(rendered.id);
+      Object.assign(rendered, await probe(file, url));
+      log(rendered, `rendered from ${asset.filename}`, state.reviewer);
+      await store.saveAsset(rendered);
+      state.assets.push(rendered);
+    });
+    render(); toast('Video render completed and added to the project.');
+  } catch (error) { toast('Video render failed: ' + error.message, true); }
 }
 
 /**
@@ -1244,11 +1354,11 @@ async function playWithComments(asset) {
     }));
     if (!asset.video.comments.length) {
       listBox.append(el('p', { className: 'hint', style: 'margin:0' },
-        'No comments yet. Pause where something needs saying and add one \u2014 it pins to that frame.'));
+        'No notes yet. Pause at the relevant frame and add a timecoded review note.'));
     }
   };
 
-  const input = el('input', { type: 'text', placeholder: 'Comment at the current frame \u2014 Enter to pin' });
+  const input = el('input', { type: 'text', placeholder: 'Add a note at the current frame and press Enter' });
   const add = () => {
     const text = input.value.trim();
     if (!text) return;
@@ -1263,30 +1373,30 @@ async function playWithComments(asset) {
 
   dialog(asset.filename,
     el('div', {}, vid,
-      el('div', { style: 'display:flex;gap:6px;margin-top:12px' }, input, btn('Pin', 'btn', add)),
+      el('div', { style: 'display:flex;gap:6px;margin-top:12px' }, input, btn('Add timecode', 'btn', add)),
       listBox),
     [btn('Close', 'btn', () => { renderReview(); closeDialog(); })]);
   paint();
 }
 
 async function extractIdentityPack(asset) {
-  const nameInput = el('input', { type: 'text', placeholder: 'Person or character name' });
+  const nameInput = el('input', { type: 'text', placeholder: 'Approved subject name or identifier' });
   const modeSel = el('select', {});
-  modeSel.append(el('option', { value: 'face' }, 'Face pack — verified 180°'));
-  modeSel.append(el('option', { value: 'body' }, 'Full body — verified 360°'));
+  modeSel.append(el('option', { value: 'face' }, 'Facial reference set — verified 180°'));
+  modeSel.append(el('option', { value: 'body' }, 'Full-body reference set — verified 360°'));
   const countSel = el('select', {});
   for (const n of [8, 12, 16]) countSel.append(el('option', { value: String(n) }, `${n} frames`));
-  dialog('Extract identity pack',
+  dialog('Create identity reference set',
     el('div', {},
       el('p', { className: 'hint' },
-        'Grabs evenly spaced frames from this video and files them as reference photos for one person.'),
+        'Creates evenly spaced reference frames from this video for one approved subject.'),
       el('p', { className: 'hint' },
         'How to shoot it: even light, chin level, one person in frame. Face pack — turn the head slowly half-way to the left (about 8 seconds), back through centre, then half-way right. Full body — one slow full turn, arms slightly out, about 20 seconds. After extraction the tracker reports which angles you actually covered.'),
-      el('label', { className: 'field' }, el('span', {}, 'Who is this'), nameInput),
+      el('label', { className: 'field' }, el('span', {}, 'Subject'), nameInput),
       el('label', { className: 'field' }, el('span', {}, 'Capture type'), modeSel),
       el('label', { className: 'field' }, el('span', {}, 'Frames'), countSel)),
     [btn('Cancel', 'btn', closeDialog),
-     btn('Extract', 'btn primary', async () => {
+     btn('Create reference set', 'btn primary', async () => {
        const person = nameInput.value.trim() || 'unnamed';
        const count = Number(countSel.value);
        closeDialog();
@@ -1448,6 +1558,105 @@ function logBlock(asset) {
   return wrap;
 }
 
+function editingBlock(asset) {
+  const edit = ensureEditState(asset);
+  const wrap = el('div', { className: 'block editor-block' });
+  const modes = el('div', { className: 'seg editor-mode', role: 'group', ariaLabel: 'Editing mode' });
+  for (const [value, label] of [['guided', 'Guided'], ['advanced', 'Advanced']]) {
+    const b = el('button', { className: edit.mode === value ? 'on' : '', type: 'button' }, label);
+    b.onclick = () => {
+      mutate(asset, `editor mode → ${label}`, () => { edit.mode = value; });
+      renderReview();
+    };
+    modes.append(b);
+  }
+  wrap.append(modes, el('p', { className: 'hint editor-explainer' },
+    edit.mode === 'guided'
+      ? 'Essential adjustments with balanced defaults and non-destructive control.'
+      : 'Precision tone, color, detail, finishing, and spatial quality controls.'));
+
+  const applyPreset = (label, values) => {
+    mutate(asset, `applied ${label} edit preset`, () => {
+      edit.adjustments = { ...edit.adjustments, ...values };
+    });
+    renderReview();
+  };
+  const presets = el('div', { className: 'editor-presets' },
+    btn('Refined clarity', 'btn sm', () => applyPreset('Refined clarity', { exposure: 0.08, contrast: 8, vibrance: 10, sharpen: 8, blur: 0 })),
+    btn('Warm editorial', 'btn sm', () => applyPreset('Warm editorial', { exposure: 0.04, contrast: 6, temperature: 12, tint: 2, vibrance: 6 })),
+    btn('Neutral color match', 'btn sm', () => applyPreset('Neutral color match', { exposure: 0, contrast: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0 })),
+    btn('Reset adjustments', 'btn sm', () => applyPreset('reset', { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 }))
+  );
+  wrap.append(presets);
+
+  const slider = (key, label, min, max, step = 1) => {
+    const value = edit.adjustments[key] ?? 0;
+    const readout = el('output', {}, String(value));
+    const input = el('input', { type: 'range', min, max, step, value });
+    let captured = false;
+    const capture = () => { if (!captured) { snapshot(asset, `adjusted ${label}`); captured = true; } };
+    input.oninput = () => {
+      capture();
+      edit.adjustments[key] = Number(input.value);
+      readout.textContent = input.value;
+      touchAsset(asset);
+      paintStage();
+    };
+    input.onchange = () => { log(asset, `${label} → ${input.value}`, state.reviewer); captured = false; };
+    return el('label', { className: 'editor-slider' }, el('span', {}, label), input, readout);
+  };
+  const controlGroup = (title, ...controls) => el('details', { className: 'editor-control-group', open: true },
+    el('summary', {}, title), el('div', { className: 'editor-control-body' }, ...controls));
+
+  if (edit.mode === 'guided') {
+    wrap.append(
+      el('h4', { className: 'editor-group-title' }, 'Essential adjustments'),
+      slider('exposure', 'Light', -1, 1, 0.05), slider('contrast', 'Contrast', -50, 50),
+      slider('temperature', 'Warmth', -50, 50), slider('vibrance', 'Color', -50, 50));
+  } else {
+    wrap.append(
+      controlGroup('Tone',
+        slider('exposure', 'Exposure', -2, 2, 0.05), slider('contrast', 'Contrast', -100, 100),
+        slider('highlights', 'Highlights', -100, 100), slider('shadows', 'Shadows', -100, 100)),
+      controlGroup('Color',
+        slider('temperature', 'Temperature', -100, 100), slider('tint', 'Tint', -100, 100),
+        slider('saturation', 'Saturation', -100, 100), slider('vibrance', 'Vibrance', -100, 100)),
+      controlGroup('Detail and finishing',
+        slider('sharpen', 'Sharpening', 0, 100), slider('blur', 'Optical blur', 0, 20, 0.25),
+        slider('grain', 'Film grain', 0, 100), slider('vignette', 'Vignette', 0, 100)));
+  }
+
+  const gridToggle = el('input', { type: 'checkbox', checked: edit.pixelGrid.enabled });
+  gridToggle.onchange = () => {
+    mutate(asset, `Pixel Grid Review ${gridToggle.checked ? 'enabled' : 'disabled'}`, () => { edit.pixelGrid.enabled = gridToggle.checked; });
+    renderReview();
+  };
+  const diagnostic = el('div', { className: 'pixel-review-controls' },
+    el('label', { className: 'toggle' }, gridToggle, 'Spatial Continuity Review'),
+    el('p', { className: 'hint' }, 'Maps abrupt color and texture transitions across neighboring regions. Indicators direct closer inspection and never replace editorial judgment.'));
+  if (edit.mode === 'advanced') {
+    const columns = el('input', { type: 'range', min: 6, max: 32, step: 1, value: edit.pixelGrid.columns });
+    const sensitivity = el('input', { type: 'range', min: 0, max: 100, step: 1, value: edit.pixelGrid.sensitivity });
+    const bind = (input, output, key) => {
+      let captured = false;
+      input.oninput = () => {
+        if (!captured) { snapshot(asset, `adjusted spatial continuity ${key}`); captured = true; }
+        edit.pixelGrid[key] = Number(input.value); output.textContent = input.value;
+        touchAsset(asset); if (edit.pixelGrid.enabled) paintStage();
+      };
+      input.onchange = () => { log(asset, `Spatial continuity ${key} → ${input.value}`, state.reviewer); captured = false; };
+    };
+    const columnsOut = el('output', {}, String(edit.pixelGrid.columns));
+    const sensitivityOut = el('output', {}, String(edit.pixelGrid.sensitivity));
+    bind(columns, columnsOut, 'columns'); bind(sensitivity, sensitivityOut, 'sensitivity');
+    diagnostic.append(
+      el('label', { className: 'editor-slider' }, el('span', {}, 'Region density'), columns, columnsOut),
+      el('label', { className: 'editor-slider' }, el('span', {}, 'Sensitivity'), sensitivity, sensitivityOut));
+  }
+  wrap.append(diagnostic);
+  return wrap;
+}
+
 function renderRail(asset) {
   const rail = el('div', { className: 'rail', id: 'rail' });
   const surfaces = activeSurfaces();
@@ -1457,6 +1666,16 @@ function renderRail(asset) {
     .filter(sid => asset.placements[sid].decision !== 'pending')
     .flatMap(sid => placementIssues(asset, sid, state.project).map(i => ({ ...i, surface: SURFACE_BY_ID[sid]?.label })));
   const all = [...auto, ...perPlacement].sort((a, b) => ({ block: 0, warn: 1, info: 2 })[a.level] - ({ block: 0, warn: 1, info: 2 })[b.level]);
+
+  // Keep the active editing surface first. Quality signals and placement
+  // decisions remain directly below it, so the most frequent controls never
+  // require a long rail scroll on a laptop display.
+  rail.append(el('h3', {}, `${asset.kind === 'video' ? 'Video' : 'Photo'} editor`));
+  rail.append(editingBlock(asset));
+  if (asset.kind === 'video') {
+    rail.append(el('h3', {}, 'Video production'));
+    rail.append(videoBlock(asset));
+  }
 
   rail.append(el('h3', {}, 'Automated checks',
     all.some(i => i.level === 'block') ? el('span', { className: 'chip rejected' }, 'blocking') : null));
@@ -1479,7 +1698,7 @@ function renderRail(asset) {
         });
         renderReview(); renderCounters();
       }),
-      btn('Deny all', 'btn sm', () => {
+      btn('Reject all', 'btn sm', () => {
         mutate(asset, 'denied every surface', () => {
           for (const s of surfaces) ensurePlacement(asset, s.id).decision = 'denied';
           syncStatusFromPlacements(asset);
@@ -1496,11 +1715,6 @@ function renderRail(asset) {
   rail.append(el('h3', {}, 'Fix list',
     (asset.fixes || []).length ? el('span', { className: 'chip needs-retouch' }, String(asset.fixes.length)) : null));
   rail.append(fixBlock(asset));
-
-  if (asset.kind === 'video') {
-    rail.append(el('h3', {}, 'Video review'));
-    rail.append(videoBlock(asset));
-  }
 
   rail.append(el('h3', {}, 'Asset'));
   rail.append(metaBlock(asset));
@@ -1984,7 +2198,7 @@ async function exportContactSheet() {
     const x = PAD + col * (CELL + PAD);
     const y = 90 + PAD + row * (CELL + LABEL + PAD);
     const thumbSurface = { ...surface, w: CELL, h: Math.round(CELL * (surface.h / surface.w)) };
-    const shot = renderCrop(d.source, d.w, d.h, placement.crop, thumbSurface, placement.fill);
+    const shot = renderCrop(d.source, d.w, d.h, placement.crop, thumbSurface, placement.fill, null, ensureEditState(asset).adjustments);
     const drawH = Math.min(CELL, thumbSurface.h);
     const drawW = Math.round(drawH * (surface.w / surface.h));
     ctx.fillStyle = '#000';

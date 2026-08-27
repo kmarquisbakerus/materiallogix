@@ -1,7 +1,7 @@
 {
   "name": "MaterialLogix Studio",
   "short_name": "MaterialLogix",
-  "description": "The judgment layer for AI-assisted campaigns: review, refine, approve, and package photo, video, voice, and supplied brand assets.",
+  "description": "Professional photo finishing, video production, and voice direction in one local-first creative studio.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0a0a0b",

@@ -76,12 +76,12 @@ export const SURFACE_BY_ID = Object.fromEntries(SURFACES.map(s => [s.id, s]));
 // ---------------------------------------------------------------------------
 
 export const ASSET_STATUSES = [
-  { id: 'unreviewed', label: 'Unreviewed', hint: 'Not looked at yet.' },
-  { id: 'approved', label: 'Approved', hint: 'Cleared for at least one surface.' },
-  { id: 'needs-retouch', label: 'Needs retouch', hint: 'Fixable by an editor. Keep the source.' },
-  { id: 'needs-new-generation', label: 'Needs regeneration', hint: 'Not fixable. Generate a replacement.' },
-  { id: 'reference-only', label: 'Reference only', hint: 'Useful as input, never shipped.' },
-  { id: 'rejected', label: 'Rejected', hint: 'Dead. Kept as history so it is not reused.' }
+  { id: 'unreviewed', label: 'Awaiting review', hint: 'Editorial review has not started.' },
+  { id: 'approved', label: 'Approved', hint: 'Cleared for at least one delivery placement.' },
+  { id: 'needs-retouch', label: 'Retouch required', hint: 'Retain the source and complete the listed refinements.' },
+  { id: 'needs-new-generation', label: 'New result required', hint: 'Create or capture a materially different replacement.' },
+  { id: 'reference-only', label: 'Reference only', hint: 'Approved as production input, not for final delivery.' },
+  { id: 'rejected', label: 'Rejected', hint: 'Retained in project history to prevent accidental reuse.' }
 ];
 
 export const STATUS_BY_ID = Object.fromEntries(ASSET_STATUSES.map(s => [s.id, s]));
@@ -121,7 +121,8 @@ export const QA_CHECKS = [
   { id: 'identity', label: 'Same-person identity', ask: 'Is this the same person as the reference, beyond doubt?', group: 'Human likeness' },
   { id: 'face', label: 'Face consistency', ask: 'Bone structure, expression, and age read consistently?', group: 'Human likeness' },
   { id: 'hair', label: 'Hair consistency', ask: 'Same cut, colour, hairline, and edge quality?', group: 'Human likeness' },
-  { id: 'skin', label: 'Skin tone and texture', ask: 'Real pores and shadow, not plastic or waxy?', group: 'Human likeness' },
+  { id: 'skin', label: 'Skin tone and texture', ask: 'Does skin retain natural tonal variation and appropriate fine detail?', group: 'Human likeness' },
+  { id: 'naturalism', label: 'Editorial naturalism', ask: 'Do gaze, posture, expression, spacing, and group interaction feel directed yet believable?', group: 'Human likeness' },
   { id: 'hands', label: 'Hands, fingers, nails', ask: 'Correct count, joints, and nail shape?', group: 'Anatomy' },
   { id: 'teeth-eyes', label: 'Teeth and eyes', ask: 'Symmetrical catchlights, believable teeth, matching pupils?', group: 'Anatomy' },
   { id: 'body', label: 'Body physics', ask: 'Limbs, posture, and weight make physical sense?', group: 'Anatomy' },
@@ -141,8 +142,8 @@ export const QA_BY_ID = Object.fromEntries(QA_CHECKS.map(c => [c.id, c]));
 export const QA_PRESETS = [
   { id: 'human', label: 'Person in frame', checks: QA_CHECKS.map(c => c.id) },
   { id: 'product', label: 'Product / scene', checks: ['skin', 'background', 'crop-mobile', 'crop-desktop', 'brand', 'policy', 'alt', 'rights'] },
-  { id: 'video', label: 'Video', checks: ['identity', 'face', 'hair', 'skin', 'hands', 'body', 'wardrobe', 'background', 'crop-mobile', 'brand', 'policy', 'alt', 'rights'] },
-  { id: 'quick', label: 'Quick pass', checks: ['identity', 'hands', 'crop-mobile', 'brand', 'policy'] }
+  { id: 'video', label: 'Video', checks: ['identity', 'face', 'hair', 'skin', 'naturalism', 'hands', 'body', 'wardrobe', 'background', 'crop-mobile', 'brand', 'policy', 'alt', 'rights'] },
+  { id: 'quick', label: 'Quick pass', checks: ['identity', 'naturalism', 'hands', 'crop-mobile', 'brand', 'policy'] }
 ];
 
 export const PRESET_BY_ID = Object.fromEntries(QA_PRESETS.map(p => [p.id, p]));
@@ -152,22 +153,22 @@ export const PRESET_BY_ID = Object.fromEntries(QA_PRESETS.map(p => [p.id, p]));
 // travel to the editor in the export package as explicit work orders.
 
 export const FIX_PRESETS = [
-  { id: 'skin-even', label: 'Even out skin texture' },
-  { id: 'skin-shine', label: 'Reduce shine' },
-  { id: 'blemish-temporary', label: 'Remove a temporary blemish / pimple' },
-  { id: 'makeup-natural', label: 'Add natural makeup — describe colours below' },
-  { id: 'makeup-glam', label: 'Add full-glam makeup — describe the look below' },
+  { id: 'skin-even', label: 'Balance skin texture' },
+  { id: 'skin-shine', label: 'Refine specular highlights' },
+  { id: 'blemish-temporary', label: 'Remove a temporary blemish' },
+  { id: 'makeup-natural', label: 'Apply a natural makeup direction — specify palette below' },
+  { id: 'makeup-glam', label: 'Apply a full-glam makeup direction — specify finish below' },
   { id: 'cheek-fullness', label: 'Adjust cheek fullness — pictured person’s consent required', consentRequired: true },
-  { id: 'hands', label: 'Repair hands / fingers' },
-  { id: 'teeth', label: 'Fix teeth' },
-  { id: 'eyes', label: 'Brighten / align eyes' },
-  { id: 'hair-edges', label: 'Clean hair edges' },
-  { id: 'garment', label: 'Fix garment drape / seams' },
-  { id: 'jewelry', label: 'Fix jewelry / accessories' },
+  { id: 'hands', label: 'Correct hand and finger anatomy' },
+  { id: 'teeth', label: 'Refine dental detail' },
+  { id: 'eyes', label: 'Refine eye alignment and catchlights' },
+  { id: 'hair-edges', label: 'Refine hair edges' },
+  { id: 'garment', label: 'Refine garment drape and seams' },
+  { id: 'jewelry', label: 'Refine jewelry and accessories' },
   { id: 'bg-clean', label: 'Remove background distractions' },
-  { id: 'bg-text', label: 'Fix warped background text' },
-  { id: 'color-brand', label: 'Match brand colour grade' },
-  { id: 'extend', label: 'Extend background (outpaint)' }
+  { id: 'bg-text', label: 'Correct distorted background text' },
+  { id: 'color-brand', label: 'Match the approved brand color grade' },
+  { id: 'extend', label: 'Extend the composition' }
 ];
 
 // Quick surface bundles for the first-run wizard.
@@ -231,6 +232,11 @@ export function newAsset(projectId, file) {
     fixes: [],
     rejectionFeedback: { reasons: [], note: '', shareForImprovement: false, recordedAt: '' },
     placements: {},
+    edit: {
+      mode: 'guided',
+      adjustments: { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 },
+      pixelGrid: { enabled: false, columns: 12, sensitivity: 55 }
+    },
     video: { trimStart: '', trimEnd: '', hook: '', believability: 0, looksAI: false, recast: false, cropNote: '', posterTime: null, comments: [] },
     width: 0,
     height: 0,

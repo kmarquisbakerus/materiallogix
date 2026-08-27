@@ -378,7 +378,7 @@ export async function buildPackage(project, assets, onProgress = () => {}, extra
       const { source, w, h } = await sourceFor(asset);
       const crop = placement.crop || defaultCrop(w, h, surface);
       const target = proof ? proofSurface(surface) : surface;
-      const canvas = renderCrop(source, w, h, crop, target, placement.fill || 'crop', scratch);
+      const canvas = renderCrop(source, w, h, crop, target, placement.fill || 'crop', scratch, asset.edit?.adjustments);
       await applyBrandOverlay(canvas);
       if (proof) applyProofWatermark(canvas, 'MATERIALLOGIX STUDIO · PROOF — NOT FOR PRODUCTION — DO NOT COPY');
       const bytes = canvasToBytes(canvas, 'image/jpeg', proof ? 0.8 : 0.92);

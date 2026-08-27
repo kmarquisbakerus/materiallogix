@@ -1,4 +1,4 @@
-// Builds a single self-contained HTML file the founder can email to a client.
+// Builds a single self-contained HTML file that can be sent to a client.
 // No server, no account, no upload: images are embedded, decisions are made in
 // the client's own browser, and they send back one small JSON file.
 
@@ -39,7 +39,7 @@ export async function buildClientPage(project, assets, onProgress = () => {}) {
       sources.set(asset.id, src);
     }
     const crop = placement.crop || defaultCrop(src.w, src.h, surface);
-    const canvas = renderCrop(src.source, src.w, src.h, crop, previewSize(surface), placement.fill || 'crop', scratch);
+    const canvas = renderCrop(src.source, src.w, src.h, crop, previewSize(surface), placement.fill || 'crop', scratch, asset.edit?.adjustments);
     items.push({
       id: `${asset.id}:${surface.id}`,
       assetId: asset.id,

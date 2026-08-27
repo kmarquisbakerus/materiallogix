@@ -1,4 +1,4 @@
-// The voice humanizer layer.
+// Local voice performance and finishing utilities.
 //
 // Any TTS engine renders words; this layer renders a PERFORMANCE. It sits on
 // top of whichever engine is plugged in (Kokoro or another free model via the
@@ -6,12 +6,12 @@
 //
 //   1. performancePlan(script)  — text → direction: segments, pauses, breaths,
 //      emphasis, pacing that varies the way a person's actually does.
-//   2. humanizeBuffer(audio)    — the anti-"AI voice" post-chain: breaths,
+//   2. humanizeBuffer(audio)    — voice finishing: breath support,
 //      room tone instead of digital silence, micro-timing, gentle glue
 //      compression. Pure Web Audio, free, runs on this machine.
 //   3. voiceTells(audio)        — measurements of the too-perfect tells
 //      (digital-zero floor, metronome pacing, flat loudness), mirroring the
-//      waxy-skin check on images: they direct a human ear, never verdict.
+//      image-quality diagnostics: they direct review and never replace it.
 //
 // Consent rule carried from identity packs: voices come from packs the user
 // owns — their own recording or released talent. Never scraped audio.

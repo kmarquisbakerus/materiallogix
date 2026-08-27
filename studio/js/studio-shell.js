@@ -166,14 +166,14 @@ function applyPositioningCopy() {
   if (wizard && !wizard.querySelector('[data-materiallogix-promise]')) {
     const promise = make('span', {
       className: 'eyebrow',
-      textContent: 'The judgment layer'
+      textContent: 'Create with freedom. Finish with confidence.'
     });
     promise.dataset.materiallogixPromise = 'true';
     wizard.prepend(promise);
 
     const lead = wizard.querySelector('p.lead');
     if (lead) {
-      lead.textContent = 'The hard part was never generating the asset. It is knowing what is ready to ship. Set the direction first — every crop, check, and approval downstream is judged against it.';
+      lead.textContent = 'Set the creative direction once, then refine, review, and approve every placement against it. MaterialLogix keeps professional finishing decisions connected from source to delivery.';
     }
   }
 

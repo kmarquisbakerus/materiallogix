@@ -435,7 +435,7 @@ export function paletteMatch(assetPalette, brandHexes) {
 
 export const brandHexesFrom = text => (text || '').match(/#[0-9a-fA-F]{6}\b/g) || [];
 
-// --- "waxy skin" hint ------------------------------------------------------
+// --- skin-detail continuity hint -------------------------------------------
 // Not AI detection. A cheap signal that skin-tone regions carry far less
 // high-frequency detail than the rest of the frame, which is the single most
 // common tell reviewers describe as "looks AI".
@@ -536,7 +536,7 @@ export function assetIssues(asset, allAssets, project) {
     out.push(issue('info', 'crushed', `${Math.round(a.exposure.crushed * 100)}% of the frame is crushed to black.`));
   }
   if (a.skin && a.skin.ratio < 0.35) {
-    out.push(issue('warn', 'waxy-skin', `Skin regions carry ${Math.round(a.skin.ratio * 100)}% of the frame's detail level — the classic "looks AI" tell.`, 'Check skin texture at 100% before approving.'));
+    out.push(issue('warn', 'waxy-skin', `Skin regions retain ${Math.round(a.skin.ratio * 100)}% of the frame's detail level.`, 'Review skin-detail continuity at 100% before approving.'));
   }
   if (asset.kind === 'video' && asset.temporal?.samples?.length) {
     const t = asset.temporal;

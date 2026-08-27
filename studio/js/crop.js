@@ -1,6 +1,7 @@
 // Crop maths and rendering.
 // Crops are stored normalized (0..1) against the source, so the same decision
 // re-exports correctly at any pixel size.
+import { applyPixelAdjustments } from './editing.js';
 
 /** Largest centered crop of `src` that matches the surface aspect ratio. */
 export function defaultCrop(srcW, srcH, surface) {
@@ -66,11 +67,10 @@ export function snapToRatio(crop, srcW, srcH, surface) {
  * `fill` is 'crop' (cover), 'contain' (letterbox on flat colour) or
  * 'blur' (letterbox over a blurred, over-scaled copy of the same frame).
  */
-export function renderCrop(source, srcW, srcH, crop, surface, fill = 'crop', target = null) {
+export function renderCrop(source, srcW, srcH, crop, surface, fill = 'crop', target = null, adjustments = null) {
   // Callers that render in a loop should pass a scratch canvas. Allocating a
-  // fresh one per placement means a fresh GPU texture per placement, and the
-  // readback cost of that churn is wildly variable — the same 25-placement
-  // export measured 3s, 11s, and 52s before this became reusable.
+  // fresh one per placement means a fresh GPU texture per placement and adds
+  // avoidable readback overhead during large exports.
   const canvas = target || document.createElement('canvas');
   canvas.width = surface.w;
   canvas.height = surface.h;
@@ -84,7 +84,7 @@ export function renderCrop(source, srcW, srcH, crop, surface, fill = 'crop', tar
 
   if (fill === 'crop') {
     ctx.drawImage(source, sx, sy, sw, sh, 0, 0, surface.w, surface.h);
-    return canvas;
+    return adjustments ? applyPixelAdjustments(canvas, adjustments) : canvas;
   }
 
   // Letterboxed modes: fit the crop inside the frame, then fill the gutters.
@@ -112,7 +112,7 @@ export function renderCrop(source, srcW, srcH, crop, surface, fill = 'crop', tar
   }
 
   ctx.drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh);
-  return canvas;
+  return adjustments ? applyPixelAdjustments(canvas, adjustments) : canvas;
 }
 
 /**

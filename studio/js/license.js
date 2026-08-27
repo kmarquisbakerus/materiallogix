@@ -56,7 +56,7 @@ const STORE = 'cros:license';
 const CHECK_STORE = 'cros:licenseCheck';
 const CHECK_URL = 'https://studio.materiallogix.com/api/license/check';
 const CHECK_EVERY_H = 24;        // ping at most daily
-export const GRACE_DAYS = 3;     // founder's spec: offline past this locks licensed features
+export const GRACE_DAYS = 3;     // licensed features require verification after this offline grace period
 
 async function revalidate(key) {
   /** Phone-home for keys minted with net:1. Sends the key and nothing else.

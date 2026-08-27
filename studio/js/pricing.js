@@ -28,7 +28,7 @@ export const PRODUCTS = [
     name: 'Voice Studio',
     monthly: 14,
     vs: 'ElevenLabs Creator: $22/mo for 100 minutes',
-    pitch: '500 units a month, owned voice packs, the humanizer, the ear.'
+    pitch: '500 units a month, consented voice packs, performance finishing, and voice quality analysis.'
   },
   {
     id: 'review',
@@ -41,7 +41,7 @@ export const PRODUCTS = [
     id: 'complete',
     name: 'Complete',
     monthly: 36,
-    vs: '$46 buying both separately — and yearly ($324) undercuts Topaz Studio alone ($399)',
+    vs: 'The complete photo, video, and voice workflow under one license',
     pitch: 'Both products, the phone app, one license.'
   },
   {
@@ -63,11 +63,11 @@ export function price(productId, termId) {
 }
 
 // ---------------------------------------------------------------------------
-// Monthly production units (founder's rule: nothing is unlimited — value
-// justifies limits, and limits justify the price).
+// Monthly production-unit policy. Limits are enforced consistently across
+// the site, application, and license service.
 //   1 unit  = one clean image render (export crop)
 //   UPSCALING CONSUMES NO UNITS: local upscaling (image and video) is
-//   unlimited on every paid plan — the founder's Topaz-killer. Renders are
+//   unlimited on every paid plan. Renders are
 //   metered; enhancement is not. Video ships 1080-first; 4K is opt-in.
 //   1 unit  = one minute of rendered voice (rounded up per render)
 //   4 units = one minute of rendered video
@@ -111,14 +111,14 @@ export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
 
 // Cloud video upscaling: viable ONLY as one batched GPU job per video
 // (per-second billing ~= $0.40-0.80/output-min at 1080p->4K), never as
-// per-frame runs (that costs ~$3.30/min and bleeds). Hard constraints:
+// per-frame runs (approximately $3.30/min). Hard constraints:
 // Fallback policy: local first, always; if local fails or no engine is
 // detected, licensed users are offered the cloud lane automatically,
 // spending their tier's included minutes/credits. Free tier: no fallback.
 export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
-  includedMinutes: { lite: 0, voice: 0, review: 10, complete: 20, pro: 30 },  // founder's ladder; owned hardware makes it nearly free
+  includedMinutes: { lite: 0, voice: 0, review: 10, complete: 20, pro: 30 },
   pricePerMinute: 3           // beyond included: prepaid credits, $3/min (~4-7x cost)
 };
 
