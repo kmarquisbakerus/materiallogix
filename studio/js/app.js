@@ -1,6 +1,6 @@
 import {
   SURFACE_GROUPS, SURFACE_BY_ID, ASSET_STATUSES, STATUS_BY_ID,
-  ASSET_ROLES, QA_CHECKS, QA_BY_ID, QA_PRESETS, PRESET_BY_ID, PROVIDERS, FIX_PRESETS, SURFACE_PRESETS, REJECTION_REASONS,
+  ASSET_ROLES, QA_CHECKS, QA_BY_ID, QA_PRESETS, PRESET_BY_ID, FIX_PRESETS, SURFACE_PRESETS, REJECTION_REASONS,
   newProject, newAsset, newPlacement
 } from './model.js';
 import * as store from './store.js';
@@ -13,7 +13,7 @@ import {
 import { buildPackage, decisionsMarkdown, approvedPairs, slug } from './export.js';
 import { buildClientPage, applyClientVerdict } from './clientpage.js';
 import { snapshot, snapshotProject, popUndo, log, logMarkdown } from './history.js';
-import { downloadBlob } from './zip.js';
+import { downloadBlob, makeZip, readStoreZip } from './zip.js';
 import { activeLicense, activate, deactivate, covers } from './license.js';
 import { detectComfy, listCheckpoints, generateOne, listUpscaleModels, upscaleOne, detectBridge, upscaleViaBridge } from './generate.js';
 import { probeDevice, deviceSummary } from './device.js';
@@ -201,6 +201,32 @@ async function runAnalysis(asset, { quiet = false } = {}) {
   if (!d) { if (!quiet) toast(`Could not decode ${asset.filename}.`, true); return null; }
   const blob = await store.getBlob(asset.id);
   asset.auto = await analyzeAsset(d.source, d.w, d.h, blob);
+  if (asset.kind === 'video' && (d.duration || asset.duration) > 0) {
+    const duration = d.duration || asset.duration;
+    const url = await store.objectUrl(asset.id);
+    const count = Math.min(9, Math.max(5, Math.ceil(duration / 4)));
+    const samples = [];
+    for (let i = 0; i < count; i++) {
+      const time = duration * ((i + 0.5) / count);
+      const frame = await grabVideoFrame(url, time);
+      const result = await analyzeAsset(frame.canvas, frame.width, frame.height, null);
+      samples.push({
+        time: +time.toFixed(2), hash: result.hash, sharpness: result.sharpness,
+        blown: result.exposure.blown, crushed: result.exposure.crushed,
+        meanLuma: result.exposure.meanLuma
+      });
+    }
+    asset.temporal = {
+      version: 1,
+      sampledAt: new Date().toISOString(),
+      duration: +duration.toFixed(2),
+      samples,
+      sharpnessMin: Math.min(...samples.map(s => s.sharpness)),
+      blownMax: Math.max(...samples.map(s => s.blown)),
+      crushedMax: Math.max(...samples.map(s => s.crushed)),
+      lumaRange: Math.max(...samples.map(s => s.meanLuma)) - Math.min(...samples.map(s => s.meanLuma))
+    };
+  }
   // Geometry is the one networked extra (MediaPipe from CDN). Null offline.
   asset.geometry = await analyzeGeometry(d.source, d.w, d.h);
   await store.saveAsset(asset);
@@ -403,31 +429,10 @@ function generatePanel() {
   };
   renderLocal();
 
-  // Tier 2 - the user's own provider key. Stored on this machine only.
-  wrap.append(el('h4', { className: 'eyebrow', style: 'margin:16px 0 8px' }, 'Your own provider account'));
-  wrap.append(el('p', { className: 'hint' },
-    'For big batches: link your own Replicate, fal, or Runway account. Usage lands on your bill with them, and the key stays in this browser \u2014 it is never exported or backed up. Calls are wired in Phase 2.'));
-  for (const pr of PROVIDERS) {
-    const rec = state.project.providers?.[pr.id] || {};
-    const cb = el('input', { type: 'checkbox', checked: !!rec.enabled });
-    const key = el('input', {
-      type: 'password', placeholder: pr.env, value: rec.key || '',
-      style: 'width:150px;margin-left:auto;font-size:11px', autocomplete: 'off'
-    });
-    const save = () => {
-      state.project.providers = { ...state.project.providers, [pr.id]: { enabled: cb.checked, key: key.value } };
-      touchProject();
-    };
-    cb.onchange = save;
-    key.oninput = save;
-    wrap.append(el('label', { className: 'provider-row' }, cb, pr.label,
-      el('span', { className: 'kind' }, pr.kind), key));
-  }
-
-  // Tier 3 - managed.
-  wrap.append(el('h4', { className: 'eyebrow', style: 'margin:16px 0 8px' }, 'Managed'));
+  // Cloud credentials never belong in browser storage.
+  wrap.append(el('h4', { className: 'eyebrow', style: 'margin:16px 0 8px' }, 'Cloud workflow'));
   wrap.append(el('p', { className: 'hint', style: 'margin-bottom:0' },
-    'No setup, no key: generation runs on the product\u2019s own account and is billed with usage. That is the paid tier, and it arrives with accounts in Phase 2.'));
+    'Cloud workflow stays unavailable until the account service can verify the user, entitlement, prepaid balance, and exact packaged job. Provider keys are accepted only by that server and are never entered or stored here.'));
 
   return wrap;
 }
@@ -581,10 +586,11 @@ function renderSidebar() {
   const backup = panel('Project', false,
     el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
       btn('Rename', 'btn sm', renameProject),
-      btn('Back up JSON', 'btn sm', backupProject),
+      btn('Save recovery file', 'btn sm', backupProject),
+      btn('Restore file', 'btn sm', () => $('#recoveryInput').click()),
       btn('Delete', 'btn sm', deleteProjectFlow)),
     el('p', { className: 'hint', style: 'margin-top:12px' },
-      `Created ${new Date(p.createdAt).toLocaleDateString()}. Stored in this browser only — back up before clearing site data.`));
+      `Created ${new Date(p.createdAt).toLocaleDateString()}. Changes auto-save locally. A recovery file includes the project, decisions, and original media.`));
 
   bar.replaceChildren(brief, library, surfaces, qa, providers, deliver, backup);
 }
@@ -610,20 +616,57 @@ function deleteProjectFlow() {
      })]);
 }
 
-function backupProject() {
+async function backupProject() {
   const cleanProject = {
     ...state.project,
     providers: Object.fromEntries(Object.entries(state.project.providers || {})
       .map(([id, v]) => [id, { enabled: !!v.enabled }]))   // keys never leave the browser
   };
-  const data = JSON.stringify({
-    schema: 'creative-review-os/backup@1',
+  const manifest = JSON.stringify({
+    schema: 'materiallogix/recovery@2',
     exportedAt: new Date().toISOString(),
     project: cleanProject,
     assets: state.assets
   }, null, 2);
-  downloadBlob(new Blob([data], { type: 'application/json' }), `${slug(state.project.name)}-backup.json`);
-  toast('Backup saved. Note: decisions and metadata only, not the media files.');
+  const entries = [{ name: 'project.json', data: manifest }];
+  await busy(async () => {
+    for (const asset of state.assets) {
+      const blob = await store.getBlob(asset.id);
+      if (blob) entries.push({ name: `media/${asset.id}`, data: new Uint8Array(await blob.arrayBuffer()) });
+    }
+  });
+  downloadBlob(makeZip(entries), `${slug(state.project.name)}-recovery.zip`);
+  toast(`Recovery file saved with ${entries.length - 1} media file(s).`);
+}
+
+async function restoreProject(file) {
+  try {
+    const entries = await readStoreZip(file);
+    const raw = entries.get('project.json');
+    if (!raw) throw new Error('project.json is missing.');
+    const backup = JSON.parse(new TextDecoder().decode(raw));
+    if (backup.schema !== 'materiallogix/recovery@2' || !backup.project || !Array.isArray(backup.assets)) {
+      throw new Error('This is not a MaterialLogix recovery file.');
+    }
+    const projectId = crypto.randomUUID();
+    const idMap = new Map(backup.assets.map(a => [a.id, crypto.randomUUID()]));
+    const project = { ...backup.project, id: projectId, name: `${backup.project.name} (recovered)`, providers: {} };
+    if (project.brandOverlay?.assetId) project.brandOverlay.assetId = idMap.get(project.brandOverlay.assetId) || '';
+    await busy(async () => {
+      await store.saveProject(project);
+      for (const original of backup.assets) {
+        const bytes = entries.get(`media/${original.id}`);
+        if (!bytes) throw new Error(`Media missing for ${original.filename}.`);
+        const asset = { ...original, id: idMap.get(original.id), projectId };
+        const media = new File([bytes], asset.filename, { type: asset.mime || 'application/octet-stream' });
+        await store.addAsset(asset, media);
+      }
+    });
+    await boot(projectId);
+    toast(`Recovered ${backup.assets.length} media file(s) and all project decisions.`);
+  } catch (error) {
+    toast(`Recovery failed: ${error.message}`, true);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1136,8 +1179,8 @@ function videoBlock(asset) {
   };
   wrap.append(mkToggle('looksAI', 'Reads as AI — reject'), mkToggle('recast', 'Request creator / cast replacement'));
 
-  // The poster frame is what every measurement and every crop is judged on,
-  // so it has to be scrubbable — frame zero is almost never representative.
+  // The poster remains the crop reference; automated QA also samples the full
+  // timeline so soft, blown, or black sections do not hide between stills.
   if (asset.duration > 0) {
     const scrub = el('input', {
       type: 'range', min: 0, max: asset.duration.toFixed(2), step: 0.05,
@@ -1153,7 +1196,12 @@ function videoBlock(asset) {
       renderReview();
     };
     wrap.append(el('label', { className: 'field' },
-      el('span', {}, 'Poster frame'), scrub, readout));
+      el('span', {}, 'Crop reference frame'), scrub, readout));
+    if (asset.temporal?.samples?.length) {
+      wrap.append(el('p', { className: 'hint' },
+        `Motion QA sampled ${asset.temporal.samples.length} points across ${asset.temporal.duration.toFixed(1)}s. ` +
+        `Lowest sharpness ${asset.temporal.sharpnessMin}; brightness swing ${asset.temporal.lumaRange}.`));
+    }
   }
 
   wrap.append(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
@@ -2015,6 +2063,12 @@ async function boot(selectId) {
   }
   const wanted = selectId || localStorage.getItem('cros:project');
   state.project = state.projects.find(p => p.id === wanted) || state.projects[0];
+  // Remove credentials saved by the retired provider placeholder. Cloud keys
+  // belong only in the future server-side secret store.
+  if (Object.values(state.project.providers || {}).some(v => v?.key)) {
+    state.project.providers = {};
+    await store.saveProject(state.project);
+  }
   localStorage.setItem('cros:project', state.project.id);
   state.assets = await store.listAssets(state.project.id);
   state.index = 0;
@@ -2054,6 +2108,7 @@ function wire() {
   $('#exportBtn').onclick = doExport;
   $('#helpBtn').onclick = showHelp;
   $('#fileInput').onchange = e => { importFiles(e.target.files); e.target.value = ''; };
+  $('#recoveryInput').onchange = e => { const f = e.target.files?.[0]; if (f) restoreProject(f); e.target.value = ''; };
   $('#verdictInput').onchange = e => { if (e.target.files[0]) importVerdict(e.target.files[0]); e.target.value = ''; };
 
   let dragDepth = 0;
@@ -2118,7 +2173,7 @@ function wire() {
 
 // Automation hook for the smoke suite. Off unless ?dev is in the URL, so it
 // never exists in a normal session.
-if (new URLSearchParams(location.search).has('dev')) {
+if (['localhost', '127.0.0.1', '::1'].includes(location.hostname) && new URLSearchParams(location.search).has('dev')) {
   window.__cros = {
     state, render, importFiles, runAnalysis, reframeAll, decidePlacement,
     preflight: () => preflight(state.project, state.assets),

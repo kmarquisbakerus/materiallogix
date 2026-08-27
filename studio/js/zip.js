@@ -92,6 +92,36 @@ export function makeZip(entries) {
   return new Blob([...chunks, ...central, end], { type: 'application/zip' });
 }
 
+/** Read archives produced by makeZip. Only uncompressed STORE entries are
+ * accepted; encrypted, compressed, oversized, and unsafe paths are rejected. */
+export async function readStoreZip(blob) {
+  if (!(blob instanceof Blob) || blob.size > 8 * 1024 * 1024 * 1024) throw new Error('Recovery file is too large.');
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+  const entries = new Map();
+  let offset = 0;
+  while (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+    if (entries.size >= 5000 || offset + 30 > bytes.length) throw new Error('Invalid recovery archive.');
+    const flags = view.getUint16(offset + 6, true);
+    const method = view.getUint16(offset + 8, true);
+    const size = view.getUint32(offset + 22, true);
+    const nameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    if ((flags & 1) || method !== 0) throw new Error('Unsupported recovery archive.');
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    const end = dataStart + size;
+    if (end > bytes.length) throw new Error('Truncated recovery archive.');
+    const name = decoder.decode(bytes.subarray(nameStart, nameStart + nameLength)).replace(/\\/g, '/');
+    if (!name || name.startsWith('/') || name.includes('../') || name.includes('\0')) throw new Error('Unsafe recovery path.');
+    entries.set(name, bytes.slice(dataStart, end));
+    offset = end;
+  }
+  if (!entries.size) throw new Error('No recovery entries found.');
+  return entries;
+}
+
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

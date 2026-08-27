@@ -538,6 +538,18 @@ export function assetIssues(asset, allAssets, project) {
   if (a.skin && a.skin.ratio < 0.35) {
     out.push(issue('warn', 'waxy-skin', `Skin regions carry ${Math.round(a.skin.ratio * 100)}% of the frame's detail level — the classic "looks AI" tell.`, 'Check skin texture at 100% before approving.'));
   }
+  if (asset.kind === 'video' && asset.temporal?.samples?.length) {
+    const t = asset.temporal;
+    if (t.sharpnessMin < 25) {
+      out.push(issue('warn', 'video-soft-section', `Motion QA found a soft section (lowest sampled sharpness ${t.sharpnessMin}).`, 'Review the indicated timeline samples and replace or trim the soft section.'));
+    }
+    if (t.blownMax > 0.1) {
+      out.push(issue('warn', 'video-blown-section', `A sampled video section has ${Math.round(t.blownMax * 100)}% clipped highlights.`, 'Review exposure across the full timeline.'));
+    }
+    if (t.crushedMax > 0.25) {
+      out.push(issue('warn', 'video-dark-section', `A sampled video section has ${Math.round(t.crushedMax * 100)}% crushed blacks.`, 'Check fades and dark sections before delivery.'));
+    }
+  }
 
   // Geometry: point the human at what the models found.
   if (asset.geometry) {
