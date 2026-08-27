@@ -50,3 +50,5 @@ jobs:
           path: materiallogix-cloudflare-upload.zip
           if-no-files-found: error
           retention-days: 7
+
+# package refresh: subdomain routing finalized
