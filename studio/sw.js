@@ -1,7 +1,7 @@
 // Service worker: makes MaterialLogix Studio installable and resilient.
 // Network-first prevents stale application logic; cache is the offline fallback.
 
-const CACHE = 'materiallogix-shell-v3';
+const CACHE = 'materiallogix-shell-v4';
 const SHELL = [
   './', 'index.html', 'voice.html', 'manifest.webmanifest', 'icon.svg',
   'css/app.css', 'css/glass-surfaces.css', 'assets/preview-stamp.wav',
