@@ -1,7 +1,9 @@
 // IndexedDB persistence. Three stores: projects, assets (metadata), blobs (files).
-// Blobs are kept separate so the metadata store stays cheap to scan.
+// Demo mode uses a separate database so reviewer/demo data can never mix with
+// a visitor's real Studio projects.
 
-const DB_NAME = 'creative-review-os';
+const DEMO_MODE = new URLSearchParams(location.search).get('demo') === '1';
+const DB_NAME = DEMO_MODE ? 'creative-review-os-demo' : 'creative-review-os';
 const DB_VERSION = 1;
 
 let dbPromise = null;
@@ -25,14 +27,12 @@ function open() {
     };
     req.onsuccess = () => {
       const db = req.result;
-      // Another tab upgrading or deleting the database blocks forever while we
-      // hold this connection. Step aside and reopen lazily on the next call.
       db.onversionchange = () => { db.close(); dbPromise = null; };
       db.onclose = () => { dbPromise = null; };
       resolve(db);
     };
     req.onerror = () => reject(req.error);
-    req.onblocked = () => reject(new Error('Another tab is holding this database open. Close the other Creative Review tabs and reload.'));
+    req.onblocked = () => reject(new Error('Another tab is holding this database open. Close the other MaterialLogix Studio tabs and reload.'));
   });
   return dbPromise;
 }
@@ -51,8 +51,6 @@ function tx(store, mode, fn) {
   }));
 }
 
-// --- projects --------------------------------------------------------------
-
 export const listProjects = () =>
   tx('projects', 'readonly', s => s.getAll())
     .then(rows => rows.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
@@ -69,8 +67,6 @@ export async function deleteProject(id) {
   for (const a of assets) await deleteAsset(a.id);
   return tx('projects', 'readwrite', s => s.delete(id));
 }
-
-// --- assets ----------------------------------------------------------------
 
 export const listAssets = projectId =>
   tx('assets', 'readonly', s => s.index('projectId').getAll(projectId))
@@ -93,10 +89,6 @@ export async function deleteAsset(id) {
 
 export const getBlob = id => tx('blobs', 'readonly', s => s.get(id));
 
-// --- object URL cache ------------------------------------------------------
-// Revoking eagerly breaks <img> reuse across re-renders, so URLs are cached
-// per asset id and released only when the asset is deleted.
-
 const urlCache = new Map();
 
 export async function objectUrl(assetId) {
@@ -115,8 +107,6 @@ export function releaseUrl(assetId) {
     urlCache.delete(assetId);
   }
 }
-
-// --- estimated usage -------------------------------------------------------
 
 export async function usage() {
   if (!navigator.storage || !navigator.storage.estimate) return null;
