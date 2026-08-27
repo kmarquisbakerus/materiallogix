@@ -21,14 +21,14 @@ export const PRODUCTS = [
     name: 'Complete Lite',
     monthly: 9,
     vs: 'for light users who want everything',
-    pitch: 'All three products at standard quality, with a monthly allowance instead of unlimited.'
+    pitch: 'All three products at standard quality, 100 units a month.'
   },
   {
     id: 'voice',
     name: 'Voice Studio',
     monthly: 14,
     vs: 'ElevenLabs Creator: $22/mo for 100 minutes',
-    pitch: 'Unlimited local voice renders, owned voice packs, the humanizer, the ear.'
+    pitch: '500 units a month, owned voice packs, the humanizer, the ear.'
   },
   {
     id: 'review',
@@ -63,6 +63,17 @@ export function price(productId, termId) {
 }
 
 // ---------------------------------------------------------------------------
+// Monthly production units (founder's rule: nothing is unlimited — value
+// justifies limits, and limits justify the price).
+//   1 unit  = one clean image render (export crop or upscale)
+//   1 unit  = one minute of rendered voice (rounded up per render)
+//   4 units = one minute of rendered video
+// Local renders cost us $0, so units price VALUE, not cost — overage can
+// never bleed money. Cloud jobs are separate prepaid credits on top.
+
+export const MONTHLY_UNITS = { lite: 100, voice: 500, review: 500, complete: 1000, pro: 2500 };
+export const OVERAGE = { units: 100, price: 5 };   // $5 per +100 units, any tier
+
 // Quality lanes: what each tier's renders run through. Free is a real
 // preview lane — capable, capped, and always watermarked. Paid lanes get the
 // better engine profiles; Pro gets the best.
@@ -72,10 +83,9 @@ export const LANES = {
     label: 'Lite lane',
     voice: { maxWords: Infinity, stamped: false, knobs: true, monthlyMinutes: 30 },
     upscale: { model: 'realesrgan-x4plus', factor: '4×' },
-    imageExport: 'clean, full resolution — 20 exports/month',
-    videoExport: 'clean — counts double against the allowance',
-    packs: 1, clientLinks: 3,
-    monthlyExports: 20
+    imageExport: 'clean, full resolution',
+    videoExport: 'clean, platform spec',
+    packs: 1, clientLinks: 3
   },
   free: {
     label: 'Preview lane',
@@ -127,8 +137,15 @@ export function recordExport(units = 1) {
   return u;
 }
 
-/** For lite licenses: how many export units remain this month. */
-export function liteRemaining(license) {
-  if (!license || license.plan !== 'lite') return Infinity;
-  return Math.max(0, LANES.lite.monthlyExports - (usageThisMonth().exports || 0));
+/** Units remaining this month for any licensed plan. Free tier has none. */
+export function planRemaining(license) {
+  if (!license) return 0;
+  const plan = String(license.plan).replace('suspended:', '');
+  const cap = MONTHLY_UNITS[plan];
+  if (!cap) return 0;
+  const bonus = usageThisMonth().bonus || 0;      // purchased overage packs
+  return Math.max(0, cap + bonus - (usageThisMonth().exports || 0));
 }
+
+// Back-compat alias.
+export const liteRemaining = planRemaining;

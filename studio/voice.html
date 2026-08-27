@@ -98,6 +98,7 @@ It is knowing which one is *right*. That is what MaterialLogix Studio is for.</t
 <script type="module">
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
+import { recordExport, planRemaining, MONTHLY_UNITS } from './js/pricing.js';
 import { bridgeFetch } from './js/generate.js';
 
 const $ = s => document.querySelector(s);
@@ -180,7 +181,16 @@ async function playAndCheck(arrayBuffer) {
   let decoded = await ctx.decodeAudioData(arrayBuffer);
   const lic = await activeLicense();
   let preview = false;
-  if (!covers(lic, 'voice')) {
+  if (covers(lic, 'voice')) {
+    const units = Math.max(1, Math.ceil(decoded.duration / 60));
+    if (planRemaining(lic) < units) {
+      $('#status').textContent = `monthly allowance reached (${MONTHLY_UNITS[lic.plan]} units) — add units from the pricing page, or render stamped previews free.`;
+      preview = true;   // fall through to stamped preview instead of clean
+    } else {
+      recordExport(units);
+    }
+  }
+  if (preview || !covers(lic, 'voice')) {
     // Free tier: spoken stamps at start, middle, and end - uncroppable by design.
     try {
       const stampRes = await fetch('assets/preview-stamp.wav');
