@@ -1,0 +1,38 @@
+name: Unify MaterialLogix pages
+on:
+  push:
+    paths:
+      - 'legal/site.css'
+      - 'legal/site.js'
+      - '.github/workflows/unify-materiallogix-pages.yml'
+permissions:
+  contents: write
+jobs:
+  unify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Connect legal pages and product family
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for p in Path('legal').glob('*.html'):
+              s=p.read_text()
+              if 'site.css' not in s:
+                  s=s.replace('</head>', '<link rel="stylesheet" href="site.css"><script defer src="site.js"></script></head>')
+              p.write_text(s)
+          p=Path('index.html')
+          s=p.read_text()
+          s=s.replace('href="studio/"','href="https://studio.materiallogix.com"')
+          s=s.replace('href="demo/"','href="https://demo.materiallogix.com"')
+          s=s.replace('href="legal/"','href="https://legal.materiallogix.com"')
+          p.write_text(s)
+          PY
+      - name: Commit generated links
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add legal/*.html index.html
+          git diff --cached --quiet || git commit -m 'Connect MaterialLogix legal and product pages'
+          git push
