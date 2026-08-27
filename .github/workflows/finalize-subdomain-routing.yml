@@ -1,0 +1,57 @@
+name: Finalize MaterialLogix subdomain routing
+on:
+  push:
+    paths:
+      - '.github/workflows/finalize-subdomain-routing.yml'
+permissions:
+  contents: write
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Finalize subdomain architecture
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p=Path('index.html')
+          s=p.read_text()
+          s=s.replace('<link rel="canonical" href="https://materiallogix.com/studio/">','<link rel="canonical" href="https://materiallogix.com/">')
+          s=s.replace("location.replace('https://materiallogix.com/studio/' + location.search + location.hash);","location.replace('https://materiallogix.com/' + location.search + location.hash);")
+          p.write_text(s)
+
+          p=Path('studio/index.html')
+          s=p.read_text()
+          s=s.replace('https://materiallogix.com/studio/','https://studio.materiallogix.com')
+          p.write_text(s)
+
+          p=Path('studio/voice.html')
+          s=p.read_text()
+          s=s.replace('https://materiallogix.com/studio/voice.html','https://voice.materiallogix.com')
+          p.write_text(s)
+
+          p=Path('studio/js/studio-nav.js')
+          s=p.read_text()
+          old="""const select = document.querySelector('#studioServiceSelect');\nif (select) {\n  const here = location.pathname.toLowerCase();\n  select.value = here.endsWith('/voice.html') || here.endsWith('/voice') ? 'voice' : 'review';\n\n  select.addEventListener('change', () => {\n    const query = location.search || '';\n    const hash = location.hash || '';\n    const target = select.value === 'voice' ? `voice.html${query}${hash}` : `index.html${query}${hash}`;\n    location.href = target;\n  });\n}\n"""
+          new="""const select = document.querySelector('#studioServiceSelect');\nif (select) {\n  const host = location.hostname.toLowerCase();\n  const here = location.pathname.toLowerCase();\n  const familyHost = host.endsWith('.materiallogix.com');\n  select.value = host === 'voice.materiallogix.com' || here.endsWith('/voice.html') || here.endsWith('/voice') ? 'voice' : 'review';\n\n  select.addEventListener('change', () => {\n    const query = location.search || '';\n    const hash = location.hash || '';\n    if (familyHost) {\n      location.href = (select.value === 'voice' ? 'https://voice.materiallogix.com' : 'https://studio.materiallogix.com') + query + hash;\n      return;\n    }\n    location.href = select.value === 'voice' ? `voice.html${query}${hash}` : `index.html${query}${hash}`;\n  });\n}\n"""
+          if old not in s:
+              raise SystemExit('studio navigation block not found')
+          p.write_text(s.replace(old,new))
+
+          Path('_redirects').write_text('''/studio        https://studio.materiallogix.com 301\n/studio/*      https://studio.materiallogix.com 301\n/app           https://studio.materiallogix.com 301\n/app/*         https://studio.materiallogix.com 301\n/voice         https://voice.materiallogix.com 301\n/voice.html    https://voice.materiallogix.com 301\n/demo          https://demo.materiallogix.com 301\n/demo/*        https://demo.materiallogix.com 301\n/legal         https://legal.materiallogix.com 301\n/legal/        https://legal.materiallogix.com 301\n''')
+
+          p=Path('demo/index.html')
+          if p.exists():
+              s=p.read_text()
+              s=s.replace('../studio/?demo=1','https://demo.materiallogix.com/?demo=1')
+              p.write_text(s)
+          PY
+      - name: Commit routing changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add index.html studio/index.html studio/voice.html studio/js/studio-nav.js _redirects demo/index.html
+          git diff --cached --quiet || git commit -m 'Finalize MaterialLogix subdomain architecture'
+          git push
