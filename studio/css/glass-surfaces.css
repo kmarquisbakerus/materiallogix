@@ -1,6 +1,6 @@
 /* MaterialLogix Studio — unified glass surface layer.
-   Keeps the dark neutral review canvas intact while giving application chrome
-   a consistent translucent, dimensional treatment. */
+   Keeps neutral image/video judging surfaces intact while application chrome
+   uses one consistent translucent material system. */
 
 :root {
   --ml-glass: rgba(16, 16, 18, .70);
@@ -20,7 +20,6 @@
   --ml-glass-shadow: 0 18px 55px rgba(55,45,32,.10);
 }
 
-/* All major chrome uses the same optical material. */
 header.topbar,
 aside.sidebar,
 .rail,
@@ -30,7 +29,8 @@ aside.sidebar,
 dialog,
 .wizard,
 details.panel .panel-body,
-.compare .pane header {
+.compare .pane header,
+.studio > section {
   background: var(--ml-glass);
   backdrop-filter: blur(24px) saturate(1.32);
   -webkit-backdrop-filter: blur(24px) saturate(1.32);
@@ -41,27 +41,24 @@ header.topbar,
 .stage-tools,
 .toolbar,
 dialog,
-.wizard {
+.wizard,
+.studio > section {
   box-shadow: inset 0 1px 0 var(--ml-glass-highlight), var(--ml-glass-shadow);
 }
 
 aside.sidebar,
-.rail {
-  background: var(--ml-glass-soft);
-  box-shadow: inset 0 1px 0 var(--ml-glass-highlight);
-}
+.rail { background: var(--ml-glass-soft); box-shadow: inset 0 1px 0 var(--ml-glass-highlight); }
 
-/* The app renders DETAILS panels, not SECTION panels. These rules intentionally
-   target the actual markup so the sidebar finally receives its designed state. */
+/* app.js renders DETAILS panels. The older stylesheet targeted SECTION.panel,
+   which left the intended styling unapplied. */
 details.panel {
   margin: 10px 10px 0;
   border: 1px solid var(--ml-glass-line);
   border-radius: 14px;
   overflow: clip;
   background: var(--ml-glass-soft);
-  box-shadow: inset 0 1px 0 var(--ml-glass-highlight);
+  box-shadow: inset 0 1px 0 var(--ml-glass-highlight), 0 9px 24px rgba(0,0,0,.10);
 }
-
 details.panel > summary {
   padding: 15px 16px;
   cursor: pointer;
@@ -72,28 +69,23 @@ details.panel > summary {
   gap: 8px;
   transition: color var(--t), background var(--t);
 }
-
 details.panel > summary:hover { color: var(--ink-2); background: rgba(255,255,255,.025); }
 details.panel > summary::-webkit-details-marker { display: none; }
 details.panel > summary::after {
-  content: "";
-  width: 7px;
-  height: 7px;
-  flex-shrink: 0;
-  border-right: 1px solid currentColor;
-  border-bottom: 1px solid currentColor;
-  transform: rotate(45deg) translate(-2px,-2px);
-  transition: transform var(--t);
+  content: ""; width: 7px; height: 7px; flex-shrink: 0;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor;
+  transform: rotate(45deg) translate(-2px,-2px); transition: transform var(--t);
 }
 details.panel[open] > summary::after { transform: rotate(225deg) translate(-2px,-2px); }
 details.panel[open] > summary { color: var(--gold-dim); }
 details.panel .panel-body { padding: 0 16px 18px; background: transparent; }
 
-/* Controls should look like controls made from the same material, not flat boxes. */
+/* Controls use the same material rather than flat opaque boxes. */
 .btn,
 .seg,
 input[type="text"],
 input[type="number"],
+input[type="password"],
 textarea,
 select,
 .dropzone,
@@ -101,28 +93,41 @@ select,
 .kbd,
 .statusrow button,
 .fixgrid button,
-.placement {
+.placement,
+.metrics,
+.qa-row .tri,
+.placement .decide,
+a.btn {
   background-color: rgba(255,255,255,.025);
   border-color: var(--ml-glass-line);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
 }
-
 .btn:hover,
 select:hover,
 input:hover,
-textarea:hover {
-  background-color: rgba(255,255,255,.045);
-}
+textarea:hover,
+a.btn:hover { background-color: rgba(255,255,255,.05); }
 
-/* Keep image/video judging surfaces neutral. Only their chrome becomes glass. */
+.metrics { gap: 1px; border-radius: 10px; overflow: hidden; }
+.metrics > div,
+.qa-row .tri button,
+.placement .decide button { background: rgba(255,255,255,.025); }
+.placement { border-radius: 11px; }
+.placement.active { background: rgba(201,168,106,.07); }
+.dropzone { border-radius: 11px; }
+
+/* Image/video judging surfaces stay optically neutral. */
 .stage,
 .viewport,
 .frame,
 .card .thumb,
 .compare .pane,
-.compare .pane .body { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.compare .pane .body {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 
-/* Board cards float above the ground without altering image color. */
+/* Board cards float above the ground without tinting the image itself. */
 .grid { gap: 12px; background: transparent; border: 0; }
 .card {
   overflow: hidden;
@@ -136,7 +141,18 @@ textarea:hover {
 .card .meta { background: transparent; }
 .card:hover { background: var(--ml-glass); }
 
-/* Explicit Studio/service selector: this is product navigation, not project data. */
+/* Voice Studio uses two glass work surfaces rather than flat split panes. */
+.studio { gap: 12px !important; padding: 12px; background: transparent !important; }
+.studio > section {
+  border: 1px solid var(--ml-glass-line);
+  border-radius: 16px;
+}
+#script { background: rgba(0,0,0,.10); border-radius: 12px; }
+audio { filter: saturate(.78); }
+.planline, .tellrow { border-color: var(--ml-glass-line) !important; }
+
+/* Explicit service selector: product navigation is visually distinct from the
+   separate project selector next to it. */
 .studio-service-switch {
   width: auto !important;
   min-width: 150px;
@@ -150,8 +166,18 @@ textarea:hover {
 }
 .studio-service-switch:focus { border-color: var(--gold-dim) !important; }
 
+/* Mobile reduces density without losing orientation. */
 @media (max-width: 900px) {
   details.panel { margin: 9px 9px 0; }
-  .studio-service-switch { min-width: 116px; max-width: 132px !important; }
+  .studio-service-switch { min-width: 112px; max-width: 132px !important; }
   header.topbar { gap: 8px; }
+  .studio { padding: 8px; gap: 8px !important; }
+  .studio > section { border-radius: 13px; }
+}
+
+@media (max-width: 640px) {
+  #projectSelect { max-width: 105px; }
+  #newProject { display: none; }
+  .brand strong { font-size: 15px; }
+  .studio-service-switch { min-width: 102px; max-width: 116px !important; }
 }
