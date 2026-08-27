@@ -111,6 +111,12 @@ p.sub { max-width: 62ch; color: var(--muted); margin-bottom: 40px; }
 .meter td { color: var(--muted); font-variant-numeric: tabular-nums; }
 .meter .cap { color: var(--gold); }
 .meternote { font-size: 12px; color: var(--faint); margin-top: 14px; max-width: 70ch; }
+.showcase { display:grid; grid-template-columns:1.2fr .8fr; gap:22px; align-items:start; margin-top:34px; }
+.product-shot, .proof-card { margin:0; padding:10px; border:1px solid var(--hair); background:var(--panel); box-shadow:0 24px 70px rgba(0,0,0,.16); }
+.product-shot img, .proof-card img { width:100%; display:block; border-radius:3px; }
+.product-shot figcaption { padding:10px 4px 2px; color:var(--faint); font-size:11px; }
+.proof-card { padding:18px; }
+.proof-card audio { width:100%; margin-top:10px; }
 
 /* faq */
 details.faq { border-bottom: 1px solid var(--hair-soft); }
@@ -131,6 +137,7 @@ footer .links { margin-left: auto; display: flex; gap: 22px; font-size: 12.5px; 
   .hero { padding: 70px 0 60px; }
   section { padding: 60px 0; }
   .meterwrap { overflow-x: auto; }
+  .showcase { grid-template-columns:1fr; }
 }
 </style>
 </head>
@@ -156,9 +163,9 @@ footer .links { margin-left: auto; display: flex; gap: 22px; font-size: 12.5px; 
 
 <header class="hero">
   <div class="wrap">
-    <span class="eyebrow">The judgment layer</span>
-    <h1>AI makes the pictures.<br><em>Someone</em> has to make them right.</h1>
-    <p class="lead">MaterialLogix is a studio suite for people who ship real campaigns with AI-assisted photos, video, and voice — reviewed like a creative director, measured like an engineer, rendered on hardware you already own.</p>
+    <span class="eyebrow">Photo · Video · Voice — one local creative studio</span>
+    <h1>Create it. Refine it.<br><em>Ship it right.</em></h1>
+    <p class="lead">MaterialLogix brings AI-assisted photo finishing, video production, and humanized voice performance into one Windows studio—with campaign review, placement checks, recovery, and clear local/cloud usage built in.</p>
     <div class="ctas">
       <a class="btn primary" href="#download">Download the local studio</a>
       <a class="btn" href="studio/?demo=1">Open the browser demo</a>
@@ -180,19 +187,23 @@ footer .links { margin-left: auto; display: flex; gap: 22px; font-size: 12.5px; 
         <div class="stat"><b>Cloud by consent</b><span>Execution location, progress, credits, and units stay visible in Jobs &amp; usage</span></div>
       </div>
     </div>
-    <p class="meternote">The downloadable Windows packet is being release-packaged. Until it is published, use the browser demo to review the interface; local engines require the installed application.</p>
+    <p class="meternote"><a href="https://github.com/kmarquisbakerus/materiallogix-studio/releases/download/v0.1.0-preview/MaterialLogix-Studio-Windows.zip">Download the Windows preview packet now.</a> It includes the Studio and local engine bridge; optional model packages install only when needed.</p>
+    <div class="showcase">
+      <figure class="product-shot"><img src="media/studio-review.png" alt="MaterialLogix Review Studio showing campaign direction, project settings, and Jobs and usage"><figcaption>Actual MaterialLogix Review Studio interface · captured from the application</figcaption></figure>
+      <figure class="product-shot"><img src="media/studio-voice.png" alt="MaterialLogix Voice Studio showing script direction and Sounds-AI checks"><figcaption>Actual MaterialLogix Voice Studio interface · captured from the application</figcaption></figure>
+    </div>
   </div>
 </section>
 
 <section id="products">
   <div class="wrap">
-    <span class="eyebrow">Three products · one bridge</span>
-    <h2 class="title">The suite</h2>
+    <span class="eyebrow">Three creative workflows · one studio</span>
+    <h2 class="title">Photo, Video, and Voice</h2>
     <p class="sub">Each product stands alone against its own competitor. Together they share one engine bridge — the free, open engines on your machine doing the heavy lifting, our judgment layer on top.</p>
     <div class="cards">
       <div class="card">
         <span class="tag">Flagship</span>
-        <h3>Review</h3>
+        <h3>Photo Studio</h3>
         <p>Import or generate campaign stills and video. Approve per placement — a shot can clear the website hero and fail TikTok in the same pass — then export a package a media buyer can run without a single question.</p>
         <ul>
           <li>Automated pre-flight: upscale, safe-zones, faces, duplicates of rejected takes</li>
@@ -202,25 +213,25 @@ footer .links { margin-left: auto; display: flex; gap: 22px; font-size: 12.5px; 
         </ul>
       </div>
       <div class="card">
-        <span class="tag">Standalone</span>
-        <h3>Voice Studio</h3>
-        <p>Script in, performance out. A plan of pauses, breaths, and emphasis directs the render; the humanizer chain and the sounds-AI check make sure nobody can tell — because we measure the tells your ear catches.</p>
+        <span class="tag">Complete-package processing</span>
+        <h3>Video Studio</h3>
+        <p>Compile the complete source package once, render locally or send one cloud job, track progress in the Jobs rail, and approve the finished motion asset against every placement where it will run.</p>
         <ul>
-          <li>Generous monthly allowances — priced for real workloads</li>
-          <li>Voice packs you own, from consented recordings only</li>
-          <li>Room tone, breath, and dynamics verified on every take</li>
-          <li>Half the price of the big names</li>
+          <li>One compiled cloud package—not a charge per frame</li>
+          <li>Timeline sampling and timestamped review notes</li>
+          <li>Local GPU rendering with CPU fallback</li>
+          <li>Duration rounded once in 10-second blocks</li>
         </ul>
       </div>
       <div class="card">
-        <span class="tag">In your pocket</span>
-        <h3>The phone app</h3>
-        <p>No app store. Open it from your browser, add it to your home screen, and it becomes the capture device and the approval surface — while your computer, on the same Wi-Fi, does the rendering.</p>
+        <span class="tag">Humanized locally</span>
+        <h3>Voice Studio</h3>
+        <p>Script in, performance out. Twelve house performance profiles, a plan of pauses, breaths, and emphasis, a humanizer chain, and a Sounds-AI check guide every take.</p>
         <ul>
-          <li>Review, approve, and comment from anywhere in the house</li>
-          <li>Guided 360° identity capture with live angle tracking</li>
-          <li>Renders on your desktop GPU or cloud credits</li>
-          <li>Installs in ten seconds, weighs almost nothing</li>
+          <li>12 house directions plus consented voice packs you own</li>
+          <li>GPU rendering with CPU fallback</li>
+          <li>Room tone, breath, dynamics, and sibilance checks</li>
+          <li>Local rendering without a provider fee</li>
         </ul>
       </div>
     </div>
@@ -229,10 +240,12 @@ footer .links { margin-left: auto; display: flex; gap: 22px; font-size: 12.5px; 
 
 <section id="hear">
   <div class="wrap">
-    <span class="eyebrow">A house voice worth keeping</span>
-    <h2 class="title">The next voice you hear here will be the approved one.</h2>
-    <p class="sub">We removed the earlier voice samples. The replacement will be a lower-register Middle Atlantic/urban performance rendered through MaterialLogix Voice Studio, finished by the humanizer, and cleared by the Sounds-AI checks. We will not fill this space with an unrelated sample.</p>
-    <div class="band"><div><h3>Consent first. Proof second.</h3><p>Every public voice must come from cleared talent or an explicitly consented pack. The final sample will publish with its performance direction and measured quality result.</p></div><div class="stats"><div class="stat"><b>Lower register</b><span>Grounded, confident, contemporary</span></div><div class="stat"><b>Middle Atlantic / urban</b><span>Regional direction without caricature</span></div><div class="stat"><b>Product-made</b><span>No unrelated marketing replacement</span></div></div></div>
+    <span class="eyebrow">Real output from the application</span>
+    <h2 class="title">See and hear the local Studio.</h2>
+    <p class="sub">These QA outputs were created by MaterialLogix itself—not substituted marketing generators. The public voice sample ran through the local synthesis and humanizer path; the photo proof ran through the local 4× upscaler.</p>
+    <div class="proof-card"><b>MaterialLogix Voice QA render</b><audio controls preload="metadata" src="media/voice-qa.wav"></audio></div>
+    <div class="band"><div><h3>Consent first. Proof second.</h3><p>House voices are performance directions from local open models; personal voice packs require your own or released recordings. MaterialLogix does not scrape public people to imitate them.</p></div><div class="stats"><div class="stat"><b>District</b><span>Lower-register Middle Atlantic / urban direction</span></div><div class="stat"><b>12 profiles</b><span>Regional, register, pace, and performance choices</span></div><div class="stat"><b>Product-made</b><span>No unrelated marketing replacement</span></div></div></div>
+    <div class="showcase"><div class="proof-card"><span class="eyebrow">Photo proof</span><h3>4× local upscale output</h3><img src="media/upscale-qa.png" alt="Image upscaled four times by the local MaterialLogix Real-ESRGAN pipeline"><p>Generated by the bundled Real-ESRGAN workflow during application QA.</p></div><figure class="product-shot"><img src="media/studio-voice.png" alt="Actual MaterialLogix Voice Studio interface"><figcaption>Performance planner, local engine state, humanizer, Sounds-AI checks, and Jobs &amp; usage</figcaption></figure></div>
   </div>
 </section>
 

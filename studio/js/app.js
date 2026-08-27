@@ -440,17 +440,17 @@ function generatePanel() {
 /** Pull the bundled demo assets so a first-run stranger has something real
  *  to judge in ninety seconds. Files come from /samples on the server. */
 async function loadDemo() {
-  const names = ['demo-chair.jpg', 'demo-wide.jpg', 'demo-portrait.jpg', 'demo-vertical.jpg', 'demo-clip.mp4'];
+  const names = ['upscale-qa.png'];
   const files = [];
   for (const n of names) {
     try {
       const r = await fetch('samples/' + n);
       if (!r.ok) continue;
       const b = await r.blob();
-      files.push(new File([b], n, { type: n.endsWith('.mp4') ? 'video/mp4' : 'image/jpeg' }));
+      files.push(new File([b], n, { type: b.type || 'image/png' }));
     } catch { /* skip */ }
   }
-  if (!files.length) return toast('Demo assets are not bundled with this install.', true);
+  if (!files.length) return toast('The product-made QA proof could not be loaded.', true);
   if (!state.project.brief.campaignGoal) {
     state.project.brief.brand = state.project.brief.brand || 'Demo';
     state.project.brief.campaignGoal = 'Demo \u2014 app launch, paid social and web hero';

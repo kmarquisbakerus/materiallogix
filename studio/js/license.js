@@ -9,7 +9,8 @@
 import { LICENSE_PUBLIC_JWK } from './license-key.js';
 
 const b64uToBytes = s => {
-  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  const normalized = s.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(normalized + '='.repeat((4 - normalized.length % 4) % 4));
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
@@ -39,7 +40,10 @@ export async function verifyLicense(key) {
     if (payload.v !== 1 || !payload.plan) return null;
     // Term keys expire (grace already baked in at issue time). Keys without
     // exp are perpetual (early/dev keys).
-    if (payload.exp && new Date(payload.exp + 'T23:59:59') < new Date()) {
+    const expiresAt = Number.isFinite(payload.exp_ts)
+      ? payload.exp_ts * 1000
+      : payload.exp ? new Date(payload.exp + 'T23:59:59Z').getTime() : null;
+    if (expiresAt && expiresAt < Date.now()) {
       return null;
     }
     return payload;
@@ -50,7 +54,7 @@ export async function verifyLicense(key) {
 
 const STORE = 'cros:license';
 const CHECK_STORE = 'cros:licenseCheck';
-const CHECK_URL = 'https://materiallogix.com/api/license/check';
+const CHECK_URL = 'https://studio.materiallogix.com/api/license/check';
 const CHECK_EVERY_H = 24;        // ping at most daily
 export const GRACE_DAYS = 3;     // founder's spec: offline past this locks licensed features
 
@@ -71,19 +75,32 @@ async function revalidate(key) {
       });
       if (res.ok) {
         const j = await res.json();
-        if (j.ok === false) { rec.revoked = true; }
-        else { rec.okAt = now; rec.revoked = false; }
+        if (j.ok === false) { rec.revoked = true; rec.reason = j.error || 'revoked'; }
+        else {
+          rec.okAt = now;
+          rec.revoked = false;
+          rec.reason = null;
+          rec.entitlements = j.entitlements || {};
+          if (typeof j.replacementKey === 'string') {
+            const replacement = await verifyLicense(j.replacementKey);
+            if (replacement) {
+              localStorage.setItem(STORE, j.replacementKey.trim());
+              key = j.replacementKey.trim();
+              rec.replacedAt = now;
+            }
+          }
+        }
       }
       // Non-200 or network error: treated as offline; grace applies.
     } catch { /* offline: grace applies */ }
   }
   try { localStorage.setItem(CHECK_STORE, JSON.stringify(rec)); } catch { /* full */ }
-  if (rec.revoked) return { valid: false, reason: 'revoked' };
+  if (rec.revoked) return { valid: false, reason: rec.reason || 'revoked' };
   const anchor = rec.okAt || rec.first;
   if ((now - anchor) > GRACE_DAYS * 86400e3) {
     return { valid: false, reason: 'offline' };
   }
-  return { valid: true };
+  return { valid: true, key, entitlements: rec.entitlements || {} };
 }
 
 /** The active, verified license ({plan, email, iss}) or null. */
@@ -98,6 +115,11 @@ export async function activeLicense() {
       payload.suspended = check.reason;   // signature stands; features do not
       return { ...payload, plan: 'suspended:' + payload.plan, reason: check.reason };
     }
+    if (check.key && check.key !== key) {
+      const replacement = await verifyLicense(check.key);
+      if (replacement) return { ...replacement, entitlements: check.entitlements };
+    }
+    payload.entitlements = check.entitlements;
   }
   return payload;
 }
@@ -107,6 +129,10 @@ export async function activate(key) {
   const payload = await verifyLicense(key);
   if (payload) localStorage.setItem(STORE, key.trim());
   return payload;
+}
+
+export function activeLicenseKey() {
+  return localStorage.getItem(STORE);
 }
 
 export function deactivate() { localStorage.removeItem(STORE); localStorage.removeItem(CHECK_STORE); }
