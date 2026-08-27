@@ -67,6 +67,7 @@ export function decisionsJson(project, assets) {
       notes: a.notes,
       qa: a.qa,
       fixes: a.fixes || [],
+      rejectionFeedback: a.rejectionFeedback || undefined,
       video: a.kind === 'video' ? a.video : undefined,
       placements: Object.fromEntries(
         Object.entries(a.placements || {}).map(([id, p]) => [id, {
@@ -143,7 +144,8 @@ export function decisionsMarkdown(project, assets) {
     for (const a of dead) {
       const failed = Object.entries(a.qa || {}).filter(([, v]) => v === 'fail')
         .map(([k]) => QA_BY_ID[k]?.label || k).join('; ');
-      L.push(`| ${a.filename} | ${STATUS_BY_ID[a.status]?.label || a.status} | ${a.notes || failed || ''} |`);
+      const feedback = (a.rejectionFeedback?.reasons || []).join('; ');
+      L.push(`| ${a.filename} | ${STATUS_BY_ID[a.status]?.label || a.status} | ${a.rejectionFeedback?.note || feedback || a.notes || failed || ''} |`);
     }
     L.push('');
   }
@@ -201,6 +203,8 @@ export function rejectedRecord(assets) {
     if (failed.length) L.push(`- Failed checks: ${failed.join(', ')}`);
     if (a.kind === 'video' && a.video.looksAI) L.push('- Flagged: reads as AI');
     if (a.kind === 'video' && a.video.recast) L.push('- Requested: recast / replace talent');
+    if (a.rejectionFeedback?.reasons?.length) L.push(`- Rejection reasons: ${a.rejectionFeedback.reasons.join(', ')}`);
+    if (a.rejectionFeedback?.note) L.push(`- Rejection detail: ${a.rejectionFeedback.note}`);
     if (a.notes) L.push(`- Notes: ${a.notes}`);
     L.push('');
   }
@@ -273,6 +277,12 @@ export function videoNotes(project, assets) {
   const vids = assets.filter(a => a.kind === 'video' && Object.values(a.placements || {}).some(p => p.decision === 'approved'));
   const L = ['# Video notes for the editor', '',
     'Crops and trims below are decisions, not renders. Apply them in the edit.', ''];
+  if (project.brandOverlay?.assetId) {
+    const logo = assets.find(a => a.id === project.brandOverlay.assetId);
+    L.push('## Brand overlay', '',
+      `Apply supplied artwork \`${logo?.filename || project.brandOverlay.assetId}\` as-is at ${project.brandOverlay.position || 'bottom-right'}, ${project.brandOverlay.widthPct || 18}% frame width, opacity ${project.brandOverlay.opacity ?? 1}.`,
+      'See `BRAND_OVERLAY.json` for machine-readable render settings.', '');
+  }
   if (!vids.length) L.push('_No approved video._');
   for (const a of vids) {
     L.push(`## ${a.filename}`, '');
@@ -318,6 +328,7 @@ export async function buildPackage(project, assets, onProgress = () => {}, extra
   add('rejected/REJECTED_RECORD.md', rejectedRecord(assets));
   if (assets.some(a => (a.fixes || []).length)) add('RETOUCH_LIST.md', retouchListMarkdown(project, assets));
   for (const [name, body] of Object.entries(extraDocs)) add(name, body);
+  if (project.brandOverlay?.assetId) add('BRAND_OVERLAY.json', JSON.stringify(project.brandOverlay, null, 2));
 
   // Cache decoded sources so an asset approved for six surfaces decodes once.
   const sources = new Map();
@@ -336,6 +347,25 @@ export async function buildPackage(project, assets, onProgress = () => {}, extra
     return entry;
   }
 
+  async function applyBrandOverlay(canvas) {
+    const config = project.brandOverlay;
+    if (!config?.assetId) return;
+    const logoAsset = assets.find(a => a.id === config.assetId && a.role === 'logo');
+    if (!logoAsset) return;
+    const { source, w, h } = await sourceFor(logoAsset);
+    const width = canvas.width * Math.max(0.05, Math.min(0.6, Number(config.widthPct || 18) / 100));
+    const height = width * (h / w);
+    const margin = canvas.width * Math.max(0, Math.min(0.15, Number(config.marginPct || 4) / 100));
+    const positions = {
+      'top-left':[margin,margin], 'top-right':[canvas.width-width-margin,margin],
+      'bottom-left':[margin,canvas.height-height-margin], 'bottom-right':[canvas.width-width-margin,canvas.height-height-margin],
+      center:[(canvas.width-width)/2,(canvas.height-height)/2]
+    };
+    const [x,y] = positions[config.position] || positions['bottom-right'];
+    const ctx = canvas.getContext('2d');
+    ctx.save(); ctx.globalAlpha = Math.max(0.1, Math.min(1, Number(config.opacity ?? 1))); ctx.drawImage(source,x,y,width,height); ctx.restore();
+  }
+
   let done = 0;
   const failures = [];
   const scratch = document.createElement('canvas');
@@ -349,6 +379,7 @@ export async function buildPackage(project, assets, onProgress = () => {}, extra
       const crop = placement.crop || defaultCrop(w, h, surface);
       const target = proof ? proofSurface(surface) : surface;
       const canvas = renderCrop(source, w, h, crop, target, placement.fill || 'crop', scratch);
+      await applyBrandOverlay(canvas);
       if (proof) applyProofWatermark(canvas, 'MATERIALLOGIX STUDIO · PROOF — NOT FOR PRODUCTION — DO NOT COPY');
       const bytes = canvasToBytes(canvas, 'image/jpeg', proof ? 0.8 : 0.92);
       const dir = asset.kind === 'video' ? 'video/reference-frames' : `approved/${surface.id}`;

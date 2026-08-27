@@ -86,6 +86,19 @@ export const ASSET_STATUSES = [
 
 export const STATUS_BY_ID = Object.fromEntries(ASSET_STATUSES.map(s => [s.id, s]));
 
+export const REJECTION_REASONS = [
+  { id: 'reference-mismatch', label: 'Does not match the reference / identity' },
+  { id: 'face-anatomy', label: 'Face, hands, body, or anatomy is wrong' },
+  { id: 'artifacts-quality', label: 'Artifacts, blur, texture, or quality problem' },
+  { id: 'composition', label: 'Wrong composition, crop, pose, or framing' },
+  { id: 'style-brand', label: 'Wrong style, mood, color, or brand fit' },
+  { id: 'text-logo', label: 'Text, logo, product, or packaging is wrong' },
+  { id: 'sexual-content', label: 'Unwanted nudity, sexual, or pornographic content' },
+  { id: 'violence-hate', label: 'Violence, hate, harassment, or disturbing content' },
+  { id: 'rights-consent', label: 'Rights, consent, likeness, or provenance concern' },
+  { id: 'other', label: 'Other' }
+];
+
 export const PLACEMENT_DECISIONS = [
   { id: 'pending', label: 'Pending' },
   { id: 'approved', label: 'Approved' },
@@ -188,6 +201,7 @@ export function newProject(name) {
     },
     surfaces: ['web-hero-desktop', 'web-hero-mobile', 'ig-feed-portrait', 'tiktok-feed', 'meta-feed'],
     qaPreset: 'human',
+    brandOverlay: { assetId: '', position: 'bottom-right', widthPct: 18, marginPct: 4, opacity: 1 },
     providers: {}
   };
 }
@@ -212,6 +226,7 @@ export function newAsset(projectId, file) {
     provenance: '',
     qa: {},
     fixes: [],
+    rejectionFeedback: { reasons: [], note: '', shareForImprovement: false, recordedAt: '' },
     placements: {},
     video: { trimStart: '', trimEnd: '', hook: '', believability: 0, looksAI: false, recast: false, cropNote: '', posterTime: null, comments: [] },
     width: 0,

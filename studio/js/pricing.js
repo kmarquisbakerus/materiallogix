@@ -65,7 +65,10 @@ export function price(productId, termId) {
 // ---------------------------------------------------------------------------
 // Monthly production units (founder's rule: nothing is unlimited — value
 // justifies limits, and limits justify the price).
-//   1 unit  = one clean image render (export crop or upscale)
+//   1 unit  = one clean image render (export crop)
+//   UPSCALING CONSUMES NO UNITS: local upscaling (image and video) is
+//   unlimited on every paid plan — the founder's Topaz-killer. Renders are
+//   metered; enhancement is not. Video ships 1080-first; 4K is opt-in.
 //   1 unit  = one minute of rendered voice (rounded up per render)
 //   4 units = one minute of rendered video
 // Local renders cost us $0, so units price VALUE, not cost — overage can
@@ -73,6 +76,51 @@ export function price(productId, termId) {
 
 export const MONTHLY_UNITS = { lite: 100, voice: 500, review: 500, complete: 1000, pro: 2500 };
 export const OVERAGE = { units: 100, price: 5 };   // $5 per +100 units, any tier
+
+// Customer-visible prepaid cloud rates. The server must authorize the quoted
+// amount before submission and settle the actual amount afterward. Local work
+// never draws from this balance.
+export const CLOUD_PRICING = {
+  imageUpscale: { price: 0.10, unit: 'image', estimatedCost: 0.01 },
+  voiceRender: { price: 0.25, unit: 'minute', estimatedCost: 0.10 },
+  videoUpscale: { price: 3.00, unit: 'output minute', estimatedCostLow: 0.40, estimatedCostHigh: 0.80 },
+  minimumPack: 10,
+  prepaidOnly: true,
+  autoCharge: false
+};
+
+export const CLOUD_BILLING_INCREMENT_SECONDS = 10;
+
+/** Quote one compiled cloud package. Duration is rounded once at job level,
+ * never once per frame or clip. Money is returned in cents for safe billing. */
+export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
+  if (kind === 'image') {
+    const count = Math.max(1, Math.ceil(Number(imageCount) || 0));
+    return { kind, billedSeconds: 0, blocks: count, amountCents: count * 10 };
+  }
+  const seconds = Math.max(0, Number(durationSeconds) || 0);
+  const billedSeconds = Math.ceil(seconds / CLOUD_BILLING_INCREMENT_SECONDS) * CLOUD_BILLING_INCREMENT_SECONDS;
+  const rate = kind === 'voice' ? CLOUD_PRICING.voiceRender.price : CLOUD_PRICING.videoUpscale.price;
+  return {
+    kind,
+    billedSeconds,
+    blocks: billedSeconds / CLOUD_BILLING_INCREMENT_SECONDS,
+    amountCents: Math.round((billedSeconds / 60) * rate * 100)
+  };
+}
+
+// Cloud video upscaling: viable ONLY as one batched GPU job per video
+// (per-second billing ~= $0.40-0.80/output-min at 1080p->4K), never as
+// per-frame runs (that costs ~$3.30/min and bleeds). Hard constraints:
+// Fallback policy: local first, always; if local fails or no engine is
+// detected, licensed users are offered the cloud lane automatically,
+// spending their tier's included minutes/credits. Free tier: no fallback.
+export const CLOUD_VIDEO = {
+  maxOutput: '4K',            // resolution ceiling
+  maxJobMinutes: 5,           // per-job length cap
+  includedMinutes: { lite: 0, voice: 0, review: 10, complete: 20, pro: 30 },  // founder's ladder; owned hardware makes it nearly free
+  pricePerMinute: 3           // beyond included: prepaid credits, $3/min (~4-7x cost)
+};
 
 // Quality lanes: what each tier's renders run through. Free is a real
 // preview lane — capable, capped, and always watermarked. Paid lanes get the

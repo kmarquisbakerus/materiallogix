@@ -3,25 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0a0a0b">
-<link rel="canonical" href="https://voice.materiallogix.com">
 <title>Voice Studio — MaterialLogix</title>
-<script>
-if (location.hostname.endsWith('github.io')) {
-  const target = new URL('https://voice.materiallogix.com');
-  target.search = location.search;
-  target.hash = location.hash;
-  location.replace(target.toString());
-}
-</script>
 <script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/app.css">
-<link rel="stylesheet" href="css/glass-surfaces.css">
 <style>
-  .studio { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr); gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
+  .studio { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr) 264px; gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
   .studio > section { background: var(--ground); padding: 26px 28px; overflow-y: auto; }
   .studio h2 { font: 300 22px/1.2 var(--serif); margin: 0 0 4px; }
   .studio p.lead { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; line-height: 1.6; }
@@ -37,6 +26,7 @@ if (location.hostname.endsWith('github.io')) {
   .knob { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
   .knob input[type=range] { flex: 1; accent-color: var(--gold); }
   .knob .v { font: 400 11px/1 var(--mono); color: var(--muted); width: 34px; text-align: right; }
+  @media (max-width: 1100px) { .studio { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } .activity-rail{display:none} }
   @media (max-width: 900px) { .studio { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -44,16 +34,13 @@ if (location.hostname.endsWith('github.io')) {
 <div id="app">
   <header class="topbar">
     <div class="brand">
-      <strong>Studio</strong>
+      <strong>Voice Studio</strong>
       <span>MaterialLogix</span>
     </div>
-    <select id="studioServiceSelect" class="studio-service-switch" aria-label="MaterialLogix Studio service">
-      <option value="review">Review</option>
-      <option value="voice" selected>Voice Studio</option>
-    </select>
+    <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../">MaterialLogix</a><span>/</span><a href="index.html">Studio</a><span>/</span><b>Voice</b></nav>
     <div class="spacer"></div>
     <span class="note" id="engineState" style="font-size:12px;color:var(--muted)">checking engine…</span>
-    <button class="btn sm" type="button" id="themeBtn" aria-label="Switch light and dark theme" title="Light / dark">◐</button>
+    <a class="btn sm" href="index.html" style="text-decoration:none">Review app</a>
   </header>
 
   <div class="studio">
@@ -107,10 +94,11 @@ It is knowing which one is *right*. That is what MaterialLogix Studio is for.</t
       <p class="lead">Run after every render. These are the tells human ears catch — the render is not done until they clear.</p>
       <div id="tells"><p class="lead">Nothing rendered yet.</p></div>
     </section>
+    <aside class="activity-rail" id="activityRail" aria-label="Jobs, execution location, progress, and usage"></aside>
   </div>
 </div>
 
-<script type="module" src="js/studio-nav.js"></script>
+<script type="module" src="js/activity.js"></script>
 <script type="module">
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
@@ -118,16 +106,8 @@ import { recordExport, planRemaining, MONTHLY_UNITS } from './js/pricing.js';
 import { bridgeFetch } from './js/generate.js';
 
 const $ = s => document.querySelector(s);
-const isPrivateHost = h => /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || h.endsWith('.local');
-const BRIDGE_HOST = isPrivateHost(location.hostname) ? location.hostname : '127.0.0.1';
-const BRIDGE = `http://${BRIDGE_HOST}:8189`;
+const BRIDGE = `http://${location.hostname || '127.0.0.1'}:8189`;
 let engineReady = false;
-
-$('#themeBtn').onclick = () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  localStorage.setItem('cros:theme', next);
-};
 
 async function checkEngine() {
   try {
@@ -143,7 +123,7 @@ async function checkEngine() {
       ? (j.voice.warm ? 'engine warm — renders are fast' : 'engine installed — first render loads the model (~30s)')
       : 'voice engine not installed — Humanize-a-file still works';
   } catch {
-    $('#engineState').textContent = 'local bridge offline — start it with: python engine.py';
+    $('#engineState').textContent = 'bridge offline — start it with: python engine.py';
   }
   $('#render').disabled = !engineReady;
 }
@@ -157,7 +137,7 @@ function paintPlan() {
       className: 'planline',
       innerHTML: `${s.breathBefore ? '<span class="breath">BREATH</span>' : ''}
         <span class="t">${s.text.replace(/</g, '&lt;')}</span>
-        <span class="meta">×${s.rate} · ${s.pauseAfterMs}ms${s.emphasis.length ? ' · emph: ' + s.emphasis.join(',') : ''}</span>`
+        <span class="meta">${s.intent} · ×${s.rate} · energy ${s.energy} · ${s.pauseAfterMs}ms${s.emphasis.length ? ' · emph: ' + s.emphasis.join(',') : ''}</span>`
     })));
   return plan;
 }
@@ -177,10 +157,15 @@ async function analyse(buffer) {
   rows.push(row(t.silenceFloorDb > -90, `Room tone floor: ${t.silenceFloorDb} dB ${t.silenceFloorDb > -90 ? '(alive)' : '(digital silence — AI tell)'}`));
   rows.push(row(t.loudnessCv >= 0.18, `Loudness variation: ${t.loudnessCv} ${t.loudnessCv >= 0.18 ? '(human dynamics)' : '(flat — AI tell)'}`));
   rows.push(row(!(t.pauseCount > 3 && t.pauseJitter < 0.2), `Pause rhythm: ${t.pauseCount} pauses, jitter ${t.pauseJitter} ${t.pauseCount > 3 && t.pauseJitter < 0.2 ? '(metronome — AI tell)' : '(natural)'}`));
+  rows.push(row(t.clipPercent <= 0.02, `Peak integrity: ${t.clipPercent}% clipped samples ${t.clipPercent <= 0.02 ? '(clear)' : '(clipping)'}`));
+  rows.push(row(t.transientClicks <= Math.max(2, buffer.duration * 0.8), `Transient scan: ${t.transientClicks} click-like edges`));
+  rows.push(row(t.sibilanceIndex <= 0.42, `Sibilance index: ${t.sibilanceIndex} ${t.sibilanceIndex <= 0.42 ? '(controlled)' : '(too hard)'}`));
+  rows.push(row(t.crestFactorDb >= 5, `Dynamic crest: ${t.crestFactorDb} dB ${t.crestFactorDb >= 5 ? '(breathing)' : '(over-compressed)'}`));
   $('#tells').replaceChildren(...rows);
 }
 
 function offerDownload(buffer) {
+  // AudioBuffer -> 16-bit wav
   const len = buffer.length, sr = buffer.sampleRate;
   const bytes = new ArrayBuffer(44 + len * 2);
   const v = new DataView(bytes);
@@ -208,18 +193,19 @@ async function playAndCheck(arrayBuffer) {
     const units = Math.max(1, Math.ceil(decoded.duration / 60));
     if (planRemaining(lic) < units) {
       $('#status').textContent = `monthly allowance reached (${MONTHLY_UNITS[lic.plan]} units) — add units from the pricing page, or render stamped previews free.`;
-      preview = true;
+      preview = true;   // fall through to stamped preview instead of clean
     } else {
       recordExport(units);
     }
   }
   if (preview || !covers(lic, 'voice')) {
+    // Free tier: spoken stamps at start, middle, and end - uncroppable by design.
     try {
       const stampRes = await fetch('assets/preview-stamp.wav');
       const stampBuf = await ctx.decodeAudioData(await stampRes.arrayBuffer());
       decoded = await stampPreview(decoded, stampBuf);
       preview = true;
-    } catch { /* local preview stamp unavailable in development */ }
+    } catch { /* stamp asset missing: continue unstamped in dev */ }
   }
   $('#status').textContent = 'humanizing…';
   const humanized = await humanizeBuffer(decoded);
@@ -230,6 +216,8 @@ async function playAndCheck(arrayBuffer) {
   $('#player').hidden = false;
   $('#status').textContent = 'done — listen, then teach the ear below';
 
+  // Every keep/reject is a labeled example: the gate's thresholds learn
+  // the owner's taste from these.
   const old = document.getElementById('earTeach');
   if (old) old.remove();
   const row = document.createElement('div');
@@ -252,7 +240,7 @@ async function playAndCheck(arrayBuffer) {
       const j = await r.json();
       label.textContent = `Learned (${j.total} rating${j.total === 1 ? '' : 's'} so far) — thresholds sharpen as you rate.`;
       row.querySelectorAll('button').forEach(b => b.remove());
-    } catch { label.textContent = 'Could not reach the local bridge to record that.'; }
+    } catch { label.textContent = 'Could not reach the bridge to record that.'; }
   };
   for (const [v, txt] of [['keep', 'Good'], ['reject', 'Off']]) {
     const b = document.createElement('button');
@@ -276,10 +264,12 @@ $('#render').onclick = async () => {
       $('#status').textContent = 'translating…';
       const tr = await bridgeFetch(BRIDGE + '/translate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: plan.segments.map(s => s.text).join('\n'), to: lang })
+        body: JSON.stringify({ text: plan.segments.map(s => s.text).join('
+'), to: lang })
       });
       if (!tr.ok) throw new Error((await tr.json().catch(() => ({}))).error || 'translation failed');
-      const lines = (await tr.json()).text.split('\n');
+      const lines = (await tr.json()).text.split('
+');
       segments = plan.segments.map((s, i) => ({ ...s, text: lines[i] || s.text }));
       $('#status').textContent = 'rendering in Spanish… (first run downloads the multilingual model — several GB, one time)';
     }
@@ -327,6 +317,7 @@ async function savePack(blob) {
     return;
   }
   const j = await res.json();
+  // Listen-before-trust: play the cleaned reference, keep or discard.
   const holder = $('#recState');
   holder.replaceChildren();
   const player = document.createElement('audio');
@@ -335,7 +326,8 @@ async function savePack(blob) {
   player.src = `${BRIDGE}/voicepack?name=${encodeURIComponent(name)}&t=${Date.now()}`;
   const note = document.createElement('span');
   note.textContent = j.refined
-    ? `Cleaned. ${(j.report || '').replace(/\n/g, ' · ')} — listen, then keep it or discard and re-record.`
+    ? `Cleaned. ${(j.report || '').replace(/
+/g, ' · ')} — listen, then keep it or discard and re-record.`
     : `Saved without cleaning (${j.note || 'refinery unavailable'}) — listen before using.`;
   const keep = document.createElement('button');
   keep.className = 'btn'; keep.type = 'button'; keep.textContent = 'Keep this voice';
@@ -355,7 +347,7 @@ async function savePack(blob) {
 
 let rec = null, chunks = [];
 $('#recBtn').onclick = async () => {
-  if (rec) {
+  if (rec) {   // stop
     rec.stop();
     return;
   }
@@ -367,6 +359,7 @@ $('#recBtn').onclick = async () => {
     rec.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       $('#recBtn').textContent = 'Record yours';
+      // decode + re-encode to wav so the engine gets clean PCM
       const ab = await new Blob(chunks).arrayBuffer();
       const ctx = new AudioContext();
       const buf = await ctx.decodeAudioData(ab);
@@ -398,6 +391,9 @@ $('#packFile').onchange = async e => {
   if (!files.length) return;
   if (files.length === 1) return savePack(files[0]);
 
+  // Composite pack: several cleared voices blended into one reference that is
+  // no single person. Sources must be consented or CC0 (e.g. Common Voice) -
+  // blending does not launder unlicensed audio.
   $('#recState').textContent = `Blending ${files.length} voices into one composite pack…`;
   const ctx = new AudioContext();
   const buffers = [];
@@ -406,13 +402,14 @@ $('#packFile').onchange = async e => {
     catch { $('#recState').textContent = `Could not decode ${f.name}`; return; }
   }
   const sr = 24000;
-  const perClip = 9;
+  const perClip = 9;                       // seconds of each voice
   const gap = Math.round(sr * 0.25);
   const clipLen = sr * perClip;
   const total = buffers.length * (clipLen + gap);
   const off = new OfflineAudioContext(1, total, sr);
   let at = 0;
   for (const b of buffers) {
+    // rough loudness match so no donor dominates the conditioning
     let sum = 0;
     const d = b.getChannelData(0);
     for (let i = 0; i < d.length; i += 97) sum += d[i] * d[i];

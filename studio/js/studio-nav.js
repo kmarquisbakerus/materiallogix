@@ -52,18 +52,12 @@ installPreviewGate();
 
 const select = document.querySelector('#studioServiceSelect');
 if (select) {
-  const host = location.hostname.toLowerCase();
   const here = location.pathname.toLowerCase();
-  const familyHost = host.endsWith('.materiallogix.com');
-  select.value = host === 'voice.materiallogix.com' || here.endsWith('/voice.html') || here.endsWith('/voice') ? 'voice' : 'review';
-
+  select.value = here.endsWith('/voice.html') || here.endsWith('/voice') ? 'voice' : 'review';
   select.addEventListener('change', () => {
     const query = location.search || '';
     const hash = location.hash || '';
-    if (familyHost) {
-      location.href = (select.value === 'voice' ? 'https://voice.materiallogix.com' : 'https://studio.materiallogix.com') + query + hash;
-      return;
-    }
-    location.href = select.value === 'voice' ? `voice.html${query}${hash}` : `index.html${query}${hash}`;
+    const target = select.value === 'voice' ? `voice.html${query}${hash}` : `index.html${query}${hash}`;
+    location.href = target;
   });
 }

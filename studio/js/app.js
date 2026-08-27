@@ -1,6 +1,6 @@
 import {
   SURFACE_GROUPS, SURFACE_BY_ID, ASSET_STATUSES, STATUS_BY_ID,
-  ASSET_ROLES, QA_CHECKS, QA_BY_ID, QA_PRESETS, PRESET_BY_ID, PROVIDERS, FIX_PRESETS, SURFACE_PRESETS,
+  ASSET_ROLES, QA_CHECKS, QA_BY_ID, QA_PRESETS, PRESET_BY_ID, PROVIDERS, FIX_PRESETS, SURFACE_PRESETS, REJECTION_REASONS,
   newProject, newAsset, newPlacement
 } from './model.js';
 import * as store from './store.js';
@@ -73,7 +73,7 @@ function dialog(title, body, buttons) {
   if (!d.open) d.showModal();
   return d;
 }
-const closeDialog = () => $('#dlg').close();
+const closeDialog = () => { const d = $('#dlg'); d.close(); d.classList.remove('feedback-popover'); };
 const btn = (label, cls = 'btn', onclick) => {
   const b = el('button', { className: cls, type: 'button' }, label);
   if (onclick) b.onclick = onclick;
@@ -490,7 +490,8 @@ function renderSidebar() {
     briefField('mustHave', 'Must have', true),
     briefField('mustAvoid', 'Must avoid', true),
     briefField('brandRules', 'Brand rules — include #hex colours', true),
-    briefField('rejectedStyles', 'Rejected styles (memory)', true)
+    briefField('rejectedStyles', 'Rejected styles (memory)', true),
+    brandOverlayControls()
   );
 
   const surfBody = SURFACE_GROUPS.map(g => el('div', { className: 'surface-group' },
@@ -1308,6 +1309,7 @@ function metaBlock(asset) {
   for (const s of ASSET_STATUSES) {
     const b = el('button', { className: asset.status === s.id ? 'on' : '', title: s.hint, dataset: { s: s.id } }, s.label);
     b.onclick = () => {
+      if (s.id === 'rejected' || s.id === 'needs-new-generation') return rejectionDialog(asset, s);
       mutate(asset, `status → ${s.label}`, () => { asset.status = s.id; });
       renderReview(); renderCounters();
     };
@@ -1337,6 +1339,55 @@ function metaBlock(asset) {
     text('provenance', 'Rights and provenance', 'Model, source, licence, release', true),
     text('notes', 'Reviewer notes', 'Why this passed or failed', true));
   return wrap;
+}
+
+function brandOverlayControls() {
+  const config = state.project.brandOverlay ||= { assetId: '', position: 'bottom-right', widthPct: 18, marginPct: 4, opacity: 1 };
+  const logos = state.assets.filter(a => a.role === 'logo');
+  const logo = el('select', {}, el('option', { value: '' }, 'No logo overlay'));
+  for (const asset of logos) logo.append(el('option', { value: asset.id, selected: asset.id === config.assetId }, asset.filename));
+  const position = el('select', {});
+  for (const id of ['top-left','top-right','bottom-left','bottom-right','center']) position.append(el('option', { value:id, selected:id===config.position }, id.replace('-', ' ')));
+  const width = el('input', { type:'number', min:5, max:60, value:config.widthPct || 18 });
+  const opacity = el('input', { type:'number', min:0.1, max:1, step:0.1, value:config.opacity ?? 1 });
+  const save = () => { Object.assign(config, { assetId:logo.value, position:position.value, widthPct:Number(width.value), opacity:Number(opacity.value) }); touchProject(); };
+  logo.onchange=position.onchange=width.oninput=opacity.oninput=save;
+  return el('div', { className:'brand-overlay-controls' },
+    el('p', { className:'hint', style:'margin:12px 0 8px' }, 'Apply supplied artwork as-is to exported photos and video render instructions.'),
+    el('label', { className:'field' }, el('span', {}, 'Logo overlay'), logo),
+    el('div', { style:'display:grid;grid-template-columns:1fr 72px 72px;gap:6px' },
+      el('label', { className:'field' }, el('span', {}, 'Position'), position),
+      el('label', { className:'field' }, el('span', {}, 'Width %'), width),
+      el('label', { className:'field' }, el('span', {}, 'Opacity'), opacity)));
+}
+
+function rejectionDialog(asset, targetStatus) {
+  const current = asset.rejectionFeedback || { reasons: [], note: '', shareForImprovement: false };
+  const reasonInputs = REJECTION_REASONS.map(reason => {
+    const input = el('input', { type: 'checkbox', value: reason.id, checked: current.reasons.includes(reason.id) });
+    return el('label', { className: 'checkline' }, input, el('span', {}, reason.label));
+  });
+  const note = el('textarea', { placeholder: 'What should be different next time?', value: current.note || '' });
+  const share = el('input', { type: 'checkbox', checked: !!current.shareForImprovement });
+  const body = el('div', {},
+    el('p', { className: 'hint' }, 'Choose every reason that applies. This feedback becomes project memory and travels with the audit record.'),
+    el('div', { className: 'reason-grid' }, ...reasonInputs),
+    el('label', { className: 'field', style: 'margin-top:14px' }, el('span', {}, 'Optional note'), note),
+    el('label', { className: 'checkline' }, share, el('span', {}, 'Allow anonymized ratings and reason codes to improve MaterialLogix. Media is never included without a separate upload confirmation.')));
+  dialog('Why are you declining this result?', body, [
+    btn('Cancel', 'btn', closeDialog),
+    btn('Save rejection', 'btn primary', () => {
+      const reasons = reasonInputs.filter(label => label.querySelector('input').checked).map(label => label.querySelector('input').value);
+      if (!reasons.length) return toast('Choose at least one reason.', true);
+      mutate(asset, `status → ${targetStatus.label}`, () => {
+        asset.status = targetStatus.id;
+        asset.rejectionFeedback = { reasons, note: note.value.trim(), shareForImprovement: share.checked, recordedAt: new Date().toISOString() };
+      });
+      closeDialog(); renderReview(); renderCounters();
+      toast('Thanks — this helps the next result.');
+    })
+  ]);
+  $('#dlg').classList.add('feedback-popover');
 }
 
 function logBlock(asset) {

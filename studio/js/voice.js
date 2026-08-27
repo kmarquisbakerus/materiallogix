@@ -59,7 +59,9 @@ export function performancePlan(script) {
         }
         const tail = text.slice(-1);
         const isQuestion = /\?/.test(text);
+        const isExclamation = /!/.test(text);
         const wordCount = text.split(' ').length;
+        const intent = isQuestion ? 'invite' : isExclamation ? 'lift' : wordCount < 6 ? 'land' : c < clauses.length - 1 ? 'carry' : 'settle';
         segments.push({
           text,
           emphasis,
@@ -67,8 +69,10 @@ export function performancePlan(script) {
           rate: +(1 + (wordCount > 12 ? 0.04 : wordCount < 5 ? -0.05 : 0) + wobble(idx, 0.025)).toFixed(3),
           // Questions lift, statements settle.
           pitch: +(isQuestion ? 1.02 : 1 + wobble(idx + 7, 0.012)).toFixed(3),
+          intent,
+          energy: +(1 + (isExclamation ? 0.08 : wordCount < 6 ? 0.035 : -0.01) + emphasis.length * 0.025 + wobble(idx + 23, 0.025)).toFixed(3),
           pauseAfterMs: Math.round((PAUSE_MS[tail] || 260) * (1 + wobble(idx + 13, 0.15))),
-          breathBefore: first || wordCount >= 10,
+          breathBefore: first || (wordCount >= 10 && idx % 3 !== 1),
           paragraphStart: first
         });
         first = false;
@@ -110,19 +114,35 @@ function breathBuffer(ctx, seconds = 0.3, gainDb = -34) {
  * there is never digital-zero silence anywhere in the file.
  */
 export async function humanizeBuffer(input, {
-  roomToneDb = -58, breathDb = -34, headSeconds = 0.5, tailSeconds = 0.6
+  roomToneDb = -58, breathDb = -34, headSeconds = 0.5, tailSeconds = 0.6,
+  presenceDb = 0.8, airDb = -1.4, movementDb = 0.7
 } = {}) {
   const sr = input.sampleRate;
   const outLength = Math.round((headSeconds + tailSeconds) * sr) + input.length;
   const ctx = new OfflineAudioContext(1, outLength, sr);
 
-  // Voice through a gentle mic-bus compressor.
+  // A restrained voice chain: slight presence, softened synthetic sibilance,
+  // phrase-level movement, then gentle mic-bus compression. The goal is not an
+  // audible effect; it is to remove the too-perfect spectral/dynamic shape.
   const src = ctx.createBufferSource();
   src.buffer = input;
+  const presence = ctx.createBiquadFilter();
+  presence.type = 'peaking'; presence.frequency.value = 2800; presence.Q.value = 0.75; presence.gain.value = presenceDb;
+  const air = ctx.createBiquadFilter();
+  air.type = 'highshelf'; air.frequency.value = 6200; air.gain.value = airDb;
+  const movement = ctx.createGain();
+  const base = Math.pow(10, -0.8 / 20);
+  const delta = Math.pow(10, movementDb / 20) - 1;
+  movement.gain.setValueAtTime(base, headSeconds);
+  const duration = input.duration;
+  for (let t = 0; t <= duration; t += 1.7) {
+    const human = base * (1 + Math.sin(t * 1.31 + 0.6) * delta * 0.55 + Math.sin(t * 0.47) * delta * 0.3);
+    movement.gain.linearRampToValueAtTime(human, headSeconds + Math.min(duration, t));
+  }
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -20; comp.knee.value = 12; comp.ratio.value = 2.4;
   comp.attack.value = 0.012; comp.release.value = 0.22;
-  src.connect(comp).connect(ctx.destination);
+  src.connect(presence).connect(air).connect(movement).connect(comp).connect(ctx.destination);
   src.start(headSeconds);
 
   // Breath just before the first word.
@@ -176,15 +196,34 @@ export function voiceTells(buffer) {
   const pMean = pauses.reduce((a, b) => a + b, 0) / (pauses.length || 1);
   const pVar = pauses.reduce((a, b) => a + (b - pMean) ** 2, 0) / (pauses.length || 1);
 
+  let peak = 0, energy = 0, diffEnergy = 0, clipped = 0, transients = 0;
+  for (let i = 0; i < d.length; i++) {
+    const a = Math.abs(d[i]); peak = Math.max(peak, a); energy += d[i] * d[i];
+    if (a >= 0.995) clipped++;
+    if (i) { const delta = d[i] - d[i - 1]; diffEnergy += delta * delta; if (Math.abs(delta) > 0.32) transients++; }
+  }
+  const totalRms = Math.sqrt(energy / Math.max(1, d.length));
+  const crestFactorDb = totalRms ? 20 * Math.log10(peak / totalRms) : 0;
+  const sibilanceIndex = energy ? Math.sqrt(diffEnergy / energy) : 0;
+  const clipPercent = d.length ? clipped / d.length * 100 : 0;
+
   return {
     silenceFloorDb: floor > 0 ? +(20 * Math.log10(floor)).toFixed(1) : -Infinity,
     loudnessCv: mean ? +(Math.sqrt(variance) / mean).toFixed(3) : 0,
     pauseCount: pauses.length,
     pauseJitter: pMean ? +(Math.sqrt(pVar) / pMean).toFixed(3) : 0,
+    crestFactorDb: +crestFactorDb.toFixed(1),
+    sibilanceIndex: +sibilanceIndex.toFixed(3),
+    clipPercent: +clipPercent.toFixed(3),
+    transientClicks: transients,
     tells: [
       ...(floor === 0 ? ['digital-zero silence (no room tone)'] : []),
       ...(mean && Math.sqrt(variance) / mean < 0.18 ? ['flat loudness (no human dynamics)'] : []),
       ...(pauses.length > 3 && pMean && Math.sqrt(pVar) / pMean < 0.2 ? ['metronome pausing'] : [])
+      ,...(clipPercent > 0.02 ? ['clipping at full scale'] : [])
+      ,...(transients > Math.max(2, buffer.duration * 0.8) ? ['click-like transients'] : [])
+      ,...(sibilanceIndex > 0.42 ? ['hard synthetic sibilance'] : [])
+      ,...(crestFactorDb < 5 ? ['over-compressed dynamics'] : [])
     ]
   };
 }

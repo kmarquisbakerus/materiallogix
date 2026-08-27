@@ -6,38 +6,25 @@
 <meta name="theme-color" content="#0a0a0b">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="canonical" href="https://studio.materiallogix.com">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <title>MaterialLogix Studio — review, refine, and ship</title>
 <meta name="description" content="The judgment layer for AI-assisted campaign assets. Import, review, refine, approve, and package photo, video, voice, and supplied brand assets.">
-<script>
-if (location.hostname.endsWith('github.io')) {
-  const target = new URL('https://studio.materiallogix.com');
-  target.search = location.search;
-  target.hash = location.hash;
-  location.replace(target.toString());
-}
-</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
 <script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
 <link rel="stylesheet" href="css/app.css">
-<link rel="stylesheet" href="css/glass-surfaces.css">
 </head>
 <body>
 <div id="app">
   <header class="topbar">
     <button class="btn sm" type="button" id="menuBtn" aria-label="Open project settings">☰</button>
     <div class="brand">
-      <strong>Studio</strong>
+      <strong>Review</strong>
       <span>MaterialLogix</span>
     </div>
-    <select id="studioServiceSelect" class="studio-service-switch" aria-label="MaterialLogix Studio service">
-      <option value="review">Review</option>
-      <option value="voice">Voice Studio</option>
-    </select>
+    <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../">MaterialLogix</a><span>/</span><a href="./">Studio</a><span>/</span><b>Review</b></nav>
     <select id="projectSelect" aria-label="Project"></select>
     <button class="btn sm" type="button" id="newProject">New</button>
     <div class="spacer"></div>
@@ -54,6 +41,7 @@ if (location.hostname.endsWith('github.io')) {
   <div class="layout">
     <aside class="sidebar" id="sidebar" aria-label="Project settings"></aside>
     <main class="stage-wrap" id="main"></main>
+    <aside class="activity-rail" id="activityRail" aria-label="Jobs, execution location, progress, and usage"></aside>
   </div>
 </div>
 
@@ -67,8 +55,8 @@ if (location.hostname.endsWith('github.io')) {
   <div class="dlg-foot" id="dlgFoot"></div>
 </dialog>
 
+<script type="module" src="js/activity.js"></script>
 <script type="module" src="js/bootstrap.js"></script>
-<script type="module" src="js/studio-nav.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js');
