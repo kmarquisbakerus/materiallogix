@@ -17,30 +17,39 @@ p,li{color:var(--ink2);font-size:14.5px}ul{padding-left:20px}li{margin:6px 0}
 </style></head><body><main>
 <a href="index.html" class="eyebrow">← Legal</a>
 <h1>Privacy</h1>
-<p class="updated">Effective August 2026 · MaterialLogix Studio is a product of LibraSide Technologies, LLC</p>
-<div class="card">The short version: your creative work never touches our servers. The apps run on your machine, the engines run on your machine, and your files stay on your machine. We see almost nothing, on purpose.</div>
-<h2>What we never collect</h2>
+<p class="updated">Effective August 27, 2026 · MaterialLogix Studio is a product of LibraSide Technologies, LLC</p>
+<div class="card">The short version: local workflows keep your creative files on your computer. Account and cloud features require limited service data. Optional diagnostics, research, and commercial-insights choices are separate, off by default, and can be withdrawn.</div>
+<h2>Creative work we do not collect in local workflows</h2>
 <ul>
-<li>Your images, video, audio, voice packs, scripts, or projects — processing is local; nothing is uploaded to us.</li>
-<li>Analytics, tracking pixels, or behavioral profiles. There is no telemetry in the product.</li>
-<li>Recordings of anyone. Voice packs you create stay on your device.</li>
+<li>Your locally processed images, video, audio, voice packs, scripts, prompts, filenames, or project names.</li>
+<li>Your recordings or biometric voice data. Local voice packs remain on your device.</li>
+<li>Exact hardware identifiers, precise location, contact lists, or unrelated files on your computer.</li>
 </ul>
-<h2>What we do collect, and why</h2>
+<p>If you deliberately submit a packaged cloud job, that job and its media are uploaded for the processing you requested. The app shows the execution location before submission. Cloud media is not used for advertising or model training.</p>
+<h2>Required service information</h2>
 <ul>
-<li><b>License verification.</b> Licensed installs periodically confirm the license is valid. That check sends your license key and a timestamp — nothing else. No files, no filenames, no usage data.</li>
-<li><b>Purchases.</b> Payments are processed by Stripe; we receive your email and plan so we can issue your key and receipts. We never see card numbers.</li>
+<li><b>Account and license.</b> Authentication identity, a hashed email reference, license status, activated-device status, and verification timestamps.</li>
+<li><b>Purchases.</b> Stripe processes payment information. We receive the customer, plan, amount, payment state, and information needed to issue access and receipts; we do not receive full card numbers.</li>
+<li><b>Cloud jobs.</b> Job type, processing state, packaged-object location, measured source duration, billable duration, quoted units, and settled units. These records operate the queue, usage meter, and billing.</li>
+<li><b>Security.</b> Limited authentication, abuse-prevention, and security events needed to protect accounts and the service.</li>
 <li><b>Email you send us.</b> If you write to <a href="mailto:admin@materiallogix.com">admin@materiallogix.com</a>, we have that email.</li>
 </ul>
+<h2>Optional diagnostics</h2>
+<p>If you actively opt in, MaterialLogix may receive the product area, app version, broad operating-system family, CPU/GPU/cloud lane, broad duration and input-size buckets, result status, and a controlled error code. Optional diagnostics never include media, prompts, scripts, filenames, project names, voice recordings, exact hardware identifiers, free-form error text, or stack traces. Raw diagnostic events are deleted after 90 days, and turning this choice off deletes the account-linked raw diagnostic history we can locate.</p>
+<h2>Optional product research</h2>
+<p>If you actively opt in, you may provide broad region, professional role, industry, organization size, primary use, and experience level. We do not request exact age, address, precise location, race, ethnicity, religion, health, disability, sexual orientation, financial details, or biometric information for this research. Research and commercial-insights choices are for adult account holders; do not submit a child's information.</p>
+<h2>Grouped commercial insights</h2>
+<p>A separate opt-in allows information you chose to share above to be included in grouped, de-identified market trends that MaterialLogix may sell or license. We do not sell personal information, account-level records, raw diagnostic events, or creative content. Buyers do not receive a way to identify or contact individual participants. If this business model ever changes to involve personal information, we will ask for a new choice before doing it.</p>
 <h2>Where data lives</h2>
-<p>Your projects auto-save in local application storage on your device. Use the Studio's recovery-file feature to save a separate ZIP containing project data and original media before clearing site data. We cannot recover files you did not back up because we never receive them.</p>
+<p>Your local projects auto-save on your device. Use the Studio's recovery-file feature to save a separate ZIP containing project data and original media. Account, consent, license, security, billing, cloud-job, and optional diagnostic records live in access-controlled service databases. Cloud job files live in access-controlled object storage only for the processing and retention period disclosed with that workflow.</p>
 <h2>Third parties</h2>
-<p>Stripe (payments), Cloudflare (hosting the website and the license check), Google Fonts (typefaces on this website). The apps themselves fetch an optional face-detection model from a public CDN when that feature is used; otherwise they make no third-party requests.</p>
+<p>Stripe processes payments. Cloudflare provides hosting, account access, databases, security, and cloud infrastructure. Google Fonts provides website typefaces. Optional local features may fetch disclosed open models from their public distribution locations. Service providers may process only the information needed to perform contracted services.</p>
 <h2>Your choices</h2>
-<p>Use the free tier without any account at all. Ask us to delete your purchase records at any time via <a href="mailto:admin@materiallogix.com">admin@materiallogix.com</a>.</p>
+<p>Use the local free tier without an account. In an account, open Privacy at any time to change optional choices. Global Privacy Control is honored for commercial-insights use. Depending on where you live, you may also have rights to know, correct, delete, or obtain a copy of personal information, or to limit certain uses. Contact <a href="mailto:admin@materiallogix.com">admin@materiallogix.com</a>. MaterialLogix does not discriminate against people who exercise privacy choices.</p>
 <h2>Cookies and local storage</h2>
-<p>This website sets no tracking cookies. The applications store your projects, settings, and license in your browser's local storage - on your device, readable by no one else, deletable by you at any time.</p>
+<p>Authentication and security technologies may be required for accounts. Non-essential analytics or advertising storage is not enabled before the applicable choice. The applications store projects, settings, and license information locally on your device; clearing local data may remove them.</p>
 <h2>Voice data, specifically</h2>
-<p>Voice packs are voiceprints, and voiceprints are sensitive. Ours never reach us: recording, refinement, and storage all happen on your device. We hold no biometric database because there is nothing to hold. Consent requirements are set out in the <a href="aup.html">Acceptable Use policy</a>.</p>
+<p>Voice packs can be sensitive biometric data. Local voice packs stay on your device and are excluded from diagnostics and research. A cloud voice workflow uploads only the packaged job you deliberately submit and is governed by the cloud-job notice and the <a href="aup.html">Acceptable Use policy</a>.</p>
 <h2>Changes</h2>
-<p>If this policy changes materially, the effective date above changes with it and licensed customers are notified by email.</p>
+<p>If this policy or an optional purpose changes materially, the effective date changes and affected account holders are notified. A new purpose requiring consent receives a new, separate choice.</p>
 </main></body></html>
