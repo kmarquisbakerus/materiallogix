@@ -1,0 +1,157 @@
+/* MaterialLogix Studio — unified glass surface layer.
+   Keeps the dark neutral review canvas intact while giving application chrome
+   a consistent translucent, dimensional treatment. */
+
+:root {
+  --ml-glass: rgba(16, 16, 18, .70);
+  --ml-glass-soft: rgba(18, 18, 20, .58);
+  --ml-glass-strong: rgba(22, 22, 25, .82);
+  --ml-glass-line: rgba(255,255,255,.075);
+  --ml-glass-highlight: rgba(255,255,255,.055);
+  --ml-glass-shadow: 0 18px 55px rgba(0,0,0,.28);
+}
+
+:root[data-theme="light"] {
+  --ml-glass: rgba(250, 248, 243, .76);
+  --ml-glass-soft: rgba(250, 248, 243, .62);
+  --ml-glass-strong: rgba(255, 253, 248, .88);
+  --ml-glass-line: rgba(70,62,50,.10);
+  --ml-glass-highlight: rgba(255,255,255,.68);
+  --ml-glass-shadow: 0 18px 55px rgba(55,45,32,.10);
+}
+
+/* All major chrome uses the same optical material. */
+header.topbar,
+aside.sidebar,
+.rail,
+.stage-head,
+.stage-tools,
+.toolbar,
+dialog,
+.wizard,
+details.panel .panel-body,
+.compare .pane header {
+  background: var(--ml-glass);
+  backdrop-filter: blur(24px) saturate(1.32);
+  -webkit-backdrop-filter: blur(24px) saturate(1.32);
+}
+
+header.topbar,
+.stage-head,
+.stage-tools,
+.toolbar,
+dialog,
+.wizard {
+  box-shadow: inset 0 1px 0 var(--ml-glass-highlight), var(--ml-glass-shadow);
+}
+
+aside.sidebar,
+.rail {
+  background: var(--ml-glass-soft);
+  box-shadow: inset 0 1px 0 var(--ml-glass-highlight);
+}
+
+/* The app renders DETAILS panels, not SECTION panels. These rules intentionally
+   target the actual markup so the sidebar finally receives its designed state. */
+details.panel {
+  margin: 10px 10px 0;
+  border: 1px solid var(--ml-glass-line);
+  border-radius: 14px;
+  overflow: clip;
+  background: var(--ml-glass-soft);
+  box-shadow: inset 0 1px 0 var(--ml-glass-highlight);
+}
+
+details.panel > summary {
+  padding: 15px 16px;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: color var(--t), background var(--t);
+}
+
+details.panel > summary:hover { color: var(--ink-2); background: rgba(255,255,255,.025); }
+details.panel > summary::-webkit-details-marker { display: none; }
+details.panel > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg) translate(-2px,-2px);
+  transition: transform var(--t);
+}
+details.panel[open] > summary::after { transform: rotate(225deg) translate(-2px,-2px); }
+details.panel[open] > summary { color: var(--gold-dim); }
+details.panel .panel-body { padding: 0 16px 18px; background: transparent; }
+
+/* Controls should look like controls made from the same material, not flat boxes. */
+.btn,
+.seg,
+input[type="text"],
+input[type="number"],
+textarea,
+select,
+.dropzone,
+.chip,
+.kbd,
+.statusrow button,
+.fixgrid button,
+.placement {
+  background-color: rgba(255,255,255,.025);
+  border-color: var(--ml-glass-line);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
+}
+
+.btn:hover,
+select:hover,
+input:hover,
+textarea:hover {
+  background-color: rgba(255,255,255,.045);
+}
+
+/* Keep image/video judging surfaces neutral. Only their chrome becomes glass. */
+.stage,
+.viewport,
+.frame,
+.card .thumb,
+.compare .pane,
+.compare .pane .body { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* Board cards float above the ground without altering image color. */
+.grid { gap: 12px; background: transparent; border: 0; }
+.card {
+  overflow: hidden;
+  border: 1px solid var(--ml-glass-line);
+  border-radius: 14px;
+  background: var(--ml-glass-soft);
+  box-shadow: inset 0 1px 0 var(--ml-glass-highlight), 0 14px 34px rgba(0,0,0,.18);
+  backdrop-filter: blur(16px) saturate(1.18);
+  -webkit-backdrop-filter: blur(16px) saturate(1.18);
+}
+.card .meta { background: transparent; }
+.card:hover { background: var(--ml-glass); }
+
+/* Explicit Studio/service selector: this is product navigation, not project data. */
+.studio-service-switch {
+  width: auto !important;
+  min-width: 150px;
+  max-width: 190px !important;
+  padding: 7px 30px 7px 12px !important;
+  border: 1px solid rgba(201,168,106,.22) !important;
+  border-radius: 999px !important;
+  background-color: var(--ml-glass-strong) !important;
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--ml-glass-highlight), 0 8px 24px rgba(0,0,0,.16);
+}
+.studio-service-switch:focus { border-color: var(--gold-dim) !important; }
+
+@media (max-width: 900px) {
+  details.panel { margin: 9px 9px 0; }
+  .studio-service-switch { min-width: 116px; max-width: 132px !important; }
+  header.topbar { gap: 8px; }
+}
