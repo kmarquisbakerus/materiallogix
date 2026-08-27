@@ -8,7 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<title>Review — MaterialLogix Studio</title>
+<title>MaterialLogix Studio — review, refine, and ship</title>
+<meta name="description" content="The judgment layer for AI-assisted campaign assets. Import, review, refine, approve, and package photo, video, voice, and supplied brand assets.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
@@ -43,6 +44,7 @@
 </div>
 
 <input type="file" id="fileInput" multiple accept="image/*,video/*" hidden>
+<input type="file" id="brandAssetInput" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" hidden>
 <input type="file" id="verdictInput" accept="application/json,.json" hidden>
 
 <dialog id="dlg">
@@ -51,7 +53,7 @@
   <div class="dlg-foot" id="dlgFoot"></div>
 </dialog>
 
-<script type="module" src="js/app.js"></script>
+<script type="module" src="js/bootstrap.js"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js');

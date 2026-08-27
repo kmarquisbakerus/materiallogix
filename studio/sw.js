@@ -5,38 +5,40 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'cros-shell-v1';
+const CACHE = 'materiallogix-shell-v2';
 const SHELL = [
   './', 'index.html', 'voice.html', 'manifest.webmanifest', 'icon.svg',
-  'css/app.css',
+  'css/app.css', 'assets/preview-stamp.wav',
+  'js/bootstrap.js', 'js/studio-shell.js',
   'js/app.js', 'js/model.js', 'js/store.js', 'js/crop.js', 'js/analyze.js',
   'js/export.js', 'js/clientpage.js', 'js/history.js', 'js/zip.js',
-  'js/generate.js', 'js/geometry.js', 'js/device.js', 'js/voice.js'
+  'js/generate.js', 'js/geometry.js', 'js/device.js', 'js/voice.js',
+  'js/pricing.js', 'js/license.js', 'js/license-key.js'
 ];
 
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+self.addEventListener('install', event => {
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 
-self.addEventListener('activate', e => {
-  e.waitUntil(
+self.addEventListener('activate', event => {
+  event.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(key => key !== CACHE).map(key => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
 
-self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
   // Only same-origin GETs. Bridge calls (:8189) and CDNs pass straight through.
-  if (e.request.method !== 'GET' || url.origin !== location.origin) return;
-  e.respondWith(
-    fetch(e.request)
-      .then(res => {
-        const copy = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, copy));
-        return res;
+  if (event.request.method !== 'GET' || url.origin !== location.origin) return;
+  event.respondWith(
+    fetch(event.request)
+      .then(response => {
+        const copy = response.clone();
+        caches.open(CACHE).then(cache => cache.put(event.request, copy));
+        return response;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }))
+      .catch(() => caches.match(event.request, { ignoreSearch: true }))
   );
 });

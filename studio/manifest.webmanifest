@@ -1,7 +1,7 @@
 {
   "name": "MaterialLogix Studio",
   "short_name": "MaterialLogix",
-  "description": "Human review and packaging for AI campaign assets.",
+  "description": "The judgment layer for AI-assisted campaigns: review, refine, approve, and package photo, video, voice, and supplied brand assets.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0a0a0b",
