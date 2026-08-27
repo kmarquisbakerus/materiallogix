@@ -1,3 +1,6 @@
+/           /studio/            302
+/index.html /studio/            302
+/studio     /studio/            301
 /app        /studio/            301
 /app/*      /studio/:splat      301
 /voice      /studio/voice.html  302
