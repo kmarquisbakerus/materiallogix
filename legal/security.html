@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security - MaterialLogix Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--ground:#0a0a0b;--ink:#eeebe4;--ink2:#b6b1a8;--gold:#c9a86a;--gold-dim:#8a7444;--muted:#8b857c;--hair:#232326}
+*{box-sizing:border-box;margin:0}body{background:var(--ground);color:var(--ink);font:300 15px/1.7 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+main{max-width:760px;margin:0 auto;padding:70px 28px 100px}
+a{color:var(--gold);text-decoration:none}
+h1{font:300 40px/1.1 Fraunces,Georgia,serif;margin:18px 0 8px}
+.eyebrow{font:400 10px/1 Inter;letter-spacing:.3em;text-transform:uppercase;color:var(--gold-dim)}
+.updated{color:var(--muted);font-size:12px;margin-bottom:40px}
+h2{font:400 20px/1.3 Fraunces,Georgia,serif;margin:38px 0 10px}
+p,li{color:var(--ink2);font-size:14.5px}ul{padding-left:20px}li{margin:6px 0}
+.card{border:1px solid var(--gold-dim);background:rgba(201,168,106,.06);padding:18px 20px;margin:26px 0;font-size:14px;color:var(--ink)}
+table{width:100%;border-collapse:collapse;font-size:13.5px;margin:14px 0}
+td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--hair);color:var(--ink2)}
+th{font:400 10px/1 Inter;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+</style></head><body><main>
+<a href="index.html" class="eyebrow">&larr; Legal</a>
+<h1>Security</h1>
+<p class="updated">Effective August 2026</p>
+
+<h2>Reporting a vulnerability</h2>
+<p>Found something? Email <a href="mailto:admin@materiallogix.com">admin@materiallogix.com</a> with "SECURITY" in the subject. We respond within 72 hours, credit researchers who want credit, and never pursue good-faith research legally.</p>
+<h2>Scope</h2>
+<p>This website, the license verification endpoint, and the shipped applications. The engines run locally on user machines; vulnerabilities in upstream open-source components should also go to those projects.</p>
+<h2>Design posture</h2>
+<p>The product's security model is subtraction: no accounts to breach, no asset uploads to leak, no telemetry to intercept. License checks carry a signed key and a timestamp. The license signing key is held offline.</p>
+</main></body></html>
