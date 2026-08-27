@@ -182,7 +182,7 @@ export function retouchListMarkdown(project, assets) {
   if (!withFixes.length) L.push('_Nothing marked for retouch._');
   for (const a of withFixes) {
     L.push(`## ${a.filename}`, '');
-    for (const f of a.fixes) L.push(`- [ ] ${f.label}${f.note ? ` — ${f.note}` : ''}`);
+    for (const f of a.fixes) L.push(`- [ ] ${f.consentRequired ? '**CONSENT + BEFORE/AFTER APPROVAL REQUIRED** — ' : ''}${f.label}${f.note ? ` — ${f.note}` : ''}`);
     if (a.notes) L.push('', `> Reviewer notes: ${a.notes}`);
     L.push('');
   }

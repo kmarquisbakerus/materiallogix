@@ -149,12 +149,15 @@ export const PRESET_BY_ID = Object.fromEntries(QA_PRESETS.map(p => [p.id, p]));
 
 // ---------------------------------------------------------------------------
 // Retouch fix presets: the vocabulary of "make this photo right". Ticked fixes
-// travel to the editor in the export package, and they are the work orders the
-// local inpaint pass will consume when it ships.
+// travel to the editor in the export package as explicit work orders.
 
 export const FIX_PRESETS = [
   { id: 'skin-even', label: 'Even out skin texture' },
   { id: 'skin-shine', label: 'Reduce shine' },
+  { id: 'blemish-temporary', label: 'Remove a temporary blemish / pimple' },
+  { id: 'makeup-natural', label: 'Add natural makeup — describe colours below' },
+  { id: 'makeup-glam', label: 'Add full-glam makeup — describe the look below' },
+  { id: 'cheek-fullness', label: 'Adjust cheek fullness — pictured person’s consent required', consentRequired: true },
   { id: 'hands', label: 'Repair hands / fingers' },
   { id: 'teeth', label: 'Fix teeth' },
   { id: 'eyes', label: 'Brighten / align eyes' },

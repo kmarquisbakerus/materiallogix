@@ -1674,7 +1674,7 @@ function fixBlock(asset) {
     bEl.onclick = () => {
       mutate(asset, `${has(f.id) ? 'cleared fix' : 'marked fix'}: ${f.label}`, () => {
         if (has(f.id)) asset.fixes = asset.fixes.filter(x => x.id !== f.id);
-        else asset.fixes.push({ id: f.id, label: f.label });
+        else asset.fixes.push({ id: f.id, label: f.label, consentRequired: !!f.consentRequired });
         if (asset.fixes.length && asset.status === 'unreviewed') asset.status = 'needs-retouch';
       });
       renderReview(); renderCounters();
@@ -1708,7 +1708,7 @@ function fixBlock(asset) {
   }
   if (asset.fixes.length) {
     wrap.append(el('p', { className: 'hint', style: 'margin:10px 0 0' },
-      `${asset.fixes.length} fix(es) \u2014 exports as RETOUCH_LIST.md for the editor, and queues for the in-app retouch pass when it ships.`));
+      `${asset.fixes.length} fix(es) \u2014 saved with the asset and exported as a precise RETOUCH_LIST.md work order. Appearance changes remain previews until the pictured person approves them.`));
   }
   return wrap;
 }
