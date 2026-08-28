@@ -12,6 +12,10 @@ export default {
       return env.ASSETS.fetch(new Request(next.toString(), request));
     };
 
+    if (host === 'app.materiallogix.com') {
+      return redirect('https://studio.materiallogix.com' + path + url.search + url.hash, 301);
+    }
+
     if (host === 'studio.materiallogix.com') {
       if (path === '/' || path === '/index.html') return asset('/studio/index.html');
       if (path === '/voice' || path === '/voice.html') return redirect('https://voice.materiallogix.com' + url.search + url.hash, 301);
@@ -40,6 +44,7 @@ export default {
     }
 
     if (host === 'materiallogix.com' || host === 'www.materiallogix.com') {
+      if (path === '/app' || path.startsWith('/app/')) return redirect('https://studio.materiallogix.com' + url.search + url.hash, 301);
       if (path === '/studio' || path.startsWith('/studio/')) return redirect('https://studio.materiallogix.com' + url.search + url.hash, 301);
       if (path === '/voice' || path === '/voice.html') return redirect('https://voice.materiallogix.com' + url.search + url.hash, 301);
       if (path === '/demo' || path.startsWith('/demo/')) return redirect('https://demo.materiallogix.com' + url.search + url.hash, 301);
