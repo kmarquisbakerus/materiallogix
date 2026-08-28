@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>Usage — Material Logic Studio</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+  <script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/usage.css">
+</head>
+<body class="usage-page">
+  <a class="skip-link" href="#main-content">Skip to usage</a>
+  <header class="topbar usage-topbar">
+    <a class="brand usage-brand" href="index.html" aria-label="MaterialLogix Studio">
+      <strong>MLX</strong>
+      <span>Studio · Usage</span>
+    </a>
+    <a class="btn primary" href="index.html">Open Studio</a>
+  </header>
+
+  <main id="main-content" class="usage-main">
+    <section class="usage-hero" aria-labelledby="usage-heading">
+      <div>
+        <p class="eyebrow">Account usage</p>
+        <h1 id="usage-heading">Production activity</h1>
+      </div>
+      <p class="note usage-intro">See exactly what your plan covered, what was purchased separately, and what is waiting to be released.</p>
+    </section>
+
+    <p class="usage-status" id="usageStatus" role="status" aria-live="polite">Loading verified usage…</p>
+
+    <section aria-labelledby="allowance-heading">
+      <div class="usage-section-heading"><p class="eyebrow">Current period</p><h2 id="allowance-heading">Allowance and balance</h2></div>
+      <div class="usage-grid" id="usageCards"></div>
+    </section>
+
+    <section class="usage-panel" aria-labelledby="breakdownHeading">
+      <div class="usage-section-heading"><p class="eyebrow">Transparent accounting</p><h2 id="breakdownHeading">Where your usage went</h2></div>
+      <p class="note">Every production operation is shown as reserved, used, returned, or release pending. Plan allowance and purchased add-on units stay separate.</p>
+      <div id="usageBreakdown" class="usage-table-wrap" tabindex="0" aria-label="Usage breakdown table"></div>
+    </section>
+
+    <section class="usage-panel" aria-labelledby="walletHeading">
+      <div class="usage-section-heading"><p class="eyebrow">Prepaid cloud capacity</p><h2 id="walletHeading">Cloud wallet</h2></div>
+      <p class="wallet-balance" id="walletBalance">Loading wallet…</p>
+      <p class="note" id="cloudPhotoPricing">Loading Cloud Photo pricing…</p>
+
+      <div class="usage-subsection" aria-labelledby="manual-refill-heading">
+        <h3 id="manual-refill-heading">One-time refill</h3>
+        <p class="note">Choose an exact amount. Manual refills never enable automatic top-up. Local Photo work never uses this balance.</p>
+        <div class="suggestions" aria-label="Suggested refill amounts">
+          <button class="btn" type="button" data-wallet-suggestion="10">$10</button>
+          <button class="btn" type="button" data-wallet-suggestion="25">$25</button>
+          <button class="btn" type="button" data-wallet-suggestion="50">$50</button>
+          <button class="btn" type="button" data-wallet-suggestion="100">$100</button>
+        </div>
+        <div class="wallet-controls wallet-controls-manual">
+          <label><span>Refill amount (USD)</span><input id="walletAmount" type="number" min="5" max="500" step="0.01" value="10.00" inputmode="decimal"></label>
+          <button class="btn primary" id="walletRefill" type="button">Review $10.00 refill</button>
+        </div>
+        <p class="note" id="walletEstimate">Calculating the current Video-time estimate…</p>
+      </div>
+
+      <div class="usage-subsection" aria-labelledby="auto-topup-heading">
+        <div class="usage-section-heading compact"><p class="status-chip">Off by default</p><h3 id="auto-topup-heading">Optional automatic top-up</h3></div>
+        <div class="wallet-controls">
+          <label><span>Trigger below</span><input id="autoThreshold" type="number" min="1" max="499" step="0.01" value="5.00"></label>
+          <label><span>Refill amount</span><input id="autoRefill" type="number" min="5" max="500" step="0.01" value="10.00"></label>
+          <label><span>Monthly maximum</span><input id="autoCap" type="number" min="5" max="2000" step="0.01" value="50.00"></label>
+        </div>
+        <p class="wallet-rules" id="autoRules">Off by default. Set all three limits, review the exact rule, save a payment method through Stripe, then explicitly enable it. Stripe may require confirmation. Every refill creates a receipt and account notification.</p>
+        <div class="wallet-actions">
+          <button class="btn" id="autoSetup" type="button">Save payment method with Stripe</button>
+          <button class="btn primary" id="autoEnable" type="button">Enable after review</button>
+          <button class="btn" id="autoDisable" type="button">Disable automatic top-up</button>
+        </div>
+        <p class="wallet-status note" id="walletStatus" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="usage-subsection" aria-labelledby="transactions-heading">
+        <h3 id="transactions-heading">Recent wallet transactions</h3>
+        <div id="walletTransactions" class="usage-table-wrap" tabindex="0" aria-label="Recent wallet transactions tables"></div>
+      </div>
+    </section>
+
+    <details class="usage-panel usage-details">
+      <summary>Recent usage details</summary>
+      <p class="note">Open this only when you want the operation-by-operation record.</p>
+      <div id="usageTable" class="usage-table-wrap" tabindex="0" aria-label="Recent usage details table"></div>
+    </details>
+  </main>
+
+  <footer class="usage-footer"><span>Material Logic Studio · Customer usage</span><a href="site/legal/privacy.html">Privacy</a><a href="site/legal/terms.html">Terms</a><a href="site/legal/refunds.html">Refunds</a></footer>
+  <script type="module" src="js/usage.js"></script>
+</body>
+</html>

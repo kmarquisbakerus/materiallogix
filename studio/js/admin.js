@@ -11,12 +11,19 @@ const privacyReason = document.querySelector('#privacyReason');
 const privacySupportStatus = document.querySelector('#privacySupportStatus');
 const privacyRequestTable = document.querySelector('#privacyRequestTable');
 const cloudPhotoTable = document.querySelector('#cloudPhotoTable');
+const careLookup = document.querySelector('#careLookup');
+const careLookupButton = document.querySelector('#careLookupButton');
+const customerCareStatus = document.querySelector('#customerCareStatus');
+const customerCareResults = document.querySelector('#customerCareResults');
+const creditForm = document.querySelector('#creditForm');
+const refundForm = document.querySelector('#refundForm');
 const safe = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[character]));
 const renderTable = (headings, rows) => `<table class="ops-table"><thead><tr>${headings.map(value => `<th>${safe(value)}</th>`).join('')}</tr></thead><tbody>${rows.join('') || `<tr><td colspan="${headings.length}">No matching activity.</td></tr>`}</tbody></table>`;
 
 let snapshot = null;
 let filteredProducts = [];
 let privacyQueue = [];
+let customerCareSnapshot = null;
 
 function render() {
   if (!snapshot) return;
@@ -127,6 +134,83 @@ async function loadPrivacyQueue() {
   }
 }
 
+function renderCustomerCare() {
+  if (!customerCareSnapshot) {
+    customerCareResults.innerHTML = renderTable(['Record', 'Type', 'Status', 'Amount', 'Remaining or balance'], []);
+    return;
+  }
+  const dollars = cents => Number.isFinite(Number(cents)) ? `$${(Number(cents) / 100).toFixed(2)}` : '—';
+  const purchaseRows = (customerCareSnapshot.purchases || []).map(item => {
+    const remaining = Math.max(0, Number(item.amount_total || 0) - Number(item.amount_refunded || 0));
+    return `<tr><td>${safe(item.source_id)}</td><td>${safe(item.kind)}</td><td>${safe(item.status)}</td><td>${dollars(item.amount_total)}</td><td>${dollars(remaining)}</td></tr>`;
+  });
+  const licenseRows = (customerCareSnapshot.licenses || []).map(item => {
+    const balance = customerCareSnapshot.balances?.[item.id] || {};
+    return `<tr><td>${safe(item.id)}</td><td>${safe(item.plan)} ${safe(item.selected_product || 'studio')}</td><td>${safe(item.status)}</td><td>—</td><td>${dollars(balance.cloudBalanceCents)}</td></tr>`;
+  });
+  const actionRows = (customerCareSnapshot.actions || []).map(item =>
+    `<tr><td>${safe(item.id)}</td><td>${safe(item.action_type)}</td><td>${safe(item.status)}</td><td>${item.amount_cents == null ? Number(item.quantity || 0).toLocaleString() : dollars(item.amount_cents)}</td><td>${safe(item.reason_code)}${item.linkedTicket ? ' · ticket linked' : ''}</td></tr>`);
+  customerCareResults.innerHTML = renderTable(
+    ['Record', 'Type', 'Status', 'Amount', 'Remaining or balance'],
+    [...purchaseRows, ...licenseRows, ...actionRows]
+  );
+}
+
+async function loadCustomerCare() {
+  const query = careLookup.value.trim();
+  if (!query) {
+    customerCareStatus.textContent = 'Enter an ID to review customer-care options.';
+    customerCareSnapshot = null;
+    renderCustomerCare();
+    return;
+  }
+  try {
+    customerCareStatus.textContent = 'Looking up the customer-care record…';
+    const response = await fetch(apiUrl(`/api/admin/customer-care?query=${encodeURIComponent(query)}`), {
+      credentials: 'include', headers: { Accept: 'application/json' }
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'customer_care_lookup_failed');
+    customerCareSnapshot = data;
+    const firstLicense = data.licenses?.[0]?.id || data.purchases?.find(item => item.license_id)?.license_id || '';
+    const firstPurchase = data.purchases?.[0] || null;
+    if (firstLicense && !creditForm.elements.licenseId.value) creditForm.elements.licenseId.value = firstLicense;
+    if (firstPurchase) {
+      if (!refundForm.elements.purchaseSourceId.value) refundForm.elements.purchaseSourceId.value = firstPurchase.source_id || '';
+      if (!refundForm.elements.stripePaymentIntentId.value) refundForm.elements.stripePaymentIntentId.value = firstPurchase.stripe_payment_intent_id || '';
+    }
+    customerCareStatus.textContent = `${(data.licenses || []).length} license record(s), ${(data.purchases || []).length} purchase record(s), ${(data.actions || []).length} prior action(s).`;
+    renderCustomerCare();
+  } catch (error) {
+    customerCareSnapshot = null;
+    renderCustomerCare();
+    customerCareStatus.textContent = `Customer care unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+  }
+}
+
+async function submitCareForm(form, path, buildPayload, successLabel) {
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  customerCareStatus.textContent = `${successLabel} in progress…`;
+  try {
+    const response = await fetch(apiUrl(path), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify(buildPayload(new FormData(form)))
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'customer_care_action_failed');
+    customerCareStatus.textContent = `${successLabel} recorded. Refresh the lookup before taking another action.`;
+    form.elements.confirm.checked = false;
+    await loadCustomerCare();
+  } catch (error) {
+    customerCareStatus.textContent = `${successLabel} failed: ${error.message}. Nothing is assumed; check the record before retrying.`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 const privacyActionPayload = (action, item) => {
   const reasonCode = action === 'start_review' ? 'identity_verification'
     : action === 'annotate' ? privacyReason.value
@@ -170,6 +254,30 @@ productFilter.addEventListener('change', render);
 statusFilter.addEventListener('change', render);
 privacyStatusFilter.addEventListener('change', loadPrivacyQueue);
 document.querySelector('#refreshPrivacyQueue').addEventListener('click', loadPrivacyQueue);
+careLookupButton.addEventListener('click', loadCustomerCare);
+careLookup.addEventListener('keydown', event => { if (event.key === 'Enter') loadCustomerCare(); });
+creditForm.addEventListener('submit', event => {
+  event.preventDefault();
+  submitCareForm(creditForm, '/api/admin/customer-care/credit', form => ({
+    licenseId: form.get('licenseId'),
+    creditType: form.get('creditType'),
+    amount: Number(form.get('amount')),
+    reasonCode: form.get('reasonCode'),
+    ticketReference: form.get('ticketReference'),
+    confirm: form.get('confirm') === 'on'
+  }), 'Credit');
+});
+refundForm.addEventListener('submit', event => {
+  event.preventDefault();
+  submitCareForm(refundForm, '/api/admin/customer-care/refund', form => ({
+    purchaseSourceId: form.get('purchaseSourceId') || null,
+    stripePaymentIntentId: form.get('stripePaymentIntentId') || null,
+    amountCents: form.get('amountCents') ? Number(form.get('amountCents')) : null,
+    reasonCode: form.get('reasonCode'),
+    ticketReference: form.get('ticketReference'),
+    confirm: form.get('confirm') === 'on'
+  }), 'Refund request');
+});
 document.querySelector('#exportCsv').addEventListener('click', () => {
   if (!snapshot) return;
   const quote = value => `"${String(value ?? '').replaceAll('"','""')}"`;
@@ -181,3 +289,4 @@ document.querySelector('#exportCsv').addEventListener('click', () => {
 });
 load();
 loadPrivacyQueue();
+renderCustomerCare();

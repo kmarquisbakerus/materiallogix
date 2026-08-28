@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a0a0b">
+  <title>Operations — Material Logic Studio</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+  <script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body class="operations-page">
+  <a class="skip-link" href="#main-content">Skip to operations</a>
+  <header class="topbar ops-topbar">
+    <a class="brand ops-brand" href="index.html" aria-label="MaterialLogix Studio">
+      <strong>MLX</strong>
+      <span>Studio · Operations</span>
+    </a>
+    <nav class="ops-nav" aria-label="Operations navigation">
+      <a class="btn" href="usage.html">My usage</a>
+      <a class="btn primary" href="index.html">Open Studio</a>
+    </nav>
+  </header>
+
+  <main id="main-content" class="ops-main">
+    <section class="ops-hero" aria-labelledby="ops-heading">
+      <div>
+        <p class="eyebrow">Authorized team view</p>
+        <h1 id="ops-heading">Usage operations</h1>
+      </div>
+      <p class="note ops-intro">A privacy-minimized view of production activity, billing reconciliation, and controlled failures.</p>
+    </section>
+
+    <p class="ops-status" id="opsStatus" role="status" aria-live="polite">Loading privacy-minimized operational data…</p>
+
+    <section class="ops-filter-panel" aria-labelledby="filter-heading">
+      <div>
+        <p class="eyebrow">Reporting scope</p>
+        <h2 id="filter-heading">Filter the ledger</h2>
+      </div>
+      <div class="ops-filters">
+        <label><span>Billing period</span><input id="periodFilter" type="month"></label>
+        <label><span>Product</span><select id="productFilter"><option value="">All products</option><option>photo</option><option>video</option><option>voice</option></select></label>
+        <label><span>Status</span><select id="statusFilter"><option value="">All statuses</option><option>authorized</option><option>settled</option><option>voided</option></select></label>
+        <button class="btn" id="exportCsv" type="button">Export filtered CSV</button>
+      </div>
+    </section>
+
+    <section aria-labelledby="overview-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Current period</p><h2 id="overview-heading">Operational overview</h2></div>
+      <div class="ops-grid" id="opsCards"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="comparison-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Trend</p><h2 id="comparison-heading">Period comparison</h2></div>
+      <div id="comparisonTable" class="ops-table-wrap" tabindex="0" aria-label="Period comparison table"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="anomaly-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Review queue</p><h2 id="anomaly-heading">Anomaly signals</h2></div>
+      <div id="anomalyList"></div>
+    </section>
+
+    <section class="ops-data-section customer-care" aria-labelledby="customer-care-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Customer care</p><h2 id="customer-care-heading">Credits and refunds</h2></div>
+      <p class="note">Use a license, customer, purchase, subscription, or payment ID to review the record. Credits stay inside Material Logic; refunds are sent to Stripe and reconciled by webhook confirmation.</p>
+      <div class="customer-care-lookup">
+        <label><span>Lookup ID</span><input id="careLookup" maxlength="120" autocomplete="off" spellcheck="false" placeholder="lic_, cus_, cs_, pi_, sub_"></label>
+        <button class="btn" id="careLookupButton" type="button">Find record</button>
+      </div>
+      <p class="ops-status customer-care-status" id="customerCareStatus" role="status" aria-live="polite">Enter an ID to review customer-care options.</p>
+      <div id="customerCareResults" class="ops-table-wrap" tabindex="0" aria-label="Customer care lookup table"></div>
+      <div class="customer-care-actions">
+        <form id="creditForm" class="care-form">
+          <h3>Give credit</h3>
+          <label><span>License ID</span><input name="licenseId" maxlength="120" autocomplete="off" spellcheck="false" required></label>
+          <label><span>Credit type</span><select name="creditType"><option value="export_units">Export credits</option><option value="cloud_balance">Cloud balance</option></select></label>
+          <label><span>Amount</span><input name="amount" type="number" min="1" max="50000" inputmode="numeric" required></label>
+          <label><span>Reason</span><select name="reasonCode"><option value="service_issue">Service issue</option><option value="failed_delivery">Failed delivery</option><option value="billing_dispute">Billing dispute</option><option value="courtesy_adjustment">Courtesy adjustment</option><option value="owner_exception">Owner exception</option></select></label>
+          <label><span>Ticket reference</span><input name="ticketReference" maxlength="80" autocomplete="off" spellcheck="false" placeholder="CASE-1042" required></label>
+          <label class="care-confirm"><input name="confirm" type="checkbox" required><span>I confirm this credit is approved and documented.</span></label>
+          <button class="btn primary" type="submit">Apply credit</button>
+        </form>
+        <form id="refundForm" class="care-form">
+          <h3>Refund transaction</h3>
+          <label><span>Purchase ID</span><input name="purchaseSourceId" maxlength="120" autocomplete="off" spellcheck="false" placeholder="cs_ or invoice ID"></label>
+          <label><span>Payment ID</span><input name="stripePaymentIntentId" maxlength="120" autocomplete="off" spellcheck="false" placeholder="pi_"></label>
+          <label><span>Amount in cents</span><input name="amountCents" type="number" min="50" max="200000" inputmode="numeric" placeholder="Blank for remaining"></label>
+          <label><span>Reason</span><select name="reasonCode"><option value="service_issue">Service issue</option><option value="failed_delivery">Failed delivery</option><option value="billing_dispute">Billing dispute</option><option value="courtesy_adjustment">Courtesy adjustment</option><option value="owner_exception">Owner exception</option></select></label>
+          <label><span>Ticket reference</span><input name="ticketReference" maxlength="80" autocomplete="off" spellcheck="false" placeholder="CASE-1042" required></label>
+          <label class="care-confirm"><input name="confirm" type="checkbox" required><span>I confirm this refund is approved and documented.</span></label>
+          <button class="btn primary" type="submit">Request refund</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="ops-data-section privacy-support" aria-labelledby="privacy-support-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Customer rights</p><h2 id="privacy-support-heading">Privacy request support</h2></div>
+      <p class="note">Review pseudonymous requests with structured actions only. Ticket references are hashed before storage; do not enter names, email addresses, or case details.</p>
+      <div class="privacy-support-controls">
+        <label><span>Queue</span><select id="privacyStatusFilter"><option value="active">Active</option><option value="open">Open</option><option value="in_review">In review</option><option value="completed">Completed</option><option value="denied">Denied</option><option value="all">All</option></select></label>
+        <label><span>Internal ticket (optional)</span><input id="privacyTicketReference" maxlength="80" autocomplete="off" spellcheck="false" placeholder="CASE-1042"></label>
+        <label><span>Incident annotation</span><select id="privacyReason"><option value="identity_verification">Identity verification</option><option value="processor_delay">Processor delay</option><option value="security_review">Security review</option><option value="billing_dispute">Billing dispute</option><option value="fraud_review">Fraud review</option></select></label>
+        <button class="btn" id="refreshPrivacyQueue" type="button">Refresh queue</button>
+      </div>
+      <p class="ops-status privacy-support-status" id="privacySupportStatus" role="status" aria-live="polite">Loading the privacy request queue…</p>
+      <div id="privacyRequestTable" class="ops-table-wrap" tabindex="0" aria-label="Privacy request support table"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="reconciliation-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Money movement</p><h2 id="reconciliation-heading">Revenue and ledger reconciliation</h2></div>
+      <div id="reconciliationTable" class="ops-table-wrap" tabindex="0" aria-label="Revenue and ledger reconciliation table"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="cloud-photo-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Activation control</p><h2 id="cloud-photo-heading">Cloud Photo billing</h2></div>
+      <p class="note" id="cloudPhotoState">Cloud Photo execution remains disabled.</p>
+      <div id="cloudPhotoTable" class="ops-table-wrap" tabindex="0" aria-label="Cloud Photo quote and settlement table"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="activity-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Workload</p><h2 id="activity-heading">Product activity</h2></div>
+      <div id="productTable" class="ops-table-wrap" tabindex="0" aria-label="Product activity table"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="failure-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Recovery</p><h2 id="failure-heading">Controlled failure reasons</h2></div>
+      <div id="failureTable" class="ops-table-wrap" tabindex="0" aria-label="Controlled failure reasons table"></div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="accounts-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Entitlements</p><h2 id="accounts-heading">Accounts</h2></div>
+      <div id="accountTable" class="ops-table-wrap" tabindex="0" aria-label="Account status table"></div>
+    </section>
+  </main>
+
+  <footer class="ops-footer"><span>Material Logic Studio · Authorized operations only</span><a href="site/legal/privacy.html">Privacy</a><a href="site/legal/security.html">Security</a></footer>
+  <script type="module" src="js/admin.js"></script>
+</body>
+</html>
