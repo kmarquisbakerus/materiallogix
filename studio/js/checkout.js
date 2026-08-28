@@ -50,7 +50,13 @@ function updatePricing(termId) {
     const product = PRODUCTS.find(item => item.id === planId);
     const amount = price(planId, term.id);
     const card = button.closest('.tier');
-    if (!product || !amount || !card) continue;
+    if (!product || !card) continue;
+    if (!amount) {
+      button.disabled = true;
+      button.textContent = `${product.name} is monthly only`;
+      continue;
+    }
+    button.disabled = false;
     const priceNode = card.querySelector('.price');
     if (priceNode) priceNode.innerHTML = `$${amount.total}<small>/${term.months === 1 ? 'mo' : `${term.months} mo`}</small>`;
     button.textContent = `Choose ${product.name}`;
@@ -67,6 +73,10 @@ async function beginCheckout(button) {
   }
   const termId = selectedTerm();
   const planId = button.dataset.checkoutPlan;
+  if (!price(planId, termId)) {
+    document.querySelector('#checkoutStatus').textContent = 'That plan is not available for the selected term.';
+    return;
+  }
   const operationId = crypto.randomUUID();
   button.disabled = true;
   document.querySelector('#checkoutStatus').textContent = 'Opening secure Stripe checkout…';

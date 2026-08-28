@@ -7,6 +7,7 @@
 // subject under platform UI, re-using a rejected asset, missing alt text).
 
 import { SURFACE_BY_ID } from './model.js';
+import { inspectColorMetadata } from './color-management.js';
 
 const SAMPLE_W = 256;   // analysis resolution: comparable scores across assets
 const GRID = 32;        // energy map resolution
@@ -67,6 +68,68 @@ function exposure({ data }) {
     blown: +(blown / n).toFixed(4),
     crushed: +(crushed / n).toFixed(4),
     meanLuma: Math.round(sum / n)
+  };
+}
+
+const percentile = (values, fraction) => {
+  if (!values.length) return 0;
+  const ordered = [...values].sort((a, b) => a - b);
+  return ordered[Math.min(ordered.length - 1, Math.max(0, Math.floor((ordered.length - 1) * fraction)))];
+};
+
+/**
+ * Estimate visible camera noise from low-gradient areas. Strong boundaries are
+ * excluded so hair, fabric weave, typography, and object edges are not treated
+ * as noise merely because they contain fine detail.
+ */
+export function estimateCameraNoise({ data, w, h }) {
+  const pixels = data?.data || data;
+  const width = Math.trunc(Number(w));
+  const height = Math.trunc(Number(h));
+  if (!pixels || width < 3 || height < 3 || pixels.length !== width * height * 4) {
+    return { class: 'unavailable', score: 0, lumaResidual: 0, chromaResidual: 0, sampledPixels: 0, confidence: 0, suggestedReduction: 0 };
+  }
+  const lumaResiduals = [];
+  const chromaResiduals = [];
+  const stride = Math.max(1, Math.floor(Math.sqrt((width * height) / 32000)));
+  const lumaAt = index => 0.2126 * pixels[index] + 0.7152 * pixels[index + 1] + 0.0722 * pixels[index + 2];
+  for (let y = 1; y < height - 1; y += stride) {
+    for (let x = 1; x < width - 1; x += stride) {
+      const center = (y * width + x) * 4;
+      const neighbors = [center - 4, center + 4, center - width * 4, center + width * 4];
+      const neighborLuma = neighbors.map(lumaAt);
+      const boundary = Math.max(
+        Math.abs(neighborLuma[0] - neighborLuma[1]),
+        Math.abs(neighborLuma[2] - neighborLuma[3]),
+        ...neighborLuma.map(value => Math.abs(value - lumaAt(center)))
+      );
+      if (boundary > 72) continue;
+      const localLuma = neighborLuma.reduce((sum, value) => sum + value, 0) / 4;
+      lumaResiduals.push(Math.abs(lumaAt(center) - localLuma));
+      let chroma = 0;
+      for (const [first, second] of [[0, 1], [2, 1]]) {
+        const centerDifference = pixels[center + first] - pixels[center + second];
+        const localDifference = neighbors.reduce((sum, index) => sum + pixels[index + first] - pixels[index + second], 0) / 4;
+        chroma += Math.abs(centerDifference - localDifference);
+      }
+      chromaResiduals.push(chroma / 2);
+    }
+  }
+  const lumaResidual = percentile(lumaResiduals, 0.75);
+  const chromaResidual = percentile(chromaResiduals, 0.75);
+  const score = lumaResidual * 0.72 + chromaResidual * 0.28;
+  const category = score < 1.5 ? 'clean' : score < 4.5 ? 'light' : score < 9 ? 'visible' : 'heavy';
+  const suggestedReduction = category === 'heavy' ? 65 : category === 'visible' ? 45 : category === 'light' ? 20 : 0;
+  const eligible = lumaResiduals.length;
+  const possible = Math.ceil((width - 2) / stride) * Math.ceil((height - 2) / stride);
+  return {
+    class: category,
+    score: +score.toFixed(2),
+    lumaResidual: +lumaResidual.toFixed(2),
+    chromaResidual: +chromaResidual.toFixed(2),
+    sampledPixels: eligible,
+    confidence: +Math.min(1, eligible / Math.max(1, possible * 0.35)).toFixed(3),
+    suggestedReduction
   };
 }
 
@@ -496,7 +559,7 @@ export async function readProvenance(blob) {
 
 // --- the entry point -------------------------------------------------------
 
-export async function analyzeAsset(source, w, h, blob) {
+export async function analyzeAsset(source, w, h, blob, colorTransform = null) {
   const s = sample(source, w, h);
   const gray = toGray(s);
   const lap = laplacian(gray, s.w, s.h);
@@ -510,10 +573,12 @@ export async function analyzeAsset(source, w, h, blob) {
     hash: dHash(source),
     sharpness: sharpnessScore(lap),
     exposure: exposure(s),
+    cameraNoise: estimateCameraNoise(s),
     energy: energyGrid(gray, s.w, s.h),
     palette: palette(s),
     skin: skinSmoothness(s, gray, lap),
-    provenance: blob ? await readProvenance(blob) : null
+    provenance: blob ? await readProvenance(blob) : null,
+    color: blob ? await inspectColorMetadata(blob, colorTransform) : null
   };
 }
 
@@ -534,6 +599,36 @@ export function assetIssues(asset, allAssets, project) {
   }
   if (a.exposure.crushed > 0.12) {
     out.push(issue('info', 'crushed', `${Math.round(a.exposure.crushed * 100)}% of the frame is crushed to black.`));
+  }
+  if (a.cameraNoise?.class === 'visible' || a.cameraNoise?.class === 'heavy') {
+    const label = a.cameraNoise.class === 'heavy' ? 'Heavy camera noise' : 'Visible camera noise';
+    out.push(issue('warn', 'camera-noise', `${label} may soften fine detail.`, 'Try Noise cleanup, then review skin, hair, and fabric at full size.'));
+  }
+  if (a.color?.cmyk || a.color?.profile === 'cmyk') {
+    out.push(issue('block', 'cmyk-conversion-required',
+      'A CMYK source profile was detected, but no accepted conversion is available.',
+      'Convert to sRGB through a verified color-managed workflow, then re-import.'));
+  }
+  if (a.color?.hdrSignaled && !a.color?.toneMappingApplied) {
+    out.push(issue('block', 'hdr-tone-map-required',
+      'HDR color signaling was detected, but no accepted tone map was applied.',
+      'Convert through the approved HDR-to-sRGB delivery path before export.'));
+  } else if (a.color?.profile === 'adobe-rgb') {
+    out.push(issue('block', 'adobe-rgb-acceptance-required',
+      'This wide-gamut source cannot be delivered until the profile license and encoded conversion fixture are accepted.',
+      'Convert to embedded sRGB through a verified color-managed workflow, then re-import.'));
+  } else if (a.color?.profile === 'embedded-icc-unclassified') {
+    out.push(issue('block', 'embedded-profile-unclassified',
+      'The embedded color profile could not be classified safely.',
+      'Convert to embedded sRGB through a verified color-managed workflow, then re-import.'));
+  } else if (a.color?.profile === 'display-p3' && !a.color?.conversionAccepted) {
+    out.push(issue('block', 'display-p3-conversion-unverified',
+      'Display P3 was detected, but this decode did not complete the accepted sRGB conversion.',
+      'Re-open the source in a supported browser or convert it to embedded sRGB.'));
+  } else if (a.color?.profile && !['srgb', 'untagged-srgb-fallback'].includes(a.color.profile)) {
+    out.push(issue('info', 'color-profile-recorded',
+      `Input color profile recorded as ${a.color.profile}; delivery remains sRGB.`,
+      'Review brand and skin-tone benchmark patches before final approval.'));
   }
   if (a.skin && a.skin.ratio < 0.35) {
     out.push(issue('warn', 'waxy-skin', `Skin regions retain ${Math.round(a.skin.ratio * 100)}% of the frame's detail level.`, 'Review skin-detail continuity at 100% before approving.'));

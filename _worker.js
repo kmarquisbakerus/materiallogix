@@ -3,56 +3,32 @@ export default {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
     const path = url.pathname;
+    const canonical = (nextPath, status = 301) =>
+      Response.redirect('https://materiallogix.com' + nextPath + url.search + url.hash, status);
 
-    const redirect = (target, status = 302) => Response.redirect(target, status);
-    const asset = (assetPath, search = url.search) => {
-      const next = new URL(request.url);
-      next.pathname = assetPath;
-      next.search = search;
-      return env.ASSETS.fetch(new Request(next.toString(), request));
-    };
-
-    if (host === 'app.materiallogix.com') {
-      return redirect('https://studio.materiallogix.com' + path + url.search + url.hash, 301);
+    if (host === 'app.materiallogix.com' || host === 'studio.materiallogix.com') {
+      if (path === '/voice' || path === '/voice.html') return canonical('/studio/voice.html');
+      if (path === '/' || path === '/index.html') return canonical('/studio/');
+      return canonical(path === '/studio' || path.startsWith('/studio/') ? path : '/studio' + path);
     }
-
-    if (host === 'studio.materiallogix.com') {
-      if (path === '/' || path === '/index.html') return asset('/studio/index.html');
-      if (path === '/voice' || path === '/voice.html') return redirect('https://voice.materiallogix.com' + url.search + url.hash, 301);
-      return asset(path.startsWith('/studio/') ? path : '/studio' + path);
-    }
-
-    if (host === 'voice.materiallogix.com') {
-      if (path === '/' || path === '/index.html' || path === '/voice.html') return asset('/studio/voice.html');
-      return asset(path.startsWith('/studio/') ? path : '/studio' + path);
-    }
-
+    if (host === 'voice.materiallogix.com') return canonical('/studio/voice.html');
     if (host === 'demo.materiallogix.com') {
-      if (!url.searchParams.has('demo')) {
-        const target = new URL(request.url);
-        target.pathname = '/';
-        target.searchParams.set('demo', '1');
-        return redirect(target.toString(), 302);
-      }
-      if (path === '/' || path === '/index.html') return asset('/studio/index.html');
-      return asset(path.startsWith('/studio/') ? path : '/studio' + path);
+      return Response.redirect('https://materiallogix.com/studio/?demo=1', 302);
     }
-
     if (host === 'legal.materiallogix.com') {
-      if (path === '/' || path === '/index.html') return asset('/legal/index.html');
-      return asset(path.startsWith('/legal/') ? path : '/legal' + path);
+      return canonical(path === '/legal' || path.startsWith('/legal/') ? path : '/legal' + (path === '/' ? '/' : path));
     }
+    if (host === 'www.materiallogix.com') return canonical(path);
 
-    if (host === 'materiallogix.com' || host === 'www.materiallogix.com') {
-      if (path === '/app' || path.startsWith('/app/')) return redirect('https://studio.materiallogix.com' + url.search + url.hash, 301);
-      if (path === '/studio' || path.startsWith('/studio/')) return redirect('https://studio.materiallogix.com' + url.search + url.hash, 301);
-      if (path === '/voice' || path === '/voice.html') return redirect('https://voice.materiallogix.com' + url.search + url.hash, 301);
-      if (path === '/demo' || path.startsWith('/demo/')) return redirect('https://demo.materiallogix.com' + url.search + url.hash, 301);
-      if (path === '/legal' || path === '/legal/') return redirect('https://legal.materiallogix.com' + url.search + url.hash, 301);
-      if (path.startsWith('/legal/')) {
-        const suffix = path.slice('/legal'.length) || '/';
-        return redirect('https://legal.materiallogix.com' + suffix + url.search + url.hash, 301);
-      }
+    if (path === '/app' || path === '/app/') return canonical('/studio/');
+    if (path.startsWith('/app/')) return canonical('/studio/' + path.slice('/app/'.length));
+    if (path === '/voice') return canonical('/studio/voice.html', 302);
+
+    if (path === '/studio/sw.js') {
+      const response = await env.ASSETS.fetch(request);
+      const headers = new Headers(response.headers);
+      headers.set('Cache-Control', 'no-cache');
+      return new Response(response.body, { status: response.status, headers });
     }
 
     return env.ASSETS.fetch(request);

@@ -3,6 +3,7 @@
 // the small shell enhancements in a deterministic order.
 import { liteRemaining } from './pricing.js';
 import { activeLicense } from './license.js';
+import { flushPendingUsageReleases } from './billing-client.js';
 
 globalThis.liteRemaining = liteRemaining;
 globalThis.refreshMaterialLogixLicense = async () => {
@@ -10,8 +11,13 @@ globalThis.refreshMaterialLogixLicense = async () => {
   return globalThis.lic;
 };
 await globalThis.refreshMaterialLogixLicense();
+await flushPendingUsageReleases();
 
-window.addEventListener('focus', () => globalThis.refreshMaterialLogixLicense());
+window.addEventListener('focus', () => {
+  globalThis.refreshMaterialLogixLicense();
+  flushPendingUsageReleases();
+});
+window.addEventListener('online', () => flushPendingUsageReleases());
 window.addEventListener('storage', event => {
   if (event.key === 'cros:license' || event.key === 'cros:licenseCheck') {
     globalThis.refreshMaterialLogixLicense();

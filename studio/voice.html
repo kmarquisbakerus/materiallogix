@@ -1,1 +1,637 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow,noarchive"><meta http-equiv="refresh" content="0;url=/"><title>MaterialLogix Studio</title></head><body><p><a href="/">MaterialLogix Studio is preparing its complete release.</a></p></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voice Studio — Material Logic</title>
+<script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+<style>
+  .studio { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr) 264px; gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
+  .studio > section { background: var(--ground); padding: 26px 28px; overflow-y: auto; }
+  .studio h2 { font: 300 22px/1.2 var(--serif); margin: 0 0 4px; }
+  .studio p.lead { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; line-height: 1.6; }
+  #script { width: 100%; min-height: 220px; font: 400 14px/1.7 var(--serif); padding: 14px; }
+  .planline { display: flex; gap: 10px; align-items: baseline; padding: 7px 0; border-bottom: 1px solid var(--hair-soft); font-size: 12.5px; }
+  .planline .t { color: var(--ink-2); flex: 1; }
+  .planline .meta { font: 400 10px/1 var(--mono); color: var(--faint); white-space: nowrap; }
+  .planline .breath { color: var(--gold); font-size: 10px; letter-spacing: .1em; }
+  .tellrow { display: flex; gap: 8px; align-items: center; padding: 6px 0; font-size: 12.5px; border-bottom: 1px solid var(--hair-soft); }
+  .tellrow .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--bad); flex-shrink: 0; }
+  .tellrow.okrow .dot { background: var(--ok); }
+  audio { width: 100%; margin-top: 12px; }
+  .knob { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .knob input[type=range] { flex: 1; accent-color: var(--gold); }
+  .knob .v { font: 400 11px/1 var(--mono); color: var(--muted); width: 34px; text-align: right; }
+  .voice-consent { border:1px solid var(--hair); padding:12px; margin:0 0 14px; }
+  .voice-consent label { display:flex; align-items:flex-start; gap:9px; min-height:44px; padding:8px 0; font-size:12px; line-height:1.45; cursor:pointer; }
+  .voice-consent input[type=checkbox] { width:18px; height:18px; margin-top:1px; }
+  .voice-more-status { margin:0; padding:6px 8px; color:var(--muted); font-size:11px; line-height:1.45; }
+  .topbar-more-menu a.btn { color:var(--ink-2); }
+  body[data-voice-mode="guided"] .voice-advanced { display:none !important; }
+  @media (max-width: 1280px) { .studio { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } }
+  @media (pointer:coarse) {
+    .knob input[type=range] { min-height:44px; touch-action:pan-y; }
+    .voice-studio .seg button, .voice-studio .activity-head .btn { min-height:44px; }
+  }
+  @media (max-width: 900px) {
+    .studio { display:block; overflow-y:auto; background:var(--ground); }
+    .studio > section { overflow:visible; padding:22px 16px; border-bottom:1px solid var(--hair); }
+    #script { min-height:180px; }
+    .knob { display:grid; grid-template-columns:minmax(0,1fr) 42px; gap:7px 10px; align-items:center; }
+    .knob > label { grid-column:1 / -1; width:auto !important; }
+    .knob > select { grid-column:1 / -1; }
+    .knob > .btn { grid-column:1 / -1; width:100%; }
+    .knob .v { width:auto; }
+  }
+</style>
+</head>
+<body class="voice-studio">
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <strong>Voice Studio</strong>
+      <span>Material Logic</span>
+    </div>
+    <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../">Material Logic</a><span>/</span><a href="index.html">Studio</a><span>/</span><b>Voice</b></nav>
+    <div class="spacer"></div>
+    <button class="btn sm activity-toggle" type="button" aria-controls="activityRail" aria-expanded="false">Jobs</button>
+    <details class="topbar-more">
+      <summary aria-label="Open more Voice Studio options">More</summary>
+      <div class="topbar-more-menu">
+        <p class="voice-more-status" id="engineState" role="status" aria-live="polite">Checking local engine…</p>
+        <a class="btn sm" href="index.html" style="text-decoration:none">Photo &amp; Video workspace</a>
+        <a class="btn sm" href="usage.html" style="text-decoration:none">Usage &amp; wallet</a>
+      </div>
+    </details>
+  </header>
+
+  <div class="studio">
+    <section>
+      <h2>Script</h2>
+      <p class="lead">Use <b>*stars*</b> for emphasis and blank lines for pauses.</p>
+      <div class="seg editor-mode" id="voiceMode" role="group" aria-label="Voice editing mode" style="margin-bottom:8px"><button class="on" type="button" data-mode="guided">Guided</button><button type="button" data-mode="advanced">Advanced</button></div>
+      <p class="lead" id="voiceModeDescription" style="font-size:11.5px">Simple controls for a finished voiceover.</p>
+      <label class="eyebrow" for="script">Performance script</label>
+      <textarea id="script" placeholder="Paste the voiceover copy here…">A strong idea deserves a finished presentation. Material Logic brings photo, video, and voice into one focused production workflow.
+
+Create with freedom. Finish with *confidence*.</textarea>
+
+      <div class="knob" style="margin-top:16px">
+        <label class="eyebrow" for="exag" style="width:110px">Performance intensity</label>
+        <input type="range" id="exag" min="0.25" max="1.4" step="0.05" value="0.6">
+        <span class="v" id="exagV">0.60</span>
+      </div>
+      <div class="knob voice-advanced">
+        <label class="eyebrow" for="cfg" style="width:110px">Pacing variation</label>
+        <input type="range" id="cfg" min="0.2" max="0.7" step="0.05" value="0.3">
+        <span class="v" id="cfgV">0.30</span>
+      </div>
+      <div class="knob">
+        <label class="eyebrow" for="lang" style="width:110px">Language</label>
+        <select id="lang" style="flex:1">
+          <option value="en">English</option>
+          <option value="es">Spanish (human-reviewed script required)</option>
+        </select>
+      </div>
+      <div id="spanishReview" hidden style="border:1px solid var(--hair);padding:12px;margin:0 0 14px">
+        <label class="eyebrow" for="spanishScript">Approved Spanish performance copy</label>
+        <textarea id="spanishScript" style="width:100%;min-height:130px;margin-top:8px" placeholder="Paste the final Spanish written or reviewed by a fluent human translator. Material Logic will not auto-translate publishable copy."></textarea>
+        <label style="display:flex;gap:8px;align-items:flex-start;margin-top:8px;font-size:12px;color:var(--muted)"><input id="spanishApproved" type="checkbox"> I confirm a fluent human reviewed this Spanish for meaning, locale, tone, names, numbers, and pronunciation.</label>
+        <p class="lead" style="margin:8px 0 0">The approval is recorded in the project workflow. Keep the translator or reviewer credit and date with the campaign records.</p>
+      </div>
+      <div class="knob">
+        <label class="eyebrow" for="pack" style="width:110px">House profile</label>
+        <select id="pack" style="flex:1"><option value="">House performance profile</option></select>
+        <button class="btn voice-advanced" id="recBtn" type="button" title="Record 20-30s of natural speech">Record a reference</button>
+        <button class="btn voice-advanced" id="packUpload" type="button" title="Upload audio with documented voice consent">Import reference</button>
+        <input type="file" id="packFile" accept=".wav,.mp3,.m4a,.aac,.ogg,.oga,.webm,.flac,audio/*" multiple hidden>
+      </div>
+      <p class="lead" id="recState" style="margin:-4px 0 12px;font-size:11.5px">A personal voice profile needs at least 10 clean seconds from a live recording or supported audio file; 20–30 seconds is recommended for better quality. Reference audio, conditioning, synthesis, and finishing remain on this computer.</p>
+      <fieldset class="voice-advanced voice-consent"><legend class="eyebrow">Voice-reference authorization</legend>
+        <label><input id="voiceRights" type="checkbox"> <span>I own this recording or have a signed release permitting voice conditioning.</span></label>
+        <label><input id="voiceRetention" type="checkbox"> <span>I accept local retention until I delete this reference.</span></label>
+      </fieldset>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary" id="render" disabled>Render voice</button>
+        <button class="btn voice-advanced" id="humanizeOnly" title="Apply the local voice-finishing chain to an audio file">Enhance imported audio…</button>
+        <input type="file" id="wavIn" accept="audio/*" hidden>
+        <span class="note" id="status" role="status" aria-live="polite"></span>
+      </div>
+      <audio id="player" controls hidden aria-label="Rendered voice preview"></audio>
+      <div id="dl"></div>
+    </section>
+
+    <section>
+      <h2>Performance direction</h2>
+      <p class="lead" id="planSummary"></p>
+      <div id="plan"></div>
+      <h2 style="margin-top:26px">Voice quality analysis</h2>
+      <p class="lead">Every render is evaluated for room tone, dynamics, pause variation, clipping, transients, sibilance, and compression before delivery.</p>
+      <div id="tells"><p class="lead">Render or import audio to begin quality analysis.</p></div>
+    </section>
+    <aside class="activity-rail" id="activityRail" aria-label="Jobs, execution location, progress, and usage"></aside>
+  </div>
+</div>
+
+<script type="module" src="js/studio-nav.js"></script>
+<script type="module" src="js/activity.js?v=9"></script>
+<script type="module">
+import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
+import { activeLicense, covers } from './js/license.js';
+import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-client.js';
+import { bridgeFetch } from './js/generate.js';
+import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
+import { voiceReferenceConsent } from './js/voice-quality.js';
+import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from './js/voice-reference.js';
+
+const $ = s => document.querySelector(s);
+const BRIDGE = `http://${location.hostname || '127.0.0.1'}:8189`;
+let engineReady = false;
+let knownVoicePacks = [];
+
+async function releaseVoiceUsage(authorizationId, reason) {
+  try {
+    await voidOutbound(authorizationId, reason);
+    return 'Reserved usage was returned.';
+  } catch (error) {
+    return error instanceof Error && error.message === 'usage_already_settled'
+      ? 'Usage was already finalized and remains visible in Usage.'
+      : 'Usage release is pending and will retry automatically; it is visible in Usage.';
+  }
+}
+
+function rebuildVoiceOptions() {
+  const sel = $('#pack');
+  const current = sel.value;
+  const language = $('#lang').value;
+  const compatible = HOUSE_VOICES.filter(profile => profile.engineLanguage === language);
+  const options = HOUSE_VOICES.map(profile => {
+    const option = new Option(`${profile.name} — ${profile.region}, ${profile.register}`, `house:${profile.id}`);
+    option.disabled = profile.engineLanguage !== language;
+    return option;
+  });
+  sel.replaceChildren(...options);
+  for (const pack of knownVoicePacks) sel.append(new Option(`My voice — ${pack}`, `pack:${pack}`));
+  sel.value = current;
+  const currentProfile = sel.value.startsWith('house:') ? HOUSE_VOICE_BY_ID[sel.value.slice(6)] : null;
+  if (!sel.value || (currentProfile && currentProfile.engineLanguage !== language)) {
+    sel.value = `house:${compatible[0].id}`;
+  }
+  sel.dispatchEvent(new Event('change'));
+}
+
+const setVoiceMode = mode => {
+  const value = mode === 'advanced' ? 'advanced' : 'guided';
+  document.body.dataset.voiceMode = value;
+  localStorage.setItem('mlx:voice-mode', value);
+  document.querySelectorAll('#voiceMode button').forEach(button => {
+    const selected = button.dataset.mode === value;
+    button.classList.toggle('on', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  $('#voiceModeDescription').textContent = value === 'guided'
+    ? 'A focused path from script to finished voiceover with balanced performance settings.'
+    : 'Expanded language review, custom reference, imported-audio finishing, and quality controls.';
+};
+document.querySelectorAll('#voiceMode button').forEach(button => { button.onclick = () => setVoiceMode(button.dataset.mode); });
+setVoiceMode(localStorage.getItem('mlx:voice-mode'));
+
+async function checkEngine() {
+  try {
+    const r = await fetch(BRIDGE + '/health', { signal: AbortSignal.timeout(1500) });
+    const j = await r.json();
+    engineReady = !!j.voice?.available;
+    knownVoicePacks = j.voice?.packs || [];
+    rebuildVoiceOptions();
+    $('#engineState').textContent = engineReady
+      ? (j.voice.warm ? 'engine warm — renders are fast' : 'engine installed — first render loads the model (~30s)')
+      : 'Local voice engine is not installed. Imported-audio enhancement remains available.';
+  } catch {
+    $('#engineState').textContent = 'Voice tools are offline. Open Material Logic Studio on your computer to render.';
+    rebuildVoiceOptions();
+  }
+  $('#render').disabled = !engineReady;
+}
+
+function activeScriptText() {
+  return $('#lang').value === 'es' ? $('#spanishScript').value : $('#script').value;
+}
+
+function paintPlan() {
+  const plan = performancePlan(activeScriptText());
+  $('#planSummary').textContent =
+    `${plan.segments.length} segment(s), ${plan.totalWords} words, ~${planDuration(plan)}s read.`;
+  $('#plan').replaceChildren(...plan.segments.map(s =>
+    Object.assign(document.createElement('div'), {
+      className: 'planline',
+      innerHTML: `${s.breathBefore ? '<span class="breath">BREATH</span>' : ''}
+        <span class="t">${s.text.replace(/</g, '&lt;')}</span>
+        <span class="meta">${s.intent} · rate ${s.rate} · energy ${s.energy} · pause ${s.pauseAfterMs}ms${s.emphasis.length ? ' · emphasis: ' + s.emphasis.join(',') : ''}</span>`
+    })));
+  return plan;
+}
+
+let lastTells = null;
+
+async function analyse(buffer) {
+  const t = voiceTells(buffer);
+  lastTells = t;
+  const rows = [];
+  const row = (ok, text) => {
+    const d = document.createElement('div');
+    d.className = 'tellrow' + (ok ? ' okrow' : '');
+    d.innerHTML = `<span class="dot"></span><span>${text}</span>`;
+    return d;
+  };
+  rows.push(row(t.silenceFloorDb > -90, `Room tone floor: ${t.silenceFloorDb} dB ${t.silenceFloorDb > -90 ? '(natural residual ambience)' : '(digital-zero silence)'}`));
+  rows.push(row(t.loudnessCv >= 0.18, `Loudness variation: ${t.loudnessCv} ${t.loudnessCv >= 0.18 ? '(natural dynamics)' : '(too uniform)'}`));
+  rows.push(row(!(t.pauseCount > 3 && t.pauseJitter < 0.2), `Pause variation: ${t.pauseCount} pauses, variance ${t.pauseJitter} ${t.pauseCount > 3 && t.pauseJitter < 0.2 ? '(overly regular)' : '(natural)'}`));
+  rows.push(row(t.clipPercent <= 0.02, `Peak integrity: ${t.clipPercent}% clipped samples ${t.clipPercent <= 0.02 ? '(clear)' : '(clipping)'}`));
+  rows.push(row(t.transientClicks <= Math.max(2, buffer.duration * 0.8), `Transient scan: ${t.transientClicks} click-like edges`));
+  rows.push(row(t.sibilanceIndex <= 0.42, `Sibilance index: ${t.sibilanceIndex} ${t.sibilanceIndex <= 0.42 ? '(controlled)' : '(too hard)'}`));
+  rows.push(row(t.crestFactorDb >= 5, `Dynamic crest: ${t.crestFactorDb} dB ${t.crestFactorDb >= 5 ? '(open dynamics)' : '(over-compressed)'}`));
+  $('#tells').replaceChildren(...rows);
+}
+
+function offerDownload(buffer) {
+  // AudioBuffer -> 16-bit wav
+  const len = buffer.length, sr = buffer.sampleRate;
+  const bytes = new ArrayBuffer(44 + len * 2);
+  const v = new DataView(bytes);
+  const w = (o, s2) => { for (let i = 0; i < s2.length; i++) v.setUint8(o + i, s2.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + len * 2, true); w(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, len * 2, true);
+  const d = buffer.getChannelData(0);
+  for (let i = 0; i < len; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 32767, true);
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }));
+  const a = Object.assign(document.createElement('a'), {
+    href: url, download: 'voiceover.wav', className: 'btn sm', textContent: 'Download wav', style: 'margin-top:10px;display:inline-block;text-decoration:none'
+  });
+  $('#dl').replaceChildren(a);
+  return url;
+}
+
+async function playAndCheck(arrayBuffer) {
+  const ctx = new AudioContext();
+  let decoded = await ctx.decodeAudioData(arrayBuffer);
+  const lic = await activeLicense();
+  let preview = false;
+  let authorization = null;
+  if (covers(lic, 'voice')) {
+    const units = Math.max(1, Math.ceil(decoded.duration / 60));
+    authorization = await authorizeOutbound({ product: 'voice', artifactKind: 'clean_export', quantity: units });
+    if (!authorization.ok) {
+      $('#status').textContent = `Online production authorization failed (${authorization.reason}). A marked preview may be played but cannot be downloaded.`;
+      preview = true;
+    }
+  }
+  if (preview || !covers(lic, 'voice')) {
+    // Free tier: spoken stamps at start, middle, and end - uncroppable by design.
+    try {
+      const stampRes = await fetch('assets/preview-stamp.wav');
+      if (!stampRes.ok) throw new Error(`preview_stamp_${stampRes.status}`);
+      const stampBuf = await ctx.decodeAudioData(await stampRes.arrayBuffer());
+      decoded = await stampPreview(decoded, stampBuf);
+      preview = true;
+    } catch {
+      $('#status').textContent = 'Preview unavailable because the required audible preview mark could not be applied. No unstamped audio was played or offered.';
+      $('#player').hidden = true;
+      $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: 'Start the packaged app again or repair the installation before previewing.' }));
+      await ctx.close();
+      return;
+    }
+  }
+  $('#status').textContent = 'applying voice finishing…';
+  const humanized = await humanizeBuffer(decoded);
+  if (preview) $('#planSummary').textContent += ' · PREVIEW (licensed renders are clean)';
+  await analyse(humanized);
+  let url = null;
+  if (authorization?.ok) {
+    try {
+      await settleOutbound(authorization.authorization.id);
+      url = offerDownload(humanized);
+    } catch (error) {
+      const release = await releaseVoiceUsage(authorization.authorization.id, 'download_failed');
+      $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: `Download withheld because settlement could not be verified online. ${release}` }));
+    }
+  } else {
+    $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: 'Preview playback only. Sign in with an active license and connect online to download.' }));
+  }
+  if (!url) {
+    // Playback remains local and is not an outbound artifact.
+    const len = humanized.length, sr = humanized.sampleRate;
+    const wav = new ArrayBuffer(44 + len * 2), view = new DataView(wav);
+    const write = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
+    write(0, 'RIFF'); view.setUint32(4, 36 + len * 2, true); write(8, 'WAVEfmt ');
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, sr, true); view.setUint32(28, sr * 2, true); view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, len * 2, true);
+    const channel = humanized.getChannelData(0);
+    for (let i = 0; i < len; i++) view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, channel[i])) * 32767, true);
+    url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+  }
+  $('#player').src = url;
+  $('#player').hidden = false;
+  $('#status').textContent = 'quality analysis complete — review the finished take below';
+
+  // Every keep/reject is a labeled example: the gate's thresholds learn
+  // the owner's taste from these.
+  const old = document.getElementById('earTeach');
+  if (old) old.remove();
+  const row = document.createElement('div');
+  row.id = 'earTeach';
+  row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:10px';
+  const label = document.createElement('span');
+  label.className = 'note'; label.style.fontSize = '12px';
+  label.textContent = 'How would you rate this take?';
+  const send = async verdict => {
+    try {
+      const r = await bridgeFetch(BRIDGE + '/ear/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          verdict, at: new Date().toISOString(),
+          tells: lastTells,
+          params: { exag: Number($('#exag').value), cfg: Number($('#cfg').value),
+                    lang: $('#lang').value, voice: $('#pack').value }
+        })
+      });
+      const j = await r.json();
+      label.textContent = `Quality preference saved (${j.total} rating${j.total === 1 ? '' : 's'}).`;
+      row.querySelectorAll('button').forEach(b => b.remove());
+    } catch { label.textContent = 'Could not reach the bridge to record that.'; }
+  };
+  for (const [v, txt] of [['keep', 'Approve'], ['reject', 'Needs revision']]) {
+    const b = document.createElement('button');
+    b.className = 'btn'; b.type = 'button'; b.textContent = txt;
+    b.onclick = () => send(v);
+    row.append(b);
+  }
+  row.prepend(label);
+  $('#dl').after(row);
+}
+
+$('#render').onclick = async () => {
+  if ($('#lang').value === 'es' && !$('#spanishApproved').checked) {
+    $('#status').textContent = 'Spanish needs a fluent human review and approval before rendering.';
+    $('#spanishApproved').focus();
+    return;
+  }
+  const plan = paintPlan();
+  const exag = Number($('#exag').value);
+  $('#status').textContent = 'Rendering with the local voice engine…';
+  $('#render').disabled = true;
+  try {
+    const lang = $('#lang').value;
+    const segments = plan.segments;
+    const selectedProfile = $('#pack').value.startsWith('house:')
+      ? HOUSE_VOICE_BY_ID[$('#pack').value.slice(6)]
+      : null;
+    if (lang !== 'en') {
+      $('#status').textContent = 'Rendering the approved Spanish performance copy with the multilingual voice engine…';
+    }
+    const res = await bridgeFetch(BRIDGE + '/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cfgWeight: Number($('#cfg').value),
+        temperature: selectedProfile?.temperature,
+        languageId: lang,
+        voicePack: $('#pack').value.startsWith('pack:') ? $('#pack').value.slice(5) : undefined,
+        voiceProfile: $('#pack').value.startsWith('house:') ? $('#pack').value.slice(6) : undefined,
+        segments: segments.map(s => ({
+          text: s.text,
+          pauseAfterMs: s.pauseAfterMs,
+          rate: s.rate,
+          pitch: s.pitch,
+          energy: s.energy,
+          breathBefore: s.breathBefore,
+          intent: s.intent,
+          emphasis: s.emphasis,
+          exaggeration: +(exag * (s.emphasis.length ? 1.15 : 1)).toFixed(2)
+        }))
+      })
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `bridge ${res.status}`);
+    await playAndCheck(await res.arrayBuffer());
+  } catch (err) {
+    $('#status').textContent = 'Voice render failed: ' + err.message;
+  } finally {
+    $('#render').disabled = !engineReady;
+  }
+};
+
+$('#humanizeOnly').onclick = () => $('#wavIn').click();
+$('#wavIn').onchange = async e => {
+  const f = e.target.files[0];
+  if (f) await playAndCheck(await f.arrayBuffer());
+  e.target.value = '';
+};
+$('#exag').oninput = () => { $('#exagV').textContent = Number($('#exag').value).toFixed(2); };
+$('#cfg').oninput = () => { $('#cfgV').textContent = Number($('#cfg').value).toFixed(2); };
+$('#pack').onchange = () => {
+  const id = $('#pack').value.startsWith('house:') ? $('#pack').value.slice(6) : '';
+  const profile = HOUSE_VOICE_BY_ID[id];
+  if (!profile) return;
+  $('#cfg').value = String(profile.cfgWeight);
+  $('#exag').value = String(profile.exaggeration);
+  $('#cfg').dispatchEvent(new Event('input'));
+  $('#exag').dispatchEvent(new Event('input'));
+  $('#recState').textContent = `${profile.name}: ${profile.region} · ${profile.register}. ${profile.description}`;
+};
+
+async function savePack(blob, assessment) {
+  if (!assessment || assessment.status !== 'pass') {
+    $('#recState').textContent = `Voice reference blocked: ${(assessment?.reasons || ['quality_check_required']).join(', ').replaceAll('_', ' ')}.`;
+    return;
+  }
+  const consent = voiceReferenceConsent({ ownerConfirmed: $('#voiceRights').checked, purpose: 'voice_conditioning', retentionAccepted: $('#voiceRetention').checked });
+  if (consent.status !== 'pass') {
+    $('#recState').textContent = 'Voice reference blocked: confirm source rights and local-retention terms first.';
+    return;
+  }
+  const license = await activeLicense();
+  if (license?.plan === 'voice_starter' && knownVoicePacks.length >= 1) {
+    $('#recState').textContent = 'Voice Starter allows one active personal voice profile. Discard the current profile or upgrade before adding another.';
+    return;
+  }
+  const name = prompt('Name this voice reference (letters and dashes):', 'my-voice');
+  if (!name) return;
+  const authorization = await authorizeOutbound({ product: 'voice', artifactKind: 'upload', quantity: 1 });
+  if (!authorization.ok) {
+    $('#recState').textContent = `Online voice-reference authorization failed (${authorization.reason || 'authorization_required'}). Nothing was uploaded.`;
+    return;
+  }
+  $('#recState').textContent = 'Preparing the reference — reducing noise and selecting the strongest twelve seconds…';
+  const res = await bridgeFetch(`${BRIDGE}/voicepack?name=${encodeURIComponent(name)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob
+  });
+  if (!res.ok) {
+    const release = await releaseVoiceUsage(authorization.authorization.id, 'upload_failed');
+    $('#recState').textContent = `Save failed: ${(await res.json().catch(() => ({}))).error || res.status}. ${release}`;
+    return;
+  }
+  let j;
+  try {
+    j = await res.json();
+    await settleOutbound(authorization.authorization.id);
+  } catch (error) {
+    let removed = false;
+    try {
+      const deletion = await bridgeFetch(`${BRIDGE}/voicepack/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
+      removed = deletion.ok;
+    } catch { /* status below remains explicit */ }
+    const release = await releaseVoiceUsage(authorization.authorization.id, 'upload_failed');
+    $('#recState').textContent = `${removed ? 'The unverified reference was removed.' : 'The reference could not be finalized; remove it from local Voice settings before reuse.'} ${release}`;
+    return;
+  }
+  // Listen-before-trust: play the cleaned reference, keep or discard.
+  const holder = $('#recState');
+  holder.replaceChildren();
+  const player = document.createElement('audio');
+  player.controls = true;
+  player.style.cssText = 'width:100%;margin:6px 0';
+  player.src = `${BRIDGE}/voicepack?name=${encodeURIComponent(name)}&t=${Date.now()}`;
+  const note = document.createElement('span');
+  note.textContent = `Reference prepared. ${(j.report || '').replace(/\n/g, ' · ')}${assessment.advisories.includes('longer_sample_recommended') ? ' A 20–30 second source may improve quality.' : ''} — review it before approval.`;
+  const keep = document.createElement('button');
+  keep.className = 'btn'; keep.type = 'button'; keep.textContent = 'Approve reference';
+  keep.onclick = () => { holder.textContent = `"${name}" is ready — select it under Voice.`; checkEngine(); };
+  const drop = document.createElement('button');
+  drop.className = 'btn'; drop.type = 'button'; drop.textContent = 'Discard';
+  drop.style.marginLeft = '6px';
+  drop.onclick = async () => {
+    await bridgeFetch(`${BRIDGE}/voicepack/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
+    holder.textContent = 'Reference discarded. Record in a quieter space with a closer microphone and natural delivery.';
+    checkEngine();
+  };
+  const row = document.createElement('div');
+  row.append(keep, drop);
+  holder.append(note, player, row);
+}
+
+let rec = null, chunks = [];
+$('#recBtn').onclick = async () => {
+  if (rec) {   // stop
+    rec.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+    rec = new MediaRecorder(stream);
+    chunks = [];
+    rec.ondataavailable = e => chunks.push(e.data);
+    rec.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      $('#recBtn').textContent = 'Record a reference';
+      // decode + re-encode to wav so the engine gets clean PCM
+      const ab = await new Blob(chunks).arrayBuffer();
+      const ctx = new AudioContext();
+      const buf = await ctx.decodeAudioData(ab);
+      const assessment = assessVoiceReference(buf);
+      await savePack(audioBufferToWav(buf), assessment);
+      rec = null;
+    };
+    rec.start();
+    $('#recBtn').textContent = 'Stop recording';
+    $('#recState').textContent = 'Recording — use a natural speaking style and select Stop when complete.';
+  } catch (e) {
+    $('#recState').textContent = 'Microphone unavailable: ' + e.message;
+    rec = null;
+  }
+};
+$('#packUpload').onclick = () => $('#packFile').click();
+$('#packFile').onchange = async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  const license = await activeLicense();
+  if (files.length > 1 && license?.plan === 'voice_starter') {
+    $('#recState').textContent = 'Voice Starter supports one personal voice source, not composite or multi-source packs. Upgrade to Voice Studio for advanced pack features.';
+    return;
+  }
+  if (files.length === 1) {
+    if (!supportedVoiceReference(files[0])) {
+      $('#recState').textContent = 'Unsupported reference format. Use WAV, MP3, M4A/AAC, OGG, WebM, or FLAC.';
+      return;
+    }
+    try {
+      const context = new AudioContext();
+      const decoded = await context.decodeAudioData(await files[0].arrayBuffer());
+      return savePack(audioBufferToWav(decoded), assessVoiceReference(decoded));
+    } catch {
+      $('#recState').textContent = 'Could not decode that reference. Choose a supported, playable audio file.';
+      return;
+    }
+  }
+
+  // Composite pack: several cleared voices blended into one reference that is
+  // no single person. Sources must be consented or CC0 (e.g. Common Voice) -
+  // blending does not launder unlicensed audio.
+  $('#recState').textContent = `Blending ${files.length} voices into one composite pack…`;
+  const ctx = new AudioContext();
+  const buffers = [];
+  for (const f of files) {
+    try { buffers.push(await ctx.decodeAudioData(await f.arrayBuffer())); }
+    catch { $('#recState').textContent = `Could not decode ${f.name}`; return; }
+  }
+  const sr = 24000;
+  const perClip = 9;                       // seconds of each voice
+  const gap = Math.round(sr * 0.25);
+  const clipLen = sr * perClip;
+  const total = buffers.length * (clipLen + gap);
+  const off = new OfflineAudioContext(1, total, sr);
+  let at = 0;
+  for (const b of buffers) {
+    // rough loudness match so no donor dominates the conditioning
+    let sum = 0;
+    const d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i += 97) sum += d[i] * d[i];
+    const rms = Math.sqrt(sum / Math.ceil(d.length / 97)) || 1;
+    const src = off.createBufferSource();
+    src.buffer = b;
+    const g = off.createGain();
+    g.gain.value = Math.min(4, 0.08 / rms);
+    src.connect(g).connect(off.destination);
+    src.start(at / sr, 0, Math.min(perClip, b.duration));
+    at += clipLen + gap;
+  }
+  const mixed = await off.startRendering();
+  const len = mixed.length;
+  const bytes = new ArrayBuffer(44 + len * 2);
+  const v = new DataView(bytes);
+  const wstr = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+  wstr(0, 'RIFF'); v.setUint32(4, 36 + len * 2, true); wstr(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); wstr(36, 'data'); v.setUint32(40, len * 2, true);
+  const d2 = mixed.getChannelData(0);
+  for (let i = 0; i < len; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d2[i])) * 32767, true);
+  await savePack(new Blob([bytes], { type: 'audio/wav' }), assessVoiceReference(mixed));
+};
+$('#script').oninput = paintPlan;
+$('#spanishScript').oninput = paintPlan;
+$('#lang').onchange = () => {
+  const spanish = $('#lang').value === 'es';
+  $('#spanishReview').hidden = !spanish;
+  rebuildVoiceOptions();
+  paintPlan();
+};
+
+rebuildVoiceOptions();
+paintPlan();
+checkEngine();
+</script>
+<script>
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>

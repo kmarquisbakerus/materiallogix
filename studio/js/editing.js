@@ -11,7 +11,7 @@ export const EDIT_DEFAULTS = Object.freeze({
   adjustments: Object.freeze({
     exposure: 0, contrast: 0, highlights: 0, shadows: 0,
     temperature: 0, tint: 0, saturation: 0, vibrance: 0,
-    blur: 0, sharpen: 0, grain: 0, vignette: 0
+    denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0
   }),
   pixelGrid: Object.freeze({ enabled: false, columns: 12, sensitivity: 55 })
 });
@@ -32,6 +32,67 @@ export function previewFilter(adjustments = {}) {
   const hue = clamp(a.temperature, -100, 100) * -0.08 + clamp(a.tint, -100, 100) * 0.05;
   const blur = clamp(a.blur, 0, 20) / 4;
   return `brightness(${exposure}) contrast(${contrast}) saturate(${Math.max(0, saturation)}) hue-rotate(${hue}deg) blur(${blur}px)`;
+}
+
+/**
+ * Bounded joint-bilateral cleanup for camera noise. The range weight prevents
+ * pixels on opposite sides of a strong colour or luminance boundary from
+ * bleeding together, while the fixed 3×3 neighbourhood keeps runtime bounded.
+ */
+export function edgeAwareDenoiseRgba(input, width, height, amount = 0) {
+  const w = Math.trunc(Number(width));
+  const h = Math.trunc(Number(height));
+  if (w < 1 || h < 1 || !input || input.length !== w * h * 4) {
+    throw new TypeError('Denoise requires a complete RGBA buffer and positive dimensions.');
+  }
+  const source = new Uint8ClampedArray(input);
+  const strength = clamp(amount, 0, 100) / 100;
+  if (!strength || w < 3 || h < 3) return source;
+
+  const output = new Uint8ClampedArray(source);
+  const rangeSigma = 10 + strength * 34;
+  const rangeDenominator = 2 * rangeSigma * rangeSigma;
+  const baseMix = 0.18 + strength * 0.74;
+  const luma = index => 0.2126 * source[index] + 0.7152 * source[index + 1] + 0.0722 * source[index + 2];
+  const offsets = [
+    [-1, -1, 0.68], [0, -1, 1], [1, -1, 0.68],
+    [-1, 0, 1],                    [1, 0, 1],
+    [-1, 1, 0.68],  [0, 1, 1],  [1, 1, 0.68]
+  ];
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const center = (y * w + x) * 4;
+      const centerLuma = luma(center);
+      const horizontal = Math.abs(luma(center - 4) - luma(center + 4));
+      const vertical = Math.abs(luma(center - w * 4) - luma(center + w * 4));
+      const edgeProtection = smoothstep(32, 96, Math.max(horizontal, vertical));
+      const mix = baseMix * (1 - edgeProtection * 0.94);
+      let weightSum = 1;
+      const sum = [source[center], source[center + 1], source[center + 2]];
+
+      for (const [dx, dy, spatialWeight] of offsets) {
+        const neighbor = ((y + dy) * w + x + dx) * 4;
+        const dr = source[neighbor] - source[center];
+        const dg = source[neighbor + 1] - source[center + 1];
+        const db = source[neighbor + 2] - source[center + 2];
+        const colorDistance2 = (dr * dr + dg * dg + db * db) / 3;
+        const lumaDistance = luma(neighbor) - centerLuma;
+        const weight = spatialWeight * Math.exp(-(colorDistance2 + lumaDistance * lumaDistance) / rangeDenominator);
+        weightSum += weight;
+        sum[0] += source[neighbor] * weight;
+        sum[1] += source[neighbor + 1] * weight;
+        sum[2] += source[neighbor + 2] * weight;
+      }
+
+      for (let channel = 0; channel < 3; channel++) {
+        const filtered = sum[channel] / weightSum;
+        output[center + channel] = clampByte(source[center + channel] + (filtered - source[center + channel]) * mix);
+      }
+      output[center + 3] = source[center + 3];
+    }
+  }
+  return output;
 }
 
 /**
@@ -59,6 +120,9 @@ export function applyPixelAdjustments(canvas, adjustments = {}) {
   }
 
   const image = ctx.getImageData(0, 0, width, height);
+  if (clamp(a.denoise, 0, 100) > 0) {
+    image.data.set(edgeAwareDenoiseRgba(image.data, width, height, a.denoise));
+  }
   const data = image.data;
   const exposure = Math.pow(2, clamp(a.exposure, -2, 2));
   const contrast = 1 + clamp(a.contrast, -100, 100) / 100;

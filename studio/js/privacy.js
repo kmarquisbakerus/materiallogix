@@ -1,5 +1,7 @@
 const API = '/api/privacy/preferences';
 const DIAGNOSTIC_API = '/api/diagnostics/event';
+const PRIVACY_EXPORT_API = '/api/privacy/export';
+const PRIVACY_REQUEST_API = '/api/privacy/request';
 const APP_VERSION = '0.1.0';
 
 const PROFILE_FIELDS = [
@@ -73,6 +75,18 @@ async function requestPreferences(method = 'GET', body) {
   return response.json();
 }
 
+async function privacyAccountRequest(url, method = 'GET', body) {
+  const response = await fetch(url, {
+    method,
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'privacy_request_unavailable');
+  return response.json();
+}
+
 export async function reportDiagnostic(event) {
   if (document.documentElement.dataset.accessMode !== 'authenticated') return false;
   try {
@@ -136,7 +150,7 @@ function installPrivacyDialog(initial) {
   const commercial = choiceRow(
     'privacyCommercial',
     'Allow grouped commercial insights',
-    'MaterialLogix may include data you chose to share in grouped, de-identified market trends that may be sold or licensed. We do not sell personal information, account-level records, or raw diagnostic events.'
+    'Material Logic may include data you chose to share in grouped, de-identified market trends that may be sold or licensed. We do not sell personal information, account-level records, or raw diagnostic events.'
   );
   const profileControls = PROFILE_FIELDS.map(args => profileControl(...args));
   const profile = make('div', { className: 'privacy-profile' },
@@ -175,6 +189,10 @@ function installPrivacyDialog(initial) {
         status
       ),
       make('footer', {},
+        ...(initial.configured ? [
+          make('button', { className: 'btn', type: 'button', id: 'privacyExport', textContent: 'Download my data' }),
+          make('button', { className: 'btn', type: 'button', id: 'privacyDelete', textContent: 'Request deletion' })
+        ] : []),
         make('button', { className: 'btn', type: 'button', id: 'privacyRequiredOnly', textContent: 'Use required data only' }),
         make('span', { className: 'spacer' }),
         ...(initial.configured ? [make('button', { className: 'btn', type: 'button', id: 'privacyCancel', textContent: 'Cancel' })] : []),
@@ -226,6 +244,39 @@ function installPrivacyDialog(initial) {
   dialog.querySelector('#privacySave').onclick = () => save(false);
   const cancel = dialog.querySelector('#privacyCancel');
   if (cancel) cancel.onclick = () => dialog.close();
+  const exportButton = dialog.querySelector('#privacyExport');
+  if (exportButton) exportButton.onclick = async () => {
+    status.textContent = 'Preparing your account data…';
+    exportButton.disabled = true;
+    try {
+      const accountData = await privacyAccountRequest(PRIVACY_EXPORT_API);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(accountData, null, 2)], { type: 'application/json' }));
+      const link = make('a', { href: url, download: `materiallogix-account-data-${new Date().toISOString().slice(0, 10)}.json` });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      status.textContent = 'Your account data download is ready.';
+    } catch {
+      status.textContent = 'We could not prepare your account data. Try again.';
+    } finally {
+      exportButton.disabled = false;
+    }
+  };
+  const deletionButton = dialog.querySelector('#privacyDelete');
+  if (deletionButton) deletionButton.onclick = async () => {
+    const confirmed = window.confirm('Request deletion of your Material Logic account? Optional diagnostics and profile data will be removed now. Billing, licensing, fraud-prevention, and security records may be retained when legally required.');
+    if (!confirmed) return;
+    status.textContent = 'Submitting your deletion request…';
+    deletionButton.disabled = true;
+    try {
+      await privacyAccountRequest(PRIVACY_REQUEST_API, 'POST', { requestType: 'deletion', confirm: true });
+      status.textContent = 'Deletion request received. Optional diagnostics and profile data have been withdrawn.';
+    } catch {
+      status.textContent = 'We could not submit the deletion request. Try again.';
+      deletionButton.disabled = false;
+    }
+  };
   return dialog;
 }
 

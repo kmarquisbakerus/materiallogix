@@ -3,6 +3,7 @@
 
 import { SURFACE_BY_ID, QA_BY_ID, STATUS_BY_ID, PRESET_BY_ID, PROVIDERS } from './model.js';
 import { renderCrop, canvasToBytes, loadImage, grabVideoFrame, defaultCrop, yieldToLoop, applyProofWatermark, proofSurface } from './crop.js';
+import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { objectUrl, getBlob } from './store.js';
 import { makeZip } from './zip.js';
 
@@ -42,6 +43,7 @@ export function decisionsJson(project, assets) {
   return JSON.stringify({
     schema: 'creative-review-os/decisions@1',
     exportedAt: new Date().toISOString(),
+    colorManagement: COLOR_PIPELINE,
     project: {
       id: project.id,
       name: project.name,
@@ -315,6 +317,9 @@ export function videoNotes(project, assets) {
 export async function buildPackage(project, assets, onProgress = () => {}, extraDocs = {}, opts = {}) {
   const entries = [];
   const pairs = approvedPairs(assets);
+  const blockedColor = pairs.map(pair => ({ asset: pair.asset, decision: colorExportDecision(pair.asset.auto?.color || {}) }))
+    .find(entry => !entry.decision.allowed);
+  if (blockedColor) throw new Error(`color_export_blocked:${blockedColor.asset.filename}:${blockedColor.decision.reason}`);
   const proof = !!opts.proof;
   const root = `${slug(project.name)}_${proof ? 'PROOF' : 'package'}_${new Date().toISOString().slice(0, 10)}`;
   const add = (name, data) => entries.push({ name: `${root}/${name}`, data });
@@ -340,8 +345,13 @@ export async function buildPackage(project, assets, onProgress = () => {}, extra
       const { canvas, width, height } = await grabVideoFrame(url, Number(asset.video.posterTime) || 0);
       entry = { source: canvas, w: width, h: height };
     } else {
-      const img = await loadImage(url);
-      entry = { source: img, w: img.naturalWidth, h: img.naturalHeight };
+      const blob = await getBlob(asset.id);
+      const managed = await decodeColorManagedBlob(blob);
+      if (managed) entry = { source: managed.source, w: managed.w, h: managed.h };
+      else {
+        const img = await loadImage(url);
+        entry = { source: img, w: img.naturalWidth, h: img.naturalHeight };
+      }
     }
     sources.set(asset.id, entry);
     return entry;

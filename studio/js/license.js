@@ -1,10 +1,7 @@
-// Offline license verification.
-//
-// Keys are ECDSA P-256 signatures over a small JSON payload, issued by
-// tools/license.mjs and sold through Stripe. Verification happens entirely in
-// the browser against the embedded public key: no license server, no phoning
-// home, works on a plane. (A determined pirate can patch local code - every
-// desktop product lives with that; honest customers get a key that just works.)
+// Signed local licenses with mandatory first-use server verification.
+// Previously verified customers retain a short offline grace period; a newly
+// entered key never unlocks production features until the license service has
+// confirmed that its database record is active.
 
 import { LICENSE_PUBLIC_JWK } from './license-key.js';
 
@@ -37,7 +34,7 @@ export async function verifyLicense(key) {
       await publicKey(), b64uToBytes(sigB64), payloadBytes);
     if (!ok) return null;
     const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
-    if (payload.v !== 1 || !payload.plan) return null;
+    if (payload.v !== 1 || payload.net !== 1 || !payload.plan || !/^lic_[A-Za-z0-9_-]{8,120}$/.test(String(payload.lid || ''))) return null;
     // Term keys expire (grace already baked in at issue time). Keys without
     // exp are perpetual (early/dev keys).
     const expiresAt = Number.isFinite(payload.exp_ts)
@@ -58,15 +55,18 @@ const CHECK_URL = 'https://studio.materiallogix.com/api/license/check';
 const CHECK_EVERY_H = 24;        // ping at most daily
 export const GRACE_DAYS = 3;     // licensed features require verification after this offline grace period
 
-async function revalidate(key) {
+let lastActivationFailure = null;
+
+export function activationFailureReason() { return lastActivationFailure; }
+
+export async function revalidateLicense(key, { requireFresh = false, now = Date.now() } = {}) {
   /** Phone-home for keys minted with net:1. Sends the key and nothing else.
    * Grace window: a failed or unreachable check within GRACE_DAYS of the
-   * last success (or first activation) keeps the license working. */
+   * last successful check keeps an already-verified license working. */
   let rec;
   try { rec = JSON.parse(localStorage.getItem(CHECK_STORE)) || {}; } catch { rec = {}; }
-  const now = Date.now();
-  if (!rec.first) { rec.first = now; }
-  const due = !rec.okAt || (now - rec.okAt) > CHECK_EVERY_H * 3600e3;
+  let freshVerified = false;
+  const due = requireFresh || !rec.okAt || (now - rec.okAt) > CHECK_EVERY_H * 3600e3;
   if (due && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
     try {
       const res = await fetch(CHECK_URL, {
@@ -78,6 +78,7 @@ async function revalidate(key) {
         if (j.ok === false) { rec.revoked = true; rec.reason = j.error || 'revoked'; }
         else {
           rec.okAt = now;
+          freshVerified = true;
           rec.revoked = false;
           rec.reason = null;
           rec.entitlements = j.entitlements || {};
@@ -90,14 +91,20 @@ async function revalidate(key) {
             }
           }
         }
+      } else if (requireFresh) {
+        rec.reason = 'verification_unavailable';
       }
-      // Non-200 or network error: treated as offline; grace applies.
-    } catch { /* offline: grace applies */ }
+    } catch {
+      if (requireFresh) rec.reason = 'verification_unavailable';
+    }
+  } else if (due && requireFresh) {
+    rec.reason = 'online_verification_required';
   }
   try { localStorage.setItem(CHECK_STORE, JSON.stringify(rec)); } catch { /* full */ }
   if (rec.revoked) return { valid: false, reason: rec.reason || 'revoked' };
-  const anchor = rec.okAt || rec.first;
-  if ((now - anchor) > GRACE_DAYS * 86400e3) {
+  if (requireFresh && !freshVerified) return { valid: false, reason: rec.reason || 'verification_unavailable' };
+  if (!rec.okAt) return { valid: false, reason: rec.reason || 'verification_required' };
+  if ((now - rec.okAt) > GRACE_DAYS * 86400e3) {
     return { valid: false, reason: 'offline' };
   }
   return { valid: true, key, entitlements: rec.entitlements || {} };
@@ -110,7 +117,7 @@ export async function activeLicense() {
   const payload = await verifyLicense(key);
   if (!payload) { localStorage.removeItem(STORE); return null; }
   if (payload.net === 1) {
-    const check = await revalidate(key);
+    const check = await revalidateLicense(key);
     if (!check.valid) {
       payload.suspended = check.reason;   // signature stands; features do not
       return { ...payload, plan: 'suspended:' + payload.plan, reason: check.reason };
@@ -126,9 +133,25 @@ export async function activeLicense() {
 
 /** Try to activate a key. Returns payload on success, null on bad key. */
 export async function activate(key) {
+  lastActivationFailure = null;
   const payload = await verifyLicense(key);
-  if (payload) localStorage.setItem(STORE, key.trim());
-  return payload;
+  if (!payload) {
+    lastActivationFailure = 'invalid_or_legacy_key';
+    return null;
+  }
+  const check = await revalidateLicense(key.trim(), { requireFresh: true });
+  if (!check.valid) {
+    lastActivationFailure = check.reason || 'verification_unavailable';
+    return null;
+  }
+  const verifiedKey = check.key || key.trim();
+  const verifiedPayload = verifiedKey === key.trim() ? payload : await verifyLicense(verifiedKey);
+  if (!verifiedPayload) {
+    lastActivationFailure = 'replacement_key_invalid';
+    return null;
+  }
+  localStorage.setItem(STORE, verifiedKey);
+  return { ...verifiedPayload, entitlements: check.entitlements };
 }
 
 export function activeLicenseKey() {
@@ -140,5 +163,9 @@ export function deactivate() { localStorage.removeItem(STORE); localStorage.remo
 /** Does the active license cover a product? complete covers everything. */
 export function covers(payload, product) {
   if (!payload || String(payload.plan).startsWith('suspended:')) return false;
-  return ['complete', 'pro', 'lite'].includes(payload.plan) || payload.plan === product;
+  if (payload.plan === 'full') return ['photo', 'video', 'voice'].includes(product);
+  if (payload.plan === 'voice_starter') return product === 'voice';
+  if (payload.plan === 'single') return payload.selected_product === product || payload.selectedProduct === product;
+  if (payload.plan === 'payg') return ['photo', 'video', 'voice'].includes(product);
+  return false;
 }

@@ -14,11 +14,20 @@ import { buildPackage, decisionsMarkdown, approvedPairs, slug } from './export.j
 import { buildClientPage, applyClientVerdict } from './clientpage.js';
 import { snapshot, snapshotProject, popUndo, log, logMarkdown } from './history.js';
 import { downloadBlob, makeZip, readStoreZip } from './zip.js';
-import { activeLicense, activate, deactivate, covers } from './license.js';
-import { bridgeFetch, detectComfy, listCheckpoints, generateOne, listUpscaleModels, upscaleOne, detectBridge, upscaleViaBridge } from './generate.js';
-import { probeDevice, deviceSummary } from './device.js';
+import { activeLicense, activate, activationFailureReason, deactivate, covers } from './license.js';
+import { assessInpaintMaskedBoundary, blendInpaintMaskedCandidate,
+  bridgeFetch, detectComfy, listCheckpoints, inspectInpaintCompatibility, generateOne, normalizeInpaintSelection,
+  normalizeInpaintPath, summarizeInpaintMask, inpaintOne, listUpscaleModels, upscaleOne, detectBridge,
+  upscaleViaBridge, localUpscaleModelLabel, localUpscaleEngineLabel } from './generate.js';
 import { analyzeGeometry } from './geometry.js';
 import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
+import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
+import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
+import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
+import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
+import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
+import { quoteCloudJob } from './pricing.js';
+import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, props = {}, ...kids) => {
@@ -37,8 +46,9 @@ const state = {
   mode: 'review',
   index: 0,
   activeSurface: null,
-  view: 'placement',          // 'placement' | 'source' | 'compare'
+  view: 'source',             // 'source' | 'placement' | 'compare'
   compareWith: null,
+  reviewRailTab: 'edit',
   loupe: false,
   loupeZoom: 1,
   filters: { status: '', role: '', kind: '', surface: '', issues: '', rating: 0, q: '' },
@@ -46,6 +56,19 @@ const state = {
   decoded: new Map(),         // assetId -> { source, w, h, url }
   busy: false
 };
+const localVideoJobs = new Map();
+const VALID_PLACEMENT_FILL = new Set(['crop', 'contain', 'blur']);
+
+function normalizePlacementFill(placement) {
+  if (!placement || typeof placement !== 'object') return;
+  if (!VALID_PLACEMENT_FILL.has(placement.fill)) {
+    placement.fill = 'contain';
+  }
+  if (!placement.crop || typeof placement.crop.x !== 'number' || typeof placement.crop.y !== 'number' ||
+      typeof placement.crop.w !== 'number' || typeof placement.crop.h !== 'number') {
+    placement.crop = { x: 0, y: 0, w: 1, h: 1 };
+  }
+}
 
 // ---------------------------------------------------------------------------
 // small helpers
@@ -106,10 +129,15 @@ const activeSurfaces = () => (state.project?.surfaces || []).map(id => SURFACE_B
 function ensurePlacement(asset, surfaceId) {
   if (!asset.placements[surfaceId]) {
     const p = newPlacement();
-    const s = SURFACE_BY_ID[surfaceId];
-    if (s && asset.width && asset.height) p.crop = defaultCrop(asset.width, asset.height, s);
+    // A new placement starts with the complete source visible. Cropping is an
+    // explicit choice so Photo and Video never look stretched on first open.
+    p.crop = { x: 0, y: 0, w: 1, h: 1 };
+    p.fill = 'contain';
     asset.placements[surfaceId] = p;
+  } else {
+    normalizePlacementFill(asset.placements[surfaceId]);
   }
+  normalizePlacementFill(asset.placements[surfaceId]);
   return asset.placements[surfaceId];
 }
 
@@ -181,8 +209,13 @@ async function decode(asset) {
       }
       d = { source: frame.canvas, w: frame.width, h: frame.height, url, duration: frame.duration };
     } else {
-      const img = await loadImage(url);
-      d = { source: img, w: img.naturalWidth, h: img.naturalHeight, url };
+      const blob = await store.getBlob(asset.id);
+      const managed = await decodeColorManagedBlob(blob);
+      if (managed) d = { ...managed, url };
+      else {
+        const img = await loadImage(url);
+        d = { source: img, w: img.naturalWidth, h: img.naturalHeight, url };
+      }
     }
   } catch {
     return null;
@@ -201,7 +234,7 @@ async function runAnalysis(asset, { quiet = false } = {}) {
   const d = await decode(asset);
   if (!d) { if (!quiet) toast(`Could not decode ${asset.filename}.`, true); return null; }
   const blob = await store.getBlob(asset.id);
-  asset.auto = await analyzeAsset(d.source, d.w, d.h, blob);
+  asset.auto = await analyzeAsset(d.source, d.w, d.h, blob, d.colorTransform || null);
   if (asset.kind === 'video' && (d.duration || asset.duration) > 0) {
     const duration = d.duration || asset.duration;
     const url = await store.objectUrl(asset.id);
@@ -230,6 +263,13 @@ async function runAnalysis(asset, { quiet = false } = {}) {
   }
   // Geometry is the one networked extra (MediaPipe from CDN). Null offline.
   asset.geometry = await analyzeGeometry(d.source, d.w, d.h);
+  asset.peopleReview = {
+    status: asset.geometry ? 'complete' : 'manual-review-needed',
+    faces: asset.geometry?.faces?.length || 0,
+    hands: asset.geometry?.hands?.length || 0,
+    bodies: asset.geometry?.poses?.length || (asset.geometry?.body ? 1 : 0),
+    reviewedAt: new Date().toISOString()
+  };
   await store.saveAsset(asset);
   return asset.auto;
 }
@@ -262,6 +302,8 @@ async function probe(file, url) {
       const { width, height, duration } = await grabVideoFrame(url, 0);
       return { width, height, duration };
     }
+    const managed = await decodeColorManagedBlob(file);
+    if (managed) return { width: managed.w, height: managed.h, duration: 0 };
     const img = await loadImage(url);
     return { width: img.naturalWidth, height: img.naturalHeight, duration: 0 };
   } catch {
@@ -270,7 +312,7 @@ async function probe(file, url) {
 }
 
 async function importFiles(fileList) {
-  const files = [...fileList].filter(f => /^(image|video)\//.test(f.type));
+  const files = [...fileList].filter(f => /^(image|video)\//.test(f.type) || /\.(?:hdr|pic|rgbe)$/i.test(f.name || ''));
   if (!files.length) return toast('No images or video in that drop.', true);
 
   const bar = el('i');
@@ -283,6 +325,7 @@ async function importFiles(fileList) {
       status.textContent = `Importing ${++n} / ${files.length} — ${file.name}`;
       bar.style.width = `${(n / files.length) * 100}%`;
       const asset = newAsset(state.project.id, file);
+      if (!file.type && /\.(?:hdr|pic|rgbe)$/i.test(file.name || '')) asset.mime = 'image/vnd.radiance';
       await store.addAsset(asset, file);
       const url = await store.objectUrl(asset.id);
       Object.assign(asset, await probe(file, url));
@@ -314,67 +357,86 @@ function briefField(key, label, multiline = false) {
   return el('label', { className: 'field' }, el('span', {}, label), input);
 }
 
+function photoWorkflowSteps(active = 1) {
+  return el('ol', { className: 'photo-flow', ariaLabel: 'Photo workflow' },
+    ...['Create or open', 'Review people', 'Edit', 'Quality check', 'Export'].map((label, index) =>
+      el('li', { className: index + 1 === active ? 'active' : index + 1 < active ? 'complete' : '' },
+        el('span', {}, String(index + 1)), label)));
+}
+
+function openPhotoCreation() {
+  const sidebar = $('#sidebar');
+  sidebar.classList.remove('closed');
+  sidebar.classList.add('open');
+  $('#menuBtn').setAttribute('aria-expanded', 'true');
+  const start = sidebar.querySelector('[data-photo-start]');
+  if (start) start.open = true;
+  const generation = sidebar.querySelector('[data-photo-generation]');
+  if (generation) generation.open = true;
+  requestAnimationFrame(() => generation?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
+
+async function reviewPeople(asset) {
+  if (!asset) return toast('Create or open a photo first.', true);
+  await busy(() => runAnalysis(asset));
+  state.reviewRailTab = 'review';
+  localStorage.setItem(REVIEW_RAIL_OPEN_KEY, 'true');
+  renderReview();
+  const review = asset.peopleReview;
+  toast(review.status === 'complete'
+    ? `People review complete: ${review.faces} face${review.faces === 1 ? '' : 's'}, ${review.hands} hand${review.hands === 1 ? '' : 's'}, ${review.bodies} bod${review.bodies === 1 ? 'y' : 'ies'}.`
+    : 'Automatic people review is unavailable; inspect faces, hands, and bodies manually.');
+}
+
 // --- generation panel: local GPU now, BYO key and managed tiers later ------
 
 let comfyStatus = null;   // cached detection result for this session
+// Owner-authorized local customer preview. Beta stays explicit because the real
+// fixture still needs final human boundary acceptance; compatibility remains
+// fail-closed and the original is always preserved.
+const GENERATIVE_FILL_RELEASE = 'beta';
 
 function generatePanel() {
   const wrap = el('div', {});
 
-  // Tier 0 - this device (phone or laptop browser). Staged rollout.
-  const device = el('div', { style: 'margin-bottom:16px' });
-  wrap.append(el('h4', { className: 'eyebrow', style: 'margin:0 0 8px' }, 'This device'), device);
-  probeDevice().then(d => {
-    const lines = [el('p', { className: 'hint' }, deviceSummary(d))];
-    if (d.verdict === 'draft-capable') {
-      lines.push(el('p', { className: 'hint' },
-        'This device can run draft-quality generation in stages \u2014 slower, and it saves progress between slices so you can come back later. That light mode ships next; until then, the fast lane below uses a computer you own.'));
-    } else if (d.verdict === 'weak-gpu') {
-      lines.push(el('p', { className: 'hint' },
-        'WebGPU is here but the memory budget is too small for generation without killing the tab. Use a computer you own as the engine below \u2014 this screen still does the full review job.'));
-    } else {
-      lines.push(el('p', { className: 'hint' },
-        'This browser cannot generate on-device. Reviewing, cropping, and approving all work here; point the engine below at a computer you own for generation.'));
-    }
-    device.replaceChildren(...lines);
-  });
-
-  // Tier 1 - a GPU you own (this computer, or one on your Wi-Fi).
   const local = el('div', { style: 'margin-bottom:16px' });
-  wrap.append(el('h4', { className: 'eyebrow', style: 'margin:0 0 8px' }, 'Your computer\u2019s GPU \u2014 free'), local);
+  wrap.append(local);
 
   const renderLocal = async (force = false) => {
     const savedBase = localStorage.getItem('cros:comfyBase') || `http://${location.hostname}:8188`;
     if (!comfyStatus || force) {
-      local.replaceChildren(el('p', { className: 'hint' }, 'Looking for the generation engine\u2026'));
+      local.replaceChildren(el('p', { className: 'hint' }, 'Checking Photo creation\u2026'));
       comfyStatus = await detectComfy(savedBase);
     }
     if (!comfyStatus.ok) {
       const baseInput = el('input', { type: 'text', value: savedBase, placeholder: 'http://127.0.0.1:8188' });
       baseInput.onchange = () => localStorage.setItem('cros:comfyBase', baseInput.value.trim() || 'http://127.0.0.1:8188');
+      const phoneConnection = el('details', { className: 'connection-details' },
+        el('summary', {}, 'Phone connection'),
+        el('p', { className: 'hint' }, 'Enter the Wi-Fi address shown by Material Logic to control Studio from your phone and run guided face, hand, and body scans.'),
+        el('label', { className: 'field' }, el('span', {}, 'Wi-Fi address'), baseInput));
       local.replaceChildren(
-        el('p', { className: 'hint' },
-          'No generation engine answered. ComfyUI is the free, open-source engine that runs on a GPU you own \u2014 nothing is billed.'),
-        el('p', { className: 'hint' },
-          'On this computer: install it from comfy.org, start it, press Retry. From a phone: put your computer\u2019s Wi-Fi address here (e.g. http://192.168.1.20:8188) and start ComfyUI with --listen --enable-cors-header \u2014 the phone becomes a remote control for that GPU.'),
-        el('label', { className: 'field' }, el('span', {}, 'Engine address'), baseInput),
-        btn('Retry detection', 'btn sm', () => renderLocal(true)));
+        el('p', { className: 'hint' }, 'Photo creation needs setup before you can generate an image.'),
+        phoneConnection,
+        btn('Try again', 'btn sm', () => renderLocal(true)));
       return;
     }
     let ckpts = [];
     try { ckpts = await listCheckpoints(comfyStatus.base); } catch { /* handled below */ }
-    const head = el('p', { className: 'hint' },
-      `Connected \u2014 ${comfyStatus.device}${comfyStatus.vramGB ? ` (${comfyStatus.vramGB} GB VRAM)` : ''}.`);
+    const head = el('p', { className: 'hint' }, 'Photo creation is ready.');
     if (!ckpts.length) {
       local.replaceChildren(head,
-        el('p', { className: 'hint' }, 'No model checkpoints installed yet. Put one in ComfyUI\u2019s models/checkpoints folder and Retry.'),
-        btn('Retry', 'btn sm', () => renderLocal(true)));
+        el('p', { className: 'hint' }, 'Add a Photo quality pack, then try again.'),
+        btn('Try again', 'btn sm', () => renderLocal(true)));
       return;
     }
     const ckptSel = el('select', {});
-    for (const c of ckpts) ckptSel.append(el('option', { value: c }, c));
+    for (const [index, c] of ckpts.entries()) ckptSel.append(el('option', { value: c }, `Studio quality ${index + 1}`));
     const promptBox = el('textarea', { placeholder: 'What to generate. Wording from the brief helps.', rows: 3 });
     const negBox = el('input', { type: 'text', placeholder: 'Avoid (optional)', value: state.project.brief.mustAvoid || '' });
+    const styleSel = el('select', {},
+      el('option', { value: 'natural' }, 'Photographic · believable by default'),
+      el('option', { value: 'stylized' }, 'Stylized · follow my direction'));
     const sizeSel = el('select', {});
     for (const [v, label] of [['1024x1024', 'Square 1024'], ['832x1216', 'Portrait 832\u00d71216'], ['1216x832', 'Wide 1216\u00d7832']]) {
       sizeSel.append(el('option', { value: v }, label));
@@ -382,7 +444,7 @@ function generatePanel() {
     const countSel = el('select', {});
     for (const n of [1, 2, 4]) countSel.append(el('option', { value: String(n) }, `${n} image${n > 1 ? 's' : ''}`));
     const status = el('p', { className: 'hint', style: 'margin:8px 0 0' }, '');
-    const go = btn('Generate on this GPU', 'btn primary', async () => {
+    const go = btn('Generate photos', 'btn primary', async () => {
       const [w, h] = sizeSel.value.split('x').map(Number);
       const count = Number(countSel.value);
       go.disabled = true;
@@ -394,25 +456,26 @@ function generatePanel() {
               ckpt: ckptSel.value,
               prompt: promptBox.value,
               negative: negBox.value,
+              styleIntent: styleSel.value,
               width: w, height: h
-            }, phase => { status.textContent = `Image ${i + 1} of ${count} \u2014 ${phase}\u2026`; }, comfyStatus.base);
+            }, () => { status.textContent = `Image ${i + 1} of ${count} \u2014 creating\u2026`; }, comfyStatus.base);
             const file = new File([blob], `gen_${seed}_${i + 1}.png`, { type: 'image/png' });
             const asset = newAsset(state.project.id, file);
             asset.source = 'generated-local';
-            asset.provenance = `AI-generated locally (ComfyUI, ${ckptSel.value}, seed ${seed}). Prompt: ${promptBox.value.slice(0, 300)}`;
+            asset.provenance = `Created in Material Logic (seed ${seed}; ${styleSel.value} style intent). Prompt: ${promptBox.value.slice(0, 300)}`;
             await store.addAsset(asset, file);
             const url = await store.objectUrl(asset.id);
             Object.assign(asset, await probe(file, url));
-            log(asset, 'generated on local GPU', state.reviewer);
+            log(asset, 'created in Studio', state.reviewer);
             await store.saveAsset(asset);
             state.assets.push(asset);
             await runAnalysis(asset, { quiet: true });
           }
         });
         state.assets = await store.listAssets(state.project.id);
-        status.textContent = `Done \u2014 ${count} candidate(s) added to the library, provenance recorded.`;
+        status.textContent = `Done \u2014 ${count} photo${count === 1 ? '' : 's'} added and checked.`;
         render();
-        toast(`Generated ${count} candidate(s) on the local GPU.`);
+        toast(`Created ${count} candidate${count === 1 ? '' : 's'}.`);
       } catch (err) {
         status.textContent = 'Failed: ' + err.message;
       } finally {
@@ -420,8 +483,10 @@ function generatePanel() {
       }
     });
     local.replaceChildren(head,
-      el('label', { className: 'field' }, el('span', {}, 'Model'), ckptSel),
-      el('label', { className: 'field' }, el('span', {}, 'Prompt'), promptBox),
+      el('label', { className: 'field' }, el('span', {}, 'Quality'), ckptSel),
+      el('label', { className: 'field' }, el('span', {}, 'Describe your image'), promptBox),
+      el('label', { className: 'field' }, el('span', {}, 'Look'), styleSel),
+      el('p', { className: 'hint' }, 'Photographic keeps people and materials believable unless your direction asks for a stylized result.'),
       el('label', { className: 'field' }, el('span', {}, 'Avoid'), negBox),
       el('div', { style: 'display:flex;gap:8px' },
         el('label', { className: 'field', style: 'flex:1' }, el('span', {}, 'Size'), sizeSel),
@@ -430,11 +495,79 @@ function generatePanel() {
   };
   renderLocal();
 
-  // Cloud credentials never belong in browser storage.
-  wrap.append(el('h4', { className: 'eyebrow', style: 'margin:16px 0 8px' }, 'Cloud workflow'));
-  wrap.append(el('p', { className: 'hint', style: 'margin-bottom:0' },
-    'Cloud workflow stays unavailable until the account service can verify the user, entitlement, prepaid balance, and exact packaged job. Provider keys are accepted only by that server and are never entered or stored here.'));
+  return wrap;
+}
 
+function localToolsPanel() {
+  const wrap = el('div', {});
+  const status = el('div', {}, el('p', { className: 'hint' }, 'Checking this computer…'));
+  wrap.append(status);
+
+  const statusRow = (label, ready, detail = '') => el('p', {
+    className: 'hint',
+    style: 'display:flex;gap:8px;align-items:flex-start;margin:0 0 7px'
+  },
+  el('strong', { style: `min-width:58px;color:${ready ? 'var(--ok)' : 'var(--muted)'}` }, ready ? 'Ready' : 'Optional'),
+  el('span', {}, label, detail ? ` · ${detail}` : ''));
+
+  const refresh = async () => {
+    const bridge = await detectBridge();
+    if (!bridge.ok) {
+      status.replaceChildren(
+        el('p', { className: 'hint' }, 'Open Material Logic Studio on your computer to manage creative tools.'));
+      return;
+    }
+    const video = bridge.video || {};
+    const rows = [
+      statusRow('Photo enhancement', !!bridge.upscale?.available),
+      statusRow('Video editing and delivery', !!video.ffmpeg),
+      statusRow('Automatic captions', !!video.whisper),
+      statusRow('Smooth motion', !!video.rife),
+      statusRow('House Voice', !!bridge.voice?.available),
+    ];
+    const missingVideoPack = !video.whisper || !video.rife;
+    if (missingVideoPack) {
+      rows.push(el('p', { className: 'hint', style: 'margin:10px 0' },
+        'Add the optional Video pack for captions and smoother motion.'));
+      rows.push(btn('Add captions + smooth motion', 'btn sm', () => {
+        const consent = el('input', { type: 'checkbox' });
+        const close = btn('Cancel', 'btn', closeDialog);
+        const message = el('p', { className: 'hint', role: 'status' },
+          'Nothing will render during setup. Keep Studio open while the verified files download and install.');
+        const install = btn('Install Video tools', 'btn primary', async () => {
+          if (!consent.checked) return;
+          install.disabled = true;
+          message.textContent = 'Downloading and verifying the Video pack…';
+          try {
+            const response = await bridgeFetch(`${bridge.base}/engines/video/install`, { method: 'POST' });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || `setup ${response.status}`);
+            message.textContent = 'Captions and smooth motion are ready on this computer.';
+            await refresh();
+            install.textContent = 'Installed';
+            close.textContent = 'Close';
+            toast('Video tools are ready.');
+          } catch (error) {
+            install.disabled = false;
+            message.textContent = `Setup stopped safely: ${error.message}`;
+          }
+        });
+        install.disabled = true;
+        consent.onchange = () => { install.disabled = !consent.checked; };
+        dialog('Add Video tools', el('div', {},
+          el('p', {}, 'Adds automatic captions and smoother motion to Video Studio.'),
+          el('p', { className: 'hint' }, 'Needs up to 588 MB to download and about 225 MB after installation.'),
+          el('label', { className: 'checkline' }, consent,
+            el('span', {}, 'Download and install the optional Video pack.')),
+          message), [close, install]);
+      }));
+    } else {
+      rows.push(el('p', { className: 'hint', style: 'margin:10px 0 0;color:var(--ok)' },
+        'Creative tools are ready.'));
+    }
+    status.replaceChildren(...rows);
+  };
+  refresh();
   return wrap;
 }
 
@@ -467,6 +600,19 @@ function renderSidebar() {
   const bar = $('#sidebar');
   if (!p) return bar.replaceChildren();
 
+  bar.classList.remove('dock-right');
+  localStorage.removeItem('mlx:settings-dock');
+  const closeSidebar = btn('Close', 'btn sm', () => {
+    bar.classList.remove('open');
+    bar.classList.add('closed');
+    $('#menuBtn').setAttribute('aria-expanded', 'false');
+  });
+  bar.setAttribute('aria-label', 'Create and project tools');
+  const sidebarHead = el('div', { className: 'sidebar-head' },
+    el('strong', {}, 'Create or open'), el('span', { className: 'spacer' }), closeSidebar);
+  const projectStrip = el('div', { className: 'sidebar-project' },
+    el('span', { className: 'eyebrow' }, 'Project'), $('#projectSelect'), $('#newProject'), $('#counters'));
+
   const addBtn = btn('Add files', 'btn', () => $('#fileInput').click());
   const analyzeBtn = btn('Run checks on all', 'btn sm', analyzeAll);
   const storageLine = el('p', { className: 'hint', style: 'margin-top:4px' }, 'Checking storage…');
@@ -482,7 +628,33 @@ function renderSidebar() {
   });
 
   const demoBtn = btn('Load demo assets', 'btn sm', loadDemo);
-  const library = panel('Library', true,
+  const generation = panel('Generate photo', !state.assets.length, generatePanel());
+  generation.dataset.photoGeneration = 'true';
+  const activeAsset = currentAsset();
+  const reviewStatus = activeAsset?.peopleReview;
+  const startActions = el('div', { className: 'photo-start-actions' },
+    btn('Generate photo', 'btn primary', () => {
+      generation.open = true;
+      generation.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }),
+    btn('Import photo or video', 'btn', () => $('#fileInput').click()));
+  const startBody = [
+    photoWorkflowSteps(state.assets.length ? (reviewStatus ? 3 : 2) : 1),
+    startActions,
+    el('p', { className: 'hint photo-flow-note' }, 'Every new photo is checked for faces, hands, and bodies before editing.')
+  ];
+  if (activeAsset) {
+    startBody.push(btn(reviewStatus?.status === 'complete' ? 'Review people again' : 'Review people',
+      'btn sm', () => reviewPeople(activeAsset)));
+  }
+  startBody.push(generation);
+  const photoStart = panel(el('span', { className: 'panel-label' },
+    el('span', {}, 'Create or open'), el('small', {}, 'Generate · import · review people')),
+  !state.assets.length, ...startBody);
+  photoStart.dataset.photoStart = 'true';
+
+  const library = panel(el('span', { className: 'panel-label' },
+    el('span', {}, 'Library'), el('small', {}, 'Add files · checks · demo assets')), false,
     el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap' }, addBtn, analyzeBtn, demoBtn),
     el('div', { className: 'dropzone' }, 'or drop images and video anywhere'),
     el('p', { className: 'hint', style: 'margin-top:12px;margin-bottom:0' },
@@ -521,12 +693,12 @@ function renderSidebar() {
   const presetSel = el('select', {});
   for (const pr of QA_PRESETS) presetSel.append(el('option', { value: pr.id, selected: pr.id === p.qaPreset }, `${pr.label} · ${pr.checks.length} checks`));
   presetSel.onchange = () => { p.qaPreset = presetSel.value; store.saveProject(p).then(render); };
-  const qa = panel('QA checklist', false,
+  const qa = panel('QA checklist · optional', false,
     el('p', { className: 'hint' }, 'Video always uses the video preset regardless of this setting.'),
     el('label', { className: 'field' }, el('span', {}, 'Preset'), presetSel),
     el('p', { className: 'hint' }, (PRESET_BY_ID[p.qaPreset]?.checks || []).map(id => QA_BY_ID[id]?.label).join(' · ')));
 
-  const providers = panel('Generate', false, generatePanel());
+  const localTools = panel('Creative setup', false, localToolsPanel());
 
   const who = el('input', { type: 'text', value: state.reviewer });
   who.oninput = () => { state.reviewer = who.value || 'reviewer'; localStorage.setItem('cros:reviewer', state.reviewer); };
@@ -536,27 +708,34 @@ function renderSidebar() {
     if (lic) {
       licBox.append(
         el('p', { className: 'hint', style: 'margin-bottom:6px' },
-          lic.plan === 'lite'
-            ? `Licensed \u2014 lite (${lic.email}). ${liteRemaining(lic)} of 20 export units left this month.`
-            : `Licensed \u2014 ${lic.plan} (${lic.email}). Clean exports unlocked.`),
+          `Licensed \u2014 ${String(lic.plan).replaceAll('_', ' ')}${lic.selected_product ? ` / ${lic.selected_product}` : ''} (${lic.email}). Clean exports require online authorization and verified remaining usage.`),
         btn('Deactivate on this device', 'btn sm', () => { deactivate(); render(); }));
     } else {
       const input = el('input', { type: 'text', placeholder: 'ML1.\u2026 license key' });
       const msg = el('p', { className: 'hint', style: 'margin:6px 0 0' },
-        'Free plan: proof exports and previews. A key from the pricing page unlocks clean exports.');
+        'Free preview lets you explore and review. Downloads require an active matching license and online usage confirmation.');
       licBox.append(input, el('div', { style: 'height:6px' }),
         btn('Activate', 'btn sm', async () => {
           const lic = await activate(input.value);
           if (lic) { toast(`Licensed: ${lic.plan}.`); render(); }
-          else msg.textContent = 'That key did not verify \u2014 check for missing characters.';
+          else {
+            const reason = activationFailureReason();
+            msg.textContent = reason === 'online_verification_required' || reason === 'verification_unavailable'
+              ? 'Connect to the internet so the license service can verify this key before first use.'
+              : reason === 'invalid_or_legacy_key'
+                ? 'That key is invalid or from an unsupported pre-release format.'
+                : 'The license service could not verify this key as active.';
+          }
         }), msg);
     }
   });
 
   const deliver = panel('Deliver', false,
     licBox,
-    el('p', { className: 'hint' }, 'Everything below is generated locally. Nothing is uploaded.'),
-    btn('Proof package (watermarked)', 'btn', () => doExport({ proof: true })),
+    el('p', { className: 'hint' }, 'Choose the files you want to prepare.'),
+    btn('Proof package (licensed, watermarked)', 'btn', () => doExport({ proof: true })),
+    el('div', { style: 'height:6px' }),
+    btn('Print-ready photo', 'btn', openPrintDelivery),
     el('div', { style: 'height:14px' }),
     (() => {
       const box = el('div', {});
@@ -568,9 +747,9 @@ function renderSidebar() {
           // First address is the real Wi-Fi interface; the rest are virtual adapters.
           line.textContent = `http://${b.lan[0]}:${location.port || 80}/`;
           box.append(el('p', { className: 'hint' },
-            'Open that address in the phone’s browser on this Wi-Fi, then Add to Home Screen — it installs like an app and renders on this computer. Serve with run.ps1 -Lan.'));
+            'Open this address on your phone while both devices use the same Wi-Fi.'));
         } else {
-          line.textContent = 'Start the bridge (python engine.py) to see this computer’s Wi-Fi address.';
+          line.textContent = 'Open Material Logic Studio on your computer to show its Wi-Fi address.';
         }
       });
       return box;
@@ -595,7 +774,19 @@ function renderSidebar() {
     el('p', { className: 'hint', style: 'margin-top:12px' },
       `Created ${new Date(p.createdAt).toLocaleDateString()}. Changes auto-save locally. A recovery file includes the project, decisions, and original media.`));
 
-  bar.replaceChildren(brief, library, surfaces, qa, providers, deliver, backup);
+  const secondaryPanels = [brief, library, surfaces, qa, localTools, deliver, backup];
+  for (const secondary of secondaryPanels) secondary.setAttribute('name', 'settings-more-tools');
+  const moreTools = panel(el('span', { className: 'panel-label' },
+    el('span', {}, 'Project tools'),
+    el('small', {}, 'Brief · Library · Formats · QA · Deliver')),
+  false,
+  el('p', { className: 'hint panel-index' },
+    'Open one labeled section at a time. QA is optional and stays out of the main workflow until you need it.'),
+  ...secondaryPanels);
+  moreTools.classList.add('panel-group');
+  moreTools.dataset.secondaryTools = 'true';
+
+  bar.replaceChildren(sidebarHead, projectStrip, photoStart, moreTools);
 }
 
 function renameProject() {
@@ -649,7 +840,7 @@ async function restoreProject(file) {
     if (!raw) throw new Error('project.json is missing.');
     const backup = JSON.parse(new TextDecoder().decode(raw));
     if (backup.schema !== 'materiallogix/recovery@2' || !backup.project || !Array.isArray(backup.assets)) {
-      throw new Error('This is not a MaterialLogix recovery file.');
+      throw new Error('This is not a Material Logic recovery file.');
     }
     const projectId = crypto.randomUUID();
     const idMap = new Map(backup.assets.map(a => [a.id, crypto.randomUUID()]));
@@ -790,7 +981,10 @@ async function paintStage() {
   }
 
   if (state.view === 'source' || !surface) {
-    const wrap = el('div', { className: 'srcwrap' });
+    const wrap = el('div', {
+      className: 'srcwrap', tabIndex: 0, role: 'group',
+      ariaLabel: 'Full source preview. Drag to move the crop. Use arrow keys to nudge, plus and minus to zoom, and zero to reset.'
+    });
     const scale = Math.min(1, PREVIEW_MAX / Math.max(d.w, d.h));
     const sourcePreview = renderCrop(d.source, d.w, d.h, { x: 0, y: 0, w: 1, h: 1 }, {
       w: Math.max(1, Math.round(d.w * scale)), h: Math.max(1, Math.round(d.h * scale))
@@ -818,7 +1012,10 @@ async function paintStage() {
   const ps = previewSurface(surface);
   const edit = ensureEditState(asset);
   const canvas = renderCrop(d.source, d.w, d.h, p.crop, ps, p.fill, null, edit.adjustments);
-  const frame = el('div', { className: 'frame grab' }, canvas);
+  const frame = el('div', {
+    className: 'frame grab', tabIndex: 0, role: 'group',
+    ariaLabel: `${surface.label} placement. Drag to reframe. Use arrow keys to nudge, plus and minus to zoom, and zero to reset.`
+  }, canvas);
   if (edit.pixelGrid.enabled) frame.append(pixelGridOverlay(pixelGridReview(d.source, d.w, d.h, edit.pixelGrid.columns, edit.pixelGrid.sensitivity)));
   if (state.thirds) frame.append(el('div', { className: 'thirds' }));
   const safe = safeOverlay(surface);
@@ -851,6 +1048,7 @@ function attachPlacementDrag(frame, asset, surface) {
     touchAsset(asset);
     renderIssuesOnly();
   };
+  frame.onlostpointercapture = () => { drag = null; };
   frame.onwheel = e => {
     if (state.loupe) return;
     e.preventDefault();
@@ -859,6 +1057,45 @@ function attachPlacementDrag(frame, asset, surface) {
     paintStage();
     renderIssuesOnly();
   };
+  frame.onkeydown = e => {
+    const step = e.shiftKey ? 0.06 : 0.018;
+    let next = p.crop;
+    if (e.key === 'ArrowLeft') next = panCrop(p.crop, -step * p.crop.w, 0);
+    else if (e.key === 'ArrowRight') next = panCrop(p.crop, step * p.crop.w, 0);
+    else if (e.key === 'ArrowUp') next = panCrop(p.crop, 0, -step * p.crop.h);
+    else if (e.key === 'ArrowDown') next = panCrop(p.crop, 0, step * p.crop.h);
+    else if (e.key === '+' || e.key === '=') next = zoomCrop(p.crop, 1.12);
+    else if (e.key === '-' || e.key === '_') next = zoomCrop(p.crop, 1 / 1.12);
+    else if (e.key === '0' || e.key === 'Home') next = asset.width
+      ? defaultCrop(asset.width, asset.height, surface)
+      : { x: 0, y: 0, w: 1, h: 1 };
+    else return;
+    e.preventDefault(); p.crop = next; touchAsset(asset); paintStage(); renderIssuesOnly();
+  };
+}
+
+async function blobEvidenceHash(blob) {
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function stableLocalVideoJobId(asset, options) {
+  const material = new TextEncoder().encode(`${asset.id}\n${JSON.stringify(options)}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', material));
+  const suffix = [...digest.slice(0, 18)].map(value => value.toString(16).padStart(2, '0')).join('');
+  return `local-video-${suffix}`;
+}
+
+async function releaseUsage(authorizationId, reason = 'client_failure') {
+  try {
+    await voidOutbound(authorizationId, reason);
+    return { confirmed: true, message: 'Reserved usage was returned.' };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'usage_already_settled') {
+      return { confirmed: false, settled: true, message: 'Usage was already finalized and remains visible in Usage.' };
+    }
+    return { confirmed: false, pending: true, message: 'Usage release is pending and will retry automatically; it is visible in Usage.' };
+  }
 }
 
 function attachSourceDrag(wrap, rect, asset, surface) {
@@ -888,6 +1125,7 @@ function attachSourceDrag(wrap, rect, asset, surface) {
     touchAsset(asset);
     renderIssuesOnly();
   };
+  rect.onlostpointercapture = () => { drag = null; };
 
   // Corner handles resize the window; the result is snapped straight back to
   // the placement's aspect ratio so an export can never come out distorted.
@@ -925,6 +1163,7 @@ function attachSourceDrag(wrap, rect, asset, surface) {
       touchAsset(asset);
       renderIssuesOnly();
     };
+    handle.onlostpointercapture = () => { grab = null; };
   }
 
   wrap.onwheel = e => {
@@ -937,6 +1176,20 @@ function attachSourceDrag(wrap, rect, asset, surface) {
     });
     touchAsset(asset);
     renderIssuesOnly();
+  };
+  wrap.onkeydown = e => {
+    const step = e.shiftKey ? 0.06 : 0.018;
+    if (e.key === 'ArrowLeft') p.crop = panCrop(p.crop, -step * p.crop.w, 0);
+    else if (e.key === 'ArrowRight') p.crop = panCrop(p.crop, step * p.crop.w, 0);
+    else if (e.key === 'ArrowUp') p.crop = panCrop(p.crop, 0, -step * p.crop.h);
+    else if (e.key === 'ArrowDown') p.crop = panCrop(p.crop, 0, step * p.crop.h);
+    else if (e.key === '+' || e.key === '=') p.crop = zoomCrop(p.crop, 1.12);
+    else if (e.key === '-' || e.key === '_') p.crop = zoomCrop(p.crop, 1 / 1.12);
+    else if (e.key === '0' || e.key === 'Home') p.crop = asset.width
+      ? defaultCrop(asset.width, asset.height, surface)
+      : { x: 0, y: 0, w: 1, h: 1 };
+    else return;
+    e.preventDefault(); paint(); touchAsset(asset); renderIssuesOnly();
   };
 }
 
@@ -1047,19 +1300,37 @@ function metricsBlock(asset) {
   const sw = el('div', { className: 'swatches' }, ...a.palette.map(c => el('i', { style: `background:${c.hex}`, title: `${c.hex} · ${Math.round(c.pct * 100)}%` })));
   wrap.append(el('div', { style: 'font-size:11px;color:var(--faint);margin-bottom:4px' }, 'Dominant colour'), sw);
 
+  const color = a.color || {};
+  const colorDelivery = colorExportDecision(color);
+  wrap.append(el('div', { className: 'metrics', style: 'margin-top:12px' },
+    cell('Input profile', String(color.profile || 'unknown').replaceAll('-', ' '),
+      el('small', {}, color.embedded ? ' · embedded' : ' · fallback')),
+    cell('Working space', COLOR_PIPELINE.workingSpace),
+    cell('Output transform', COLOR_PIPELINE.deliverySpace,
+      el('small', {}, ` · ${COLOR_PIPELINE.renderingIntent}`)),
+    cell('Clipping', `${(a.exposure.blown * 100).toFixed(1)}% high · ${(a.exposure.crushed * 100).toFixed(1)}% low`)));
+  wrap.append(el('p', { className: 'hint', style: 'margin:8px 0 0' },
+    !colorDelivery.allowed
+      ? 'Color needs a verified sRGB conversion before export.'
+      : color.conversion
+        ? 'Color converted to sRGB for digital delivery.'
+        : 'Color profile checked for digital delivery.'));
+
   const g = asset.geometry;
   wrap.append(el('p', { className: 'hint', style: 'margin:12px 0 0' },
-    g ? `Geometry — ${g.faces.length} face(s), ${g.hands.length} hand(s) detected (MediaPipe, on this machine).`
-      : 'Geometry — face/hand detection unavailable (offline or blocked). Heuristics still apply.'));
+    g
+      ? (g.faces.length || g.hands.length
+        ? `${g.faces.length} face${g.faces.length === 1 ? '' : 's'} and ${g.hands.length} hand${g.hands.length === 1 ? '' : 's'} found.`
+        : 'No people found.')
+      : 'People check unavailable; review manually.'));
 
   const prov = a.provenance;
   if (prov) {
     const bits = [];
     if (prov.c2pa || prov.contentCredentials) bits.push('Content Credentials present');
-    if (prov.aiDigitalSource) bits.push('declares AI origin');
-    if (prov.tool) bits.push(`tool: ${prov.tool}`);
+    if (prov.aiDigitalSource) bits.push('AI-origin label present');
     wrap.append(el('p', { className: 'hint', style: 'margin:12px 0 0' },
-      'Embedded provenance — ' + (bits.length ? bits.join(' · ') : 'none found in file metadata')));
+      bits.length ? bits.join(' · ') : 'No content credentials found.'));
   }
   wrap.append(el('div', { style: 'margin-top:12px' },
     btn('Re-run checks', 'btn sm', async () => { await runAnalysis(asset); renderReview(); })));
@@ -1146,8 +1417,12 @@ function qaBlock(asset) {
     for (const c of checks.filter(x => x.group === g)) {
       const tri = el('div', { className: 'tri' });
       for (const v of ['pass', 'fail', 'na']) {
-        const b = el('button', { className: asset.qa[c.id] === v ? 'on' : '', title: v, dataset: { v } },
-          v === 'na' ? '–' : v === 'pass' ? '✓' : '✕');
+        const label = v === 'na' ? 'N/A' : v === 'pass' ? 'Pass' : 'Fix';
+        const description = v === 'na' ? 'Not applicable' : v === 'pass' ? 'Pass this check' : 'Needs work';
+        const b = el('button', {
+          className: asset.qa[c.id] === v ? 'on' : '', title: description,
+          ariaLabel: `${c.label}: ${description}`, dataset: { v }
+        }, label);
         b.onclick = () => {
           mutate(asset, `${c.label}: ${asset.qa[c.id] === v ? 'cleared' : v}`, () => {
             if (asset.qa[c.id] === v) delete asset.qa[c.id]; else asset.qa[c.id] = v;
@@ -1209,7 +1484,13 @@ function videoBlock(asset) {
       number('fadeIn', 'Fade in (seconds)', 0, 10, .1), number('fadeOut', 'Fade out (seconds)', 0, 10, .1),
       number('volumeDb', 'Output gain (dB)', -24, 12, .5)),
       el('label', { className: 'toggle' }, denoise, 'Reduce consistent background noise'),
-      el('label', { className: 'toggle' }, captions, 'Transcribe and burn captions'));
+      el('label', { className: 'toggle' }, captions, 'Transcribe and burn captions'),
+      el('details', { className: 'editor-control-group cloud-render-control' },
+        el('summary', {}, 'Optional cloud render'),
+        el('div', { className: 'editor-control-body' },
+          el('p', { className: 'hint' },
+            'Review the price before sending this video to the cloud.'),
+          btn('Review cloud quote', 'btn sm', () => reviewCloudVideoRender(asset)))));
   }
 
   const stars = el('div', { className: 'stars' });
@@ -1268,18 +1549,13 @@ function parseVideoTime(value) {
   return parts.reduce((total, part) => total * 60 + part, 0);
 }
 
-async function renderEditedVideo(asset) {
-  const bridge = await detectBridge();
-  if (!bridge.ok || !bridge.video?.ffmpeg) return toast('Start the MaterialLogix local engine to render video.', true);
-  if (asset.video.burnCaptions && !bridge.video?.whisper) {
-    return toast('Caption transcription requires the local Whisper model. Install it or turn captions off before rendering.', true);
-  }
+function videoRenderPlan(asset) {
   const v = asset.video;
   const trimStart = parseVideoTime(v.trimStart);
   const trimEnd = parseVideoTime(v.trimEnd);
-  if (v.trimStart && trimStart == null) return toast('Enter the in point as seconds or timecode, for example 0:03.5.', true);
-  if (v.trimEnd && trimEnd == null) return toast('Enter the out point as seconds or timecode, for example 0:12.', true);
-  if (trimEnd != null && trimEnd <= (trimStart || 0)) return toast('The out point must be later than the in point.', true);
+  if (v.trimStart && trimStart == null) throw new Error('Enter the in point as seconds or timecode, for example 0:03.5.');
+  if (v.trimEnd && trimEnd == null) throw new Error('Enter the out point as seconds or timecode, for example 0:12.');
+  if (trimEnd != null && trimEnd <= (trimStart || 0)) throw new Error('The out point must be later than the in point.');
   const deliveryFrames = {
     vertical: { w: 1080, h: 1920 }, portrait: { w: 1080, h: 1350 },
     square: { w: 1080, h: 1080 }, wide: { w: 1920, h: 1080 }
@@ -1290,22 +1566,157 @@ async function renderEditedVideo(asset) {
     activePlacement?.crop || defaultCrop(asset.width, asset.height, frame),
     asset.width, asset.height, frame
   );
-  const opts = {
-    trimStart: trimStart || 0, trimEnd, spec: v.spec || 'vertical',
-    speed: v.speed || 1, fadeIn: v.fadeIn || 0, fadeOut: v.fadeOut || 0, rotate: v.rotate || 0,
-    volumeDb: v.volumeDb || 0, denoise: !!v.denoise, audioEq: v.audioEq || 'flat', burnCaptions: !!v.burnCaptions,
-    crop, adjustments: ensureEditState(asset).adjustments
+  const speed = v.speed || 1;
+  const sourceEnd = trimEnd ?? asset.duration;
+  const outputSeconds = Math.max(0, (sourceEnd - (trimStart || 0)) / speed);
+  if (!Number.isFinite(outputSeconds) || outputSeconds <= 0) throw new Error('The selected video range has no renderable duration.');
+  return {
+    outputSeconds,
+    opts: {
+      trimStart: trimStart || 0, trimEnd, spec: v.spec || 'vertical', speed,
+      fadeIn: v.fadeIn || 0, fadeOut: v.fadeOut || 0, rotate: v.rotate || 0,
+      volumeDb: v.volumeDb || 0, denoise: !!v.denoise, audioEq: v.audioEq || 'flat',
+      burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments
+    }
   };
+}
+
+function cloudActivity(detail) {
+  window.dispatchEvent(new CustomEvent('materiallogix:job', { detail: {
+    title: 'Cloud video render', kind: 'video', location: 'cloud', ...detail
+  } }));
+}
+
+function localVideoActivity(detail) {
+  window.dispatchEvent(new CustomEvent('materiallogix:job', { detail: {
+    title: 'Local video render', kind: 'video', location: 'local', cancellable: true, ...detail
+  } }));
+}
+
+async function cancelLocalVideoJob(jobId) {
+  const active = localVideoJobs.get(jobId);
+  if (active) active.cancelRequested = true;
+  localVideoActivity({ id: jobId, status: 'processing', progress: active?.progress || 54, detail: 'Stopping safely…' });
+  let base = active?.base;
+  if (!base) {
+    const bridge = await detectBridge();
+    base = bridge.ok ? bridge.base : null;
+  }
+  let confirmed = false;
+  if (base) {
+    for (let attempt = 0; attempt < 3 && !confirmed; attempt++) {
+      try {
+        const response = await bridgeFetch(`${base}/video/cancel?job=${encodeURIComponent(jobId)}`, { method: 'POST' });
+        const result = await response.json().catch(() => ({}));
+        confirmed = response.ok && result.cancelRequested === true;
+      } catch { /* the original request still has its bounded engine timeout */ }
+      if (!confirmed && attempt < 2) await new Promise(resolve => setTimeout(resolve, 80));
+    }
+  }
+  active?.controller.abort();
+  localVideoActivity({ id: jobId, status: confirmed || !active ? 'cancelled' : 'failed', progress: 100,
+    detail: confirmed ? 'Stopped' : active ? 'Stop could not be confirmed' : 'Recovered after the previous session' });
+  if (active) toast(confirmed ? 'Video render stopped.' : 'The video render could not be stopped.', !confirmed);
+}
+
+window.addEventListener('materiallogix:cancel-job', event => {
+  const jobId = String(event.detail?.id || '');
+  if (jobId) cancelLocalVideoJob(jobId).catch(error => {
+    localVideoActivity({ id: jobId, status: 'failed', progress: 100,
+      detail: `Stop failed safely · ${error.message}` });
+  });
+});
+window.dispatchEvent(new Event('materiallogix:cancel-ready'));
+
+async function reviewCloudVideoRender(asset) {
+  const availability = await cloudVideoAvailability();
+  if (!availability.available) return dialog('Cloud render is not open yet', el('div', {},
+    el('p', {}, 'Use this device to render your video for now.')),
+  [btn('Close', 'btn', closeDialog), btn('Use local render', 'btn primary', () => { closeDialog(); renderEditedVideo(asset); })]);
+  let plan;
+  try { plan = videoRenderPlan(asset); }
+  catch (error) { return toast(error.message, true); }
+  const quote = quoteCloudJob({ kind: 'video', durationSeconds: plan.outputSeconds });
+  const consent = el('input', { type: 'checkbox' });
+  const continueButton = btn('Compile and send package', 'btn primary', async () => {
+    if (!consent.checked) return;
+    closeDialog();
+    const activityId = `cloud-video-${crypto.randomUUID()}`;
+    cloudActivity({ id: activityId, status: 'processing', progress: 1, detail: 'Preparing complete package', credits: quote.amountCents / 100 });
+    try {
+      const source = await store.getBlob(asset.id);
+      const manifest = {
+        schema: 'materiallogix.cloud-video-job.v1', createdAt: new Date().toISOString(),
+        source: { filename: asset.filename, contentType: source.type || 'application/octet-stream',
+          size: source.size, durationSeconds: asset.duration },
+        outputSeconds: plan.outputSeconds, edit: plan.opts,
+        brandOverlay: state.project.brandOverlay || null
+      };
+      const result = await busy(() => submitCloudVideoPackage({ source, manifest,
+        outputSeconds: plan.outputSeconds, expectedAmountCents: quote.amountCents,
+        cloudProcessingConsent: true, retentionAccepted: true, operationId: activityId,
+        onProgress: update => cloudActivity({ ...update, id: activityId }) }));
+      cloudActivity({ id: activityId, status: 'queued', progress: 82, detail: 'Cloud render queued', credits: result.quote.amountCents / 100 });
+      let notified = false;
+      watchCloudVideoJob(result.jobId, update => {
+        cloudActivity({ ...update, id: activityId });
+        if (notified || update.status !== 'completed') {
+          if (update.status === 'failed') toast('Cloud video render failed. Reserved wallet funds were returned.', true);
+          return;
+        }
+        notified = true;
+        dialog('Cloud render ready', el('div', {},
+          el('p', {}, 'Your finished video is ready.'),
+          el('p', { className: 'hint' }, 'The private cloud copy follows the temporary retention window shown when you submitted the package.')),
+        [btn('Later', 'btn', closeDialog), btn('Download video', 'btn primary', () => { downloadCloudVideo(result.jobId); closeDialog(); })]);
+      });
+      toast('Complete package uploaded. Cloud rendering has started.');
+    } catch (error) {
+      cloudActivity({ id: activityId, status: 'failed', progress: 100, detail: error.message });
+      toast('Cloud render was not started: ' + error.message, true);
+    }
+  });
+  continueButton.disabled = true;
+  consent.onchange = () => { continueButton.disabled = !consent.checked; };
+  dialog('Review cloud render', el('div', {},
+    el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds; included Video credit is used first.`),
+    el('label', { className: 'checkline' }, consent,
+      el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are scheduled for deletion within 24 hours.'))),
+  [btn('Cancel', 'btn', closeDialog), btn('Use local render', 'btn', () => { closeDialog(); renderEditedVideo(asset); }), continueButton]);
+}
+
+async function renderEditedVideo(asset) {
+  const bridge = await detectBridge();
+  if (!bridge.ok || !bridge.video?.ffmpeg) return toast('Video tools are not ready on this device.', true);
+  if (asset.video.burnCaptions && !bridge.video?.whisper) {
+    return toast('Captions need the optional Video pack; add it or turn captions off.', true);
+  }
+  let plan;
+  try { plan = videoRenderPlan(asset); }
+  catch (error) { return toast(error.message, true); }
+  const opts = { ...plan.opts, resume: true };
+  const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload', quantity: 1 });
+  if (!authorization.ok) return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+  const jobId = await stableLocalVideoJobId(asset, opts);
+  const controller = new AbortController();
+  localVideoJobs.set(jobId, { controller, base: bridge.base, cancelRequested: false, progress: 18 });
   try {
     await busy(async () => {
       toast('Rendering video with the saved editorial settings…');
       const source = await store.getBlob(asset.id);
-      const base = `http://${location.hostname}:8189`;
-      const response = await bridgeFetch(`${base}/video/render?opts=${encodeURIComponent(JSON.stringify(opts))}`, {
-        method: 'POST', headers: { 'Content-Type': source.type || 'video/mp4' }, body: source
+      localVideoActivity({ id: jobId, status: 'processing', progress: 18, detail: 'Checking saved render segments, then continuing locally' });
+      const response = await bridgeFetch(`${bridge.base}/video/render?opts=${encodeURIComponent(JSON.stringify(opts))}`, {
+        method: 'POST',
+        headers: { 'Content-Type': source.type || 'video/mp4', 'X-MaterialLogix-Job-Id': jobId },
+        body: source,
+        signal: controller.signal
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `engine ${response.status}`);
+      const reusedSegments = Math.max(0, Number(response.headers.get('X-MaterialLogix-Video-Reused-Segments')) || 0);
+      if (reusedSegments) localVideoActivity({ id: jobId, status: 'processing', progress: 82,
+        detail: `Recovered ${reusedSegments} completed segment${reusedSegments === 1 ? '' : 's'} · finalizing` });
       const blob = await response.blob();
+      await settleOutbound(authorization.authorization.id, await blobEvidenceHash(blob));
       const file = new File([blob], asset.filename.replace(/\.[^.]+$/, '') + '-edited.mp4', { type: 'video/mp4' });
       const rendered = newAsset(state.project.id, file);
       rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings.`;
@@ -1316,8 +1727,17 @@ async function renderEditedVideo(asset) {
       await store.saveAsset(rendered);
       state.assets.push(rendered);
     });
+    localVideoActivity({ id: jobId, status: 'complete', progress: 100, detail: 'Added to project' });
     render(); toast('Video render completed and added to the project.');
-  } catch (error) { toast('Video render failed: ' + error.message, true); }
+  } catch (error) {
+    const cancelled = localVideoJobs.get(jobId)?.cancelRequested || error.name === 'AbortError';
+    const release = await releaseUsage(authorization.authorization.id, cancelled ? 'user_cancelled' : 'render_failed');
+    localVideoActivity({ id: jobId, status: cancelled ? 'cancelled' : 'failed', progress: 100,
+      detail: cancelled ? `Stopped locally · ${release.message}` : `${error.message} · ${release.message}` });
+    if (!cancelled) toast(`Video render failed: ${error.message}. ${release.message}`, true);
+  } finally {
+    localVideoJobs.delete(jobId);
+  }
 }
 
 /**
@@ -1386,12 +1806,28 @@ async function extractIdentityPack(asset) {
   modeSel.append(el('option', { value: 'body' }, 'Full-body reference set — verified 360°'));
   const countSel = el('select', {});
   for (const n of [8, 12, 16]) countSel.append(el('option', { value: String(n) }, `${n} frames`));
+  const shootGuide = el('div', { className: 'spin-shoot-guide' });
+  const paintShootGuide = () => {
+    const body = modeSel.value === 'body';
+    shootGuide.replaceChildren(
+      el('strong', {}, body ? 'Full-body 360° — one easy circle' : 'Face 180° — left, center, right'),
+      el('p', {}, 'Keep the laptop or camera still. You turn; the computer does not.'),
+      el('ol', {}, ...(body ? [
+        'Start facing the camera with your full body visible.',
+        'Turn slowly in one direction. Keep your arms slightly away from your sides.',
+        'Stop when you face the camera again. Aim for about 20 seconds.'
+      ] : [
+        'Start looking straight at the camera with your chin level.',
+        'Turn slowly toward your left shoulder, return through center, then toward your right shoulder.',
+        'Keep the movement smooth and finish in about 16 seconds.'
+      ]).map(step => el('li', {}, step))));
+  };
+  modeSel.onchange = paintShootGuide;
   dialog('Create identity reference set',
     el('div', {},
       el('p', { className: 'hint' },
         'Creates evenly spaced reference frames from this video for one approved subject.'),
-      el('p', { className: 'hint' },
-        'How to shoot it: even light, chin level, one person in frame. Face pack — turn the head slowly half-way to the left (about 8 seconds), back through centre, then half-way right. Full body — one slow full turn, arms slightly out, about 20 seconds. After extraction the tracker reports which angles you actually covered.'),
+      shootGuide,
       el('label', { className: 'field' }, el('span', {}, 'Subject'), nameInput),
       el('label', { className: 'field' }, el('span', {}, 'Capture type'), modeSel),
       el('label', { className: 'field' }, el('span', {}, 'Frames'), countSel)),
@@ -1399,6 +1835,8 @@ async function extractIdentityPack(asset) {
      btn('Create reference set', 'btn primary', async () => {
        const person = nameInput.value.trim() || 'unnamed';
        const count = Number(countSel.value);
+       const captureMode = modeSel.value;
+       const packId = crypto.randomUUID();
        closeDialog();
        await busy(async () => {
          const url = await store.objectUrl(asset.id);
@@ -1414,6 +1852,8 @@ async function extractIdentityPack(asset) {
            ref.role = 'reference';
            ref.status = 'reference-only';
            ref.labels.lane = person;
+           ref.identityPackId = packId;
+           ref.identityCaptureMode = captureMode;
            ref.width = canvas.width;
            ref.height = canvas.height;
            ref.provenance = `Identity frame ${i + 1}/${count} at ${t.toFixed(2)}s from ${asset.filename}`;
@@ -1426,26 +1866,115 @@ async function extractIdentityPack(asset) {
        render();
 
        // Coverage check: did the turn actually sweep the angles?
-       const packFrames = state.assets
-         .filter(a => a.role === 'reference' && a.labels.lane === person && a.provenance.includes(asset.filename))
-         .sort((a, b) => a.filename.localeCompare(b.filename))
-         .map(a => a.geometry);
+       const packAssets = state.assets
+         .filter(a => a.role === 'reference' && a.identityPackId === packId)
+         .sort((a, b) => a.filename.localeCompare(b.filename));
+       const packFrames = packAssets.map(a => a.geometry);
        if (packFrames.some(Boolean)) {
-         const rep = modeSel.value === 'body'
+         const rep = captureMode === 'body'
            ? captureCoverageBody(packFrames)
            : captureCoverage(packFrames);
          const lines = el('div', {},
-           el('p', {}, modeSel.value === 'body'
+           el('p', {}, captureMode === 'body'
              ? `Coverage: ${rep.bodiesFound}/${rep.frames} frames tracked · ${rep.coveredBuckets}/8 angle zones of the full 360° · verdict: ${rep.verdict}.`
              : `Coverage: ${rep.facesFound}/${rep.frames} frames tracked · ${rep.yawSpreadDeg}° of head turn · verdict: ${rep.verdict}.`),
            rep.gaps.length ? el('p', { className: 'hint' }, 'Missing angles: ' + rep.gaps.join(', ')) : null,
            ...rep.flags.map(f => el('p', { className: 'hint', style: 'color:var(--warn)' }, f)),
-           rep.verdict !== 'good' ? el('p', { className: 'hint' }, 'Re-shoot with a slower turn to fill the gaps — the pack works better the wider the sweep.') : null);
-         dialog('Capture report — ' + person, lines, [btn('Close', 'btn', closeDialog)]);
+           rep.verdict !== 'good' ? el('p', { className: 'hint' }, 'Re-shoot with a slower turn to fill the gaps — the pack works better the wider the sweep.') : null,
+           el('p', { className: 'hint' }, 'Laptop controls: open the spin preview, then drag directly on the picture, use a two-finger trackpad scroll, or press the left and right arrow keys.'));
+         dialog('Capture report — ' + person, lines, [
+           btn('Close', 'btn', closeDialog),
+           btn('Open easy spin preview', 'btn primary', () => openIdentitySpinPreview(person, packAssets, captureMode))
+         ]);
        } else {
-         toast(`Identity pack for "${person}": ${count} frames extracted. Face tracking unavailable (offline) — coverage not verified.`);
+         dialog('Reference set created — ' + person, el('div', {},
+           el('p', {}, `${count} frames were extracted successfully.`),
+           el('p', { className: 'hint' }, 'Tracking was unavailable offline, so angle coverage is not verified. You can still inspect every frame with the easy spin preview.')),
+         [btn('Close', 'btn', closeDialog),
+          btn('Open easy spin preview', 'btn primary', () => openIdentitySpinPreview(person, packAssets, captureMode))]);
        }
      })]);
+  paintShootGuide();
+}
+
+async function openIdentitySpinPreview(person, assets, mode = 'body') {
+  const frames = (await Promise.all([...assets]
+    .sort((a, b) => a.filename.localeCompare(b.filename))
+    .map(async asset => ({ asset, url: await store.objectUrl(asset.id) })))).filter(frame => frame.url);
+  if (frames.length < 2) return toast('This reference set needs at least two readable frames to spin.', true);
+
+  let index = 0;
+  let grab = null;
+  let wheelTotal = 0;
+  let autoplay = null;
+  const picture = el('img', { src: frames[0].url, alt: `${person}, view 1 of ${frames.length}`, draggable: false });
+  const stage = el('div', {
+    className: 'spin-stage', tabIndex: 0, role: 'group',
+    ariaLabel: `${person} interactive ${mode === 'face' ? '180 degree' : '360 degree'} reference viewer`
+  }, picture,
+  el('div', { className: 'spin-drag-cue', ariaHidden: 'true' }, '↔ Drag or swipe to turn'));
+  const slider = el('input', { type: 'range', min: 0, max: frames.length - 1, step: 1, value: 0, ariaLabel: 'Spin view frame' });
+  const readout = el('output', { className: 'spin-readout', ariaLive: 'polite' });
+  const play = btn('Play turn', 'btn sm');
+
+  const paint = next => {
+    index = normalizeSpinIndex(next, frames.length);
+    picture.src = frames[index].url;
+    picture.alt = `${person}, view ${index + 1} of ${frames.length}`;
+    slider.value = String(index);
+    readout.textContent = `${index + 1} of ${frames.length} · ${spinAngleLabel(index, frames.length, mode)}`;
+  };
+  const stop = () => {
+    if (autoplay) clearInterval(autoplay);
+    autoplay = null;
+    play.textContent = 'Play turn';
+    play.setAttribute('aria-pressed', 'false');
+  };
+  const step = delta => { stop(); paint(stepSpinIndex(index, delta, frames.length)); stage.focus(); };
+  play.onclick = () => {
+    if (autoplay) return stop();
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return toast('Automatic motion is off because reduced motion is enabled. Use drag, the slider, or arrow keys.');
+    play.textContent = 'Pause turn'; play.setAttribute('aria-pressed', 'true');
+    autoplay = setInterval(() => paint(index + 1), 180);
+  };
+  slider.oninput = () => { stop(); paint(Number(slider.value)); };
+  stage.onpointerdown = event => {
+    stop(); grab = { x: event.clientX, index }; stage.classList.add('dragging');
+    stage.setPointerCapture(event.pointerId); stage.focus();
+  };
+  stage.onpointermove = event => {
+    if (!grab) return;
+    paint(spinIndexFromDrag(grab.index, event.clientX - grab.x, frames.length, 22));
+  };
+  stage.onpointerup = stage.onpointercancel = () => { grab = null; stage.classList.remove('dragging'); };
+  stage.onlostpointercapture = () => { grab = null; stage.classList.remove('dragging'); };
+  stage.onwheel = event => {
+    event.preventDefault(); stop();
+    wheelTotal += Math.abs(event.deltaX) >= Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    const delta = spinStepFromWheel(0, wheelTotal, 24);
+    if (delta) { paint(index + delta); wheelTotal = 0; }
+  };
+  stage.onkeydown = event => {
+    if (event.key === 'ArrowLeft') { event.preventDefault(); step(-1); }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); step(1); }
+    else if (event.key === 'Home') { event.preventDefault(); step(-index); }
+    else if (event.key === ' ') { event.preventDefault(); play.click(); }
+  };
+
+  const controls = el('div', { className: 'spin-controls' },
+    btn('← Turn left', 'btn spin-turn', () => step(-1)),
+    el('label', { className: 'spin-slider' }, slider, readout),
+    btn('Turn right →', 'btn spin-turn', () => step(1)));
+  const body = el('div', { className: 'spin-viewer' },
+    el('p', { className: 'spin-help' }, 'Drag or swipe the picture to turn it; a trackpad, the slider, and the arrow keys work too.'),
+    stage, controls,
+    el('div', { className: 'spin-actions' },
+      btn('Front / reset', 'btn sm', () => { stop(); paint(0); stage.focus(); }), play));
+  const close = () => { stop(); closeDialog(); };
+  const spinDialog = dialog(`${person} · easy spin preview`, body, [btn('Close', 'btn primary', close)]);
+  spinDialog.addEventListener('close', stop, { once: true });
+  paint(0);
+  requestAnimationFrame(() => stage.focus());
 }
 
 function metaBlock(asset) {
@@ -1479,10 +2008,15 @@ function metaBlock(asset) {
   for (const r of ASSET_ROLES) roleSel.append(el('option', { value: r.id, selected: asset.role === r.id }, r.label));
   const roleRow = el('div', { style: 'display:flex;gap:6px;align-items:flex-end' });
   roleSel.onchange = () => { mutate(asset, `role → ${roleSel.value}`, () => { asset.role = roleSel.value; }); };
-  roleRow.append(
-    (() => { const f = el('label', { className: 'field', style: 'flex:1;margin-bottom:0' }, el('span', {}, 'Role'), roleSel); return f; })(),
-    asset.kind === 'image' ? btn('Upscale', 'btn sm', () => upscaleAsset(asset)) : null);
+  roleRow.append(el('label', { className: 'field', style: 'flex:1;margin-bottom:0' }, el('span', {}, 'Role'), roleSel));
+  if (asset.kind === 'image') roleRow.append(btn('Upscale', 'btn sm', () => upscaleAsset(asset)));
   wrap.append(el('div', { style: 'margin-bottom:11px' }, roleRow));
+  if (asset.kind === 'image' && asset.identityPackId) {
+    const peers = state.assets.filter(item => item.role === 'reference' && item.identityPackId === asset.identityPackId);
+    if (peers.length > 1) wrap.append(el('div', { style: 'margin-bottom:11px' },
+      btn('Open easy spin preview', 'btn sm', () => openIdentitySpinPreview(
+        asset.labels.lane || 'Reference set', peers, asset.identityCaptureMode || 'body'))));
+  }
 
   const text = (key, label, placeholder = '', multi = false, obj = asset) => {
     const i = multi ? el('textarea', { value: obj[key] || '', placeholder })
@@ -1531,7 +2065,7 @@ function rejectionDialog(asset, targetStatus) {
     el('p', { className: 'hint' }, 'Choose every reason that applies. This feedback becomes project memory and travels with the audit record.'),
     el('div', { className: 'reason-grid' }, ...reasonInputs),
     el('label', { className: 'field', style: 'margin-top:14px' }, el('span', {}, 'Optional note'), note),
-    el('label', { className: 'checkline' }, share, el('span', {}, 'Allow anonymized ratings and reason codes to improve MaterialLogix. Media is never included without a separate upload confirmation.')));
+    el('label', { className: 'checkline' }, share, el('span', {}, 'Allow anonymized ratings and reason codes to improve Material Logic. Media is never included without a separate upload confirmation.')));
   dialog('Why are you declining this result?', body, [
     btn('Cancel', 'btn', closeDialog),
     btn('Save rejection', 'btn primary', () => {
@@ -1558,6 +2092,247 @@ function logBlock(asset) {
   return wrap;
 }
 
+const canvasBlob = (canvas, type = 'image/png') => new Promise((resolve, reject) =>
+  canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('The browser could not encode the image.')), type));
+
+async function generativeFillDialog(asset) {
+  if (asset.kind !== 'image') return toast('Generative Fill currently supports still images only.', true);
+  const base = localStorage.getItem('cros:comfyBase') || `http://${location.hostname}:8188`;
+  const engine = await detectComfy(base);
+  if (!engine.ok) {
+    return dialog('Generative Fill unavailable', el('div', {},
+      el('p', {}, 'Generative Fill is not ready on this device.')),
+    [btn('Close', 'btn primary', closeDialog)]);
+  }
+  let compatibility = null;
+  try { compatibility = await inspectInpaintCompatibility(base); } catch { /* unavailable below */ }
+  if (compatibility && !compatibility.compatibleNodes) {
+    return dialog('Generative Fill unavailable', el('div', {},
+      el('p', {}, 'This installation needs an update before it can use Generative Fill.')),
+    [btn('Close', 'btn primary', closeDialog)]);
+  }
+  const checkpoints = compatibility?.inpaintModels || [];
+  if (!checkpoints.length) {
+    return dialog('Generative Fill unavailable', el('div', {},
+      el('p', {}, 'Add the Generative Fill pack in Workspace, then try again.')),
+    [btn('Close', 'btn primary', closeDialog)]);
+  }
+
+  const decoded = await decode(asset);
+  if (!decoded) return toast('The selected image could not be decoded.', true);
+  const mode = el('select', {},
+    el('option', { value: 'add' }, 'Add inside selection'),
+    el('option', { value: 'remove' }, 'Remove from selection'),
+    el('option', { value: 'replace' }, 'Replace selection'));
+  const model = el('select', {}, ...checkpoints.map((name, index) => el('option', { value: name }, `Fill quality ${index + 1}`)));
+  const promptInput = el('textarea', { maxLength: 1000, placeholder: 'Describe what to add, remove, or replace…' });
+  const negative = el('textarea', { maxLength: 1000, placeholder: 'Optional: details to avoid' });
+  const styleIntent = el('select', {},
+    el('option', { value: 'natural' }, 'Match believable photography'),
+    el('option', { value: 'stylized' }, 'Apply a stylized direction'));
+  const defaults = { x: 25, y: 25, width: 50, height: 50 };
+  const fields = {};
+  const preview = el('canvas', { className: 'fill-mask-preview', width: 480, height: 300, tabIndex: 0,
+    role: 'img', ariaLabel: 'Selection canvas. Draw around the area to change with a mouse, trackpad, pen, or touch.' });
+  const selectionState = { tool: 'outline', outline: [], strokes: [], brushPercent: 8, drawing: false };
+  const selectionStatus = el('p', { className: 'hint fill-selection-status', role: 'status' }, 'No area selected.');
+  const imageRect = () => {
+    const scale = Math.min(preview.width / decoded.w, preview.height / decoded.h);
+    const width = decoded.w * scale, height = decoded.h * scale;
+    return { x: (preview.width - width) / 2, y: (preview.height - height) / 2, width, height };
+  };
+  const drawSelection = (ctx, width, height, offsetX = 0, offsetY = 0) => {
+    const path = normalizeInpaintPath(selectionState.outline);
+    if (path.length >= 2) {
+      ctx.beginPath(); ctx.moveTo(offsetX + path[0].x * width, offsetY + path[0].y * height);
+      for (const point of path.slice(1)) ctx.lineTo(offsetX + point.x * width, offsetY + point.y * height);
+      if (path.length >= 3) { ctx.closePath(); ctx.fill(); }
+      ctx.stroke();
+    }
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.lineWidth = Math.max(2, Math.min(width, height) * selectionState.brushPercent / 100);
+    for (const stroke of selectionState.strokes) {
+      const points = normalizeInpaintPath(stroke);
+      if (!points.length) continue;
+      ctx.beginPath(); ctx.moveTo(offsetX + points[0].x * width, offsetY + points[0].y * height);
+      if (points.length === 1) ctx.lineTo(offsetX + points[0].x * width + 0.01, offsetY + points[0].y * height);
+      else for (const point of points.slice(1)) ctx.lineTo(offsetX + point.x * width, offsetY + point.y * height);
+      ctx.stroke();
+    }
+  };
+  const paintPreview = () => {
+    const ctx = preview.getContext('2d');
+    ctx.clearRect(0, 0, preview.width, preview.height);
+    const rect = imageRect();
+    ctx.drawImage(decoded.source, rect.x, rect.y, rect.width, rect.height);
+    ctx.save(); ctx.fillStyle = 'rgba(255, 184, 77, .30)'; ctx.strokeStyle = 'rgba(255, 184, 77, .68)'; ctx.lineWidth = 2;
+    drawSelection(ctx, rect.width, rect.height, rect.x, rect.y); ctx.restore();
+    try {
+      const summary = summarizeInpaintMask(selectionState);
+      preview.dataset.selectionKind = summary.kind; preview.dataset.selectionPoints = String(summary.pointCount);
+      selectionStatus.textContent = `${summary.kind === 'lasso' ? 'Outline' : summary.kind === 'brush' ? 'Brush' : 'Mixed'} selection ready.`;
+    } catch {
+      preview.dataset.selectionKind = 'none'; preview.dataset.selectionPoints = '0'; selectionStatus.textContent = 'No area selected.';
+    }
+  };
+  const pointFromEvent = event => {
+    const box = preview.getBoundingClientRect(), image = imageRect();
+    const x = (event.clientX - box.left) * preview.width / Math.max(1, box.width);
+    const y = (event.clientY - box.top) * preview.height / Math.max(1, box.height);
+    if (x < image.x || y < image.y || x > image.x + image.width || y > image.y + image.height) return null;
+    return { x: (x - image.x) / image.width, y: (y - image.y) / image.height };
+  };
+  const appendPoint = point => {
+    if (!point) return;
+    const list = selectionState.tool === 'outline'
+      ? selectionState.outline : selectionState.strokes[selectionState.strokes.length - 1];
+    const prior = list[list.length - 1];
+    if (!prior || Math.hypot(point.x - prior.x, point.y - prior.y) >= 0.003) list.push(point);
+    paintPreview();
+  };
+  preview.onpointerdown = event => {
+    const point = pointFromEvent(event); if (!point) return;
+    event.preventDefault(); selectionState.drawing = true; preview.setPointerCapture(event.pointerId);
+    if (selectionState.tool === 'outline') selectionState.outline = [];
+    else selectionState.strokes.push([]);
+    appendPoint(point);
+  };
+  preview.onpointermove = event => { if (selectionState.drawing) appendPoint(pointFromEvent(event)); };
+  preview.onpointerup = preview.onpointercancel = event => {
+    if (!selectionState.drawing) return;
+    selectionState.drawing = false; preview.releasePointerCapture?.(event.pointerId); paintPreview();
+  };
+  const buildSelectionMask = (width, height) => {
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'; drawSelection(ctx, width, height);
+    return canvas;
+  };
+  const buildEngineMask = selectionMask => {
+    const canvas = document.createElement('canvas'); canvas.width = selectionMask.width; canvas.height = selectionMask.height;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'destination-out'; ctx.drawImage(selectionMask, 0, 0); ctx.globalCompositeOperation = 'source-over';
+    return canvas;
+  };
+  const measuredCoverage = selectionMask => {
+    const pixels = selectionMask.getContext('2d', { willReadFrequently: true })
+      .getImageData(0, 0, selectionMask.width, selectionMask.height).data;
+    let selected = 0;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) selected += pixels[i] / 255;
+    return selected / (selectionMask.width * selectionMask.height);
+  };
+  const outlineButton = btn('Outline', 'btn sm on', () => {
+    selectionState.tool = 'outline'; outlineButton.classList.add('on'); brushButton.classList.remove('on');
+  });
+  const brushButton = btn('Brush', 'btn sm', () => {
+    selectionState.tool = 'brush'; brushButton.classList.add('on'); outlineButton.classList.remove('on');
+  });
+  const selectionActions = el('div', { className: 'fill-selection-actions' }, outlineButton, brushButton,
+    btn('Undo', 'btn sm', () => {
+      if (selectionState.tool === 'brush' && selectionState.strokes.length) selectionState.strokes.pop();
+      else selectionState.outline = [];
+      paintPreview();
+    }),
+    btn('Clear', 'btn sm', () => { selectionState.outline = []; selectionState.strokes = []; paintPreview(); }));
+  const brushSize = el('input', { type: 'range', min: 2, max: 24, step: 1, value: selectionState.brushPercent });
+  const brushSizeOut = el('output', {}, `${selectionState.brushPercent}%`);
+  brushSize.oninput = () => {
+    selectionState.brushPercent = Number(brushSize.value); brushSizeOut.textContent = `${selectionState.brushPercent}%`; paintPreview();
+  };
+  const dimensions = el('div', { className: 'fill-selection-grid' });
+  for (const [key, label] of [['x', 'Left %'], ['y', 'Top %'], ['width', 'Width %'], ['height', 'Height %']]) {
+    const input = fields[key] = el('input', { type: 'number', min: key === 'x' || key === 'y' ? 0 : 1, max: 100, step: 1, value: defaults[key] });
+    dimensions.append(el('label', { className: 'field' }, el('span', {}, label), input));
+  }
+  const applyBounds = btn('Use rectangle', 'btn sm', () => {
+    const s = normalizeInpaintSelection(Object.fromEntries(Object.entries(fields).map(([key, input]) => [key, input.value])));
+    const left = s.x / 100, top = s.y / 100, right = (s.x + s.width) / 100, bottom = (s.y + s.height) / 100;
+    selectionState.outline = [{ x:left, y:top }, { x:right, y:top }, { x:right, y:bottom }, { x:left, y:bottom }];
+    selectionState.strokes = []; paintPreview();
+  });
+  const denoise = el('input', { type: 'range', min: 0.1, max: 1, step: 0.05, value: 0.8 });
+  const denoiseOut = el('output', {}, '0.80');
+  denoise.oninput = () => { denoiseOut.textContent = Number(denoise.value).toFixed(2); };
+  const status = el('p', { className: 'hint', role: 'status' }, 'The result will be added as a new candidate.');
+  const body = el('div', {},
+    el('p', { className: 'hint', style: 'color:var(--warn)' }, 'Beta: review edges, anatomy, fabric, skin, and lighting at 100% before approval.'),
+    el('p', { className: 'hint' }, 'Draw around the area, then describe the change; your original stays unchanged.'),
+    preview,
+    el('h4', { className: 'editor-group-title' }, 'Selection'), selectionActions, selectionStatus,
+    el('label', { className: 'editor-slider fill-brush-size' }, el('span', {}, 'Brush size'), brushSize, brushSizeOut),
+    el('details', { className: 'editor-control-group fill-precise-selection' }, el('summary', {}, 'Precise rectangle'),
+      el('div', { className: 'editor-control-body' }, dimensions, applyBounds)),
+    el('label', { className: 'field' }, el('span', {}, 'Operation'), mode),
+    el('label', { className: 'field' }, el('span', {}, 'Quality'), model),
+    el('label', { className: 'field' }, el('span', {}, 'Describe the change'), promptInput),
+    el('label', { className: 'field' }, el('span', {}, 'Look'), styleIntent),
+    el('p', { className: 'hint' }, 'Believable skin, fabric, anatomy, materials, and environmental light remain the default unless you explicitly choose a stylized result.'),
+    el('label', { className: 'field' }, el('span', {}, 'Avoid'), negative),
+    el('label', { className: 'editor-slider fill-strength' }, el('span', {}, 'Blend strength'), denoise, denoiseOut), status);
+  const run = btn('Create new candidate', 'btn primary', async () => {
+    const requested = promptInput.value.trim();
+    if (!requested) return toast('Describe the intended result first.', true);
+    run.disabled = true;
+    let fillBoundaryQuality = null;
+    try {
+      await busy(async () => {
+        const source = document.createElement('canvas'); source.width = decoded.w; source.height = decoded.h;
+        source.getContext('2d').drawImage(decoded.source, 0, 0, decoded.w, decoded.h);
+        const shape = summarizeInpaintMask(selectionState);
+        const selectionMask = buildSelectionMask(decoded.w, decoded.h);
+        const coverage = measuredCoverage(selectionMask);
+        if (coverage < 0.00001) throw new Error('Draw around the area to change first.');
+        const jobSpec = makeInpaintJobSpec({ width: decoded.w, height: decoded.h, selection: shape,
+          operation: mode.value, geometry: asset.geometry, execution: 'local', maskCoverage: coverage,
+          selectionKind: shape.kind });
+        const benchmark = createInpaintBenchmark(jobSpec);
+        benchmark.phase('local_3d_mapping');
+        const engineMask = buildEngineMask(selectionMask);
+        benchmark.phase('mask_preparation');
+        const operationPrompt = mode.value === 'remove'
+          ? `remove ${requested}; reconstruct the selected area as a coherent continuation of the surrounding scene, matching structure, perspective, repeated patterns, texture, depth, and environmental light; no blur, smudge, or empty patch`
+          : requested;
+        const avoid = mode.value === 'remove' ? [negative.value.trim(), requested].filter(Boolean).join(', ') : negative.value.trim();
+        const contextPixels = Math.max(8, Math.min(32, Math.round(Math.min(decoded.w, decoded.h) * 0.012)));
+        const result = await inpaintOne(await canvasBlob(source), `fill-source-${asset.id}.png`,
+          await canvasBlob(engineMask), `fill-mask-${asset.id}.png`, {
+            ckpt: model.value, prompt: operationPrompt, negative: avoid,
+            styleIntent: styleIntent.value,
+            denoise: Number(denoise.value), growMaskBy: contextPixels
+          }, () => { status.textContent = 'Creating candidate…'; }, base);
+        benchmark.phase('inpainting_request');
+        const blended = await blendInpaintMaskedCandidate(source, result.blob, selectionMask, 16);
+        const boundaryQuality = await assessInpaintMaskedBoundary(source, blended, selectionMask);
+        fillBoundaryQuality = boundaryQuality;
+        const file = new File([blended], `fill_${mode.value}_${result.seed}.png`, { type: 'image/png' });
+        const created = newAsset(state.project.id, file);
+        created.source = 'generated-fill-local';
+        created.inpaintJob = jobSpec;
+        created.inpaintBoundaryQuality = boundaryQuality;
+        if (boundaryQuality.status !== 'pass') created.labels = { ...created.labels, boundary_review: 'required' };
+        created.provenance = `Material Logic Generative Fill Beta (${mode.value}; seed ${result.seed}; ${styleIntent.value} style intent; ${shape.kind} selection; coverage ${coverage.toFixed(6)}; bounds ${JSON.stringify({ x:shape.x, y:shape.y, width:shape.width, height:shape.height })}). Source asset ${asset.id}. Prompt: ${requested.slice(0, 300)}`;
+        await store.addAsset(created, file);
+        const url = await store.objectUrl(created.id);
+        Object.assign(created, await probe(file, url));
+        log(created, `Generative Fill ${mode.value}`, state.reviewer);
+        await store.saveAsset(created); state.assets.push(created);
+        await runAnalysis(created, { quiet: true });
+        benchmark.phase('output_processing');
+        created.inpaintBenchmark = benchmark.finish();
+        await store.saveAsset(created);
+        state.assets = await store.listAssets(state.project.id);
+        state.index = Math.max(0, visibleAssets().findIndex(item => item.id === created.id));
+      });
+      closeDialog(); render(); toast(fillBoundaryQuality?.status === 'pass'
+        ? 'Generative Fill Beta candidate created — automated boundary continuity passed; complete human review.'
+        : 'Generative Fill Beta candidate created and flagged for boundary review.', fillBoundaryQuality?.status !== 'pass');
+    } catch (err) { status.textContent = `Failed: ${err.message}`; }
+    finally { run.disabled = false; }
+  });
+  dialog('Generative Fill Beta', body, [btn('Cancel', 'btn', closeDialog), run]);
+  requestAnimationFrame(paintPreview);
+}
+
 function editingBlock(asset) {
   const edit = ensureEditState(asset);
   const wrap = el('div', { className: 'block editor-block' });
@@ -1569,6 +2344,14 @@ function editingBlock(asset) {
       renderReview();
     };
     modes.append(b);
+  }
+  if (asset.kind === 'image') {
+    const fillButton = el('button', { type: 'button', className: 'editor-fill-tab' }, 'Generative Fill Beta');
+    fillButton.dataset.release = GENERATIVE_FILL_RELEASE;
+    fillButton.title = 'Beta feature; review every result before use.';
+    fillButton.setAttribute('aria-haspopup', 'dialog');
+    fillButton.onclick = () => generativeFillDialog(asset);
+    modes.append(fillButton);
   }
   wrap.append(modes, el('p', { className: 'hint editor-explainer' },
     edit.mode === 'guided'
@@ -1585,7 +2368,7 @@ function editingBlock(asset) {
     btn('Refined clarity', 'btn sm', () => applyPreset('Refined clarity', { exposure: 0.08, contrast: 8, vibrance: 10, sharpen: 8, blur: 0 })),
     btn('Warm editorial', 'btn sm', () => applyPreset('Warm editorial', { exposure: 0.04, contrast: 6, temperature: 12, tint: 2, vibrance: 6 })),
     btn('Neutral color match', 'btn sm', () => applyPreset('Neutral color match', { exposure: 0, contrast: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0 })),
-    btn('Reset adjustments', 'btn sm', () => applyPreset('reset', { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 }))
+    btn('Reset adjustments', 'btn sm', () => applyPreset('reset', { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 }))
   );
   wrap.append(presets);
 
@@ -1605,14 +2388,14 @@ function editingBlock(asset) {
     input.onchange = () => { log(asset, `${label} → ${input.value}`, state.reviewer); captured = false; };
     return el('label', { className: 'editor-slider' }, el('span', {}, label), input, readout);
   };
-  const controlGroup = (title, ...controls) => el('details', { className: 'editor-control-group', open: true },
+  const controlGroup = (title, ...controls) => el('details', { className: 'editor-control-group', name: 'photo-editor-controls' },
     el('summary', {}, title), el('div', { className: 'editor-control-body' }, ...controls));
 
   if (edit.mode === 'guided') {
     wrap.append(
-      el('h4', { className: 'editor-group-title' }, 'Essential adjustments'),
       slider('exposure', 'Light', -1, 1, 0.05), slider('contrast', 'Contrast', -50, 50),
-      slider('temperature', 'Warmth', -50, 50), slider('vibrance', 'Color', -50, 50));
+      slider('temperature', 'Warmth', -50, 50), slider('vibrance', 'Color', -50, 50),
+      slider('denoise', 'Noise cleanup', 0, 100));
   } else {
     wrap.append(
       controlGroup('Tone',
@@ -1622,7 +2405,8 @@ function editingBlock(asset) {
         slider('temperature', 'Temperature', -100, 100), slider('tint', 'Tint', -100, 100),
         slider('saturation', 'Saturation', -100, 100), slider('vibrance', 'Vibrance', -100, 100)),
       controlGroup('Detail and finishing',
-        slider('sharpen', 'Sharpening', 0, 100), slider('blur', 'Optical blur', 0, 20, 0.25),
+        slider('denoise', 'Noise reduction', 0, 100), slider('sharpen', 'Sharpening', 0, 100),
+        slider('blur', 'Optical blur', 0, 20, 0.25),
         slider('grain', 'Film grain', 0, 100), slider('vignette', 'Vignette', 0, 100)));
   }
 
@@ -1632,8 +2416,8 @@ function editingBlock(asset) {
     renderReview();
   };
   const diagnostic = el('div', { className: 'pixel-review-controls' },
-    el('label', { className: 'toggle' }, gridToggle, 'Spatial Continuity Review'),
-    el('p', { className: 'hint' }, 'Maps abrupt color and texture transitions across neighboring regions. Indicators direct closer inspection and never replace editorial judgment.'));
+    el('label', { className: 'toggle' }, gridToggle, 'Edge Check'),
+    el('p', { className: 'hint' }, 'Finds sudden changes in color or texture.'));
   if (edit.mode === 'advanced') {
     const columns = el('input', { type: 'range', min: 6, max: 32, step: 1, value: edit.pixelGrid.columns });
     const sensitivity = el('input', { type: 'range', min: 0, max: 100, step: 1, value: edit.pixelGrid.sensitivity });
@@ -1657,9 +2441,87 @@ function editingBlock(asset) {
   return wrap;
 }
 
+const REVIEW_RAIL_OPEN_KEY = 'mlx:review-tools-open';
+const REVIEW_RAIL_WIDTH_KEY = 'mlx:review-tools-width';
+const REVIEW_RAIL_DEFAULT_WIDTH = 372;
+const REVIEW_RAIL_MIN_WIDTH = 280;
+const REVIEW_RAIL_MAX_WIDTH = 560;
+
+function reviewRailIsOpen() {
+  const saved = localStorage.getItem(REVIEW_RAIL_OPEN_KEY);
+  if (saved !== null) return saved !== 'false';
+  return !matchMedia('(max-width: 900px)').matches;
+}
+
+function reviewRailWidth() {
+  const raw = localStorage.getItem(REVIEW_RAIL_WIDTH_KEY);
+  if (raw === null) return REVIEW_RAIL_DEFAULT_WIDTH;
+  const saved = Number(raw);
+  return Number.isFinite(saved)
+    ? Math.max(REVIEW_RAIL_MIN_WIDTH, Math.min(REVIEW_RAIL_MAX_WIDTH, saved))
+    : REVIEW_RAIL_DEFAULT_WIDTH;
+}
+
+function setReviewRailOpen(open) {
+  localStorage.setItem(REVIEW_RAIL_OPEN_KEY, String(open));
+  renderReview();
+}
+
+function attachReviewRailResize(rail, handle) {
+  const applyWidth = value => {
+    const available = Math.max(REVIEW_RAIL_MIN_WIDTH, Math.min(REVIEW_RAIL_MAX_WIDTH, innerWidth - 420));
+    const width = Math.max(REVIEW_RAIL_MIN_WIDTH, Math.min(available, Math.round(value)));
+    rail.style.setProperty('--review-rail-width', `${width}px`);
+    handle.setAttribute('aria-valuenow', String(width));
+    handle.setAttribute('aria-valuetext', `${width} pixels wide`);
+    localStorage.setItem(REVIEW_RAIL_WIDTH_KEY, String(width));
+  };
+  applyWidth(reviewRailWidth());
+  handle.onkeydown = event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Home') return applyWidth(REVIEW_RAIL_DEFAULT_WIDTH);
+    const step = event.shiftKey ? 48 : 16;
+    applyWidth(rail.getBoundingClientRect().width + (event.key === 'ArrowLeft' ? step : -step));
+  };
+  handle.ondblclick = () => applyWidth(REVIEW_RAIL_DEFAULT_WIDTH);
+  handle.onpointerdown = event => {
+    if (matchMedia('(max-width: 900px)').matches) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = rail.getBoundingClientRect().width;
+    handle.setPointerCapture(event.pointerId);
+    rail.classList.add('resizing');
+    handle.onpointermove = move => applyWidth(startWidth + startX - move.clientX);
+    handle.onpointerup = handle.onpointercancel = finish => {
+      if (handle.hasPointerCapture(finish.pointerId)) handle.releasePointerCapture(finish.pointerId);
+      handle.onpointermove = null;
+      handle.onpointerup = null;
+      handle.onpointercancel = null;
+      rail.classList.remove('resizing');
+    };
+  };
+}
+
 function renderRail(asset) {
-  const rail = el('div', { className: 'rail', id: 'rail' });
-  const surfaces = activeSurfaces();
+  const rail = el('aside', { className: 'rail', id: 'rail', ariaLabel: 'Review tools' });
+  const resizeHandle = el('div', {
+    className: 'rail-resizer', role: 'separator', tabIndex: 0,
+    ariaLabel: 'Resize Review tools', ariaOrientation: 'vertical',
+    ariaValueMin: REVIEW_RAIL_MIN_WIDTH, ariaValueMax: REVIEW_RAIL_MAX_WIDTH
+  });
+  attachReviewRailResize(rail, resizeHandle);
+  const railHeader = el('div', { className: 'rail-header' },
+    el('strong', {}, 'Review tools'),
+    el('span', { className: 'spacer' }),
+    btn('Close', 'btn sm rail-close', () => setReviewRailOpen(false)));
+  const surfaces = activeSurfaces().filter(surface => asset.kind === 'video' || surface.group !== 'tiktok');
+  const subsection = (title, detail, body, { open = false, badge = null, name = 'review-subsection' } = {}) => el('details', {
+    className: 'rail-subsection', name, open
+  }, el('summary', {},
+    el('span', { className: 'rail-section-label' }, el('span', {}, title), el('small', {}, detail)),
+    badge), body);
 
   const auto = assetIssues(asset, state.assets, state.project);
   const perPlacement = Object.keys(asset.placements || {})
@@ -1667,30 +2529,39 @@ function renderRail(asset) {
     .flatMap(sid => placementIssues(asset, sid, state.project).map(i => ({ ...i, surface: SURFACE_BY_ID[sid]?.label })));
   const all = [...auto, ...perPlacement].sort((a, b) => ({ block: 0, warn: 1, info: 2 })[a.level] - ({ block: 0, warn: 1, info: 2 })[b.level]);
 
-  // Keep the active editing surface first. Quality signals and placement
-  // decisions remain directly below it, so the most frequent controls never
-  // require a long rail scroll on a laptop display.
-  rail.append(el('h3', {}, `${asset.kind === 'video' ? 'Video' : 'Photo'} editor`));
-  rail.append(editingBlock(asset));
-  if (asset.kind === 'video') {
-    rail.append(el('h3', {}, 'Video production'));
-    rail.append(videoBlock(asset));
-  }
-
-  rail.append(el('h3', {}, 'Automated checks',
-    all.some(i => i.level === 'block') ? el('span', { className: 'chip rejected' }, 'blocking') : null));
-  rail.append(el('div', { className: 'block', id: 'issueBlock' }, issueList(all, 'Nothing flagged. Human review still required.')));
-
-  rail.append(el('h3', {}, 'Measurements'));
-  rail.append(metricsBlock(asset));
-
-  rail.append(el('h3', {}, 'Placements', el('span', { className: 'count' }, String(surfaces.length))));
+  let placementBody;
   if (!surfaces.length) {
-    rail.append(el('div', { className: 'block' }, el('p', { className: 'hint' }, 'No surfaces selected. Choose them in the Surfaces panel.')));
+    placementBody = el('div', { className: 'block' }, el('p', { className: 'hint' }, 'Choose placements in Workspace.'));
   } else {
-    const box = el('div', { className: 'block' });
-    for (const s of surfaces) box.append(placementCard(asset, s));
-    box.append(el('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' },
+    placementBody = el('div', { className: 'block' });
+    const categoryFor = surface => ['instagram', 'tiktok'].includes(surface.group)
+      ? ['social', 'Social media']
+      : ['meta', 'google'].includes(surface.group)
+        ? ['ads', 'Paid ads']
+        : [surface.group, surface.groupLabel];
+    const categories = new Map();
+    for (const surface of surfaces) {
+      const [categoryId, categoryLabel] = categoryFor(surface);
+      if (!categories.has(categoryId)) categories.set(categoryId, { label: categoryLabel, platforms: new Map() });
+      const platforms = categories.get(categoryId).platforms;
+      if (!platforms.has(surface.group)) platforms.set(surface.group, { label: surface.groupLabel, surfaces: [] });
+      platforms.get(surface.group).surfaces.push(surface);
+    }
+    for (const [categoryId, category] of categories) {
+      const categoryCount = [...category.platforms.values()].reduce((count, platform) => count + platform.surfaces.length, 0);
+      const categoryBody = el('div', { className: 'placement-group-body' });
+      for (const [platformId, platform] of category.platforms) {
+        const cards = el('div', { className: 'placement-platform-body' });
+        for (const surface of platform.surfaces) cards.append(placementCard(asset, surface));
+        categoryBody.append(el('details', { className: 'placement-platform', name: `placement-${categoryId}` },
+          el('summary', {}, el('span', {}, platform.label), el('small', {}, `${platform.surfaces.length} format${platform.surfaces.length === 1 ? '' : 's'}`)),
+          cards));
+      }
+      placementBody.append(el('details', { className: 'placement-group', name: 'placement-category' },
+        el('summary', {}, el('span', {}, category.label), el('small', {}, `${categoryCount} format${categoryCount === 1 ? '' : 's'}`)),
+        categoryBody));
+    }
+    placementBody.append(el('div', { style: 'display:flex;gap:6px;margin-top:8px;flex-wrap:wrap' },
       btn('Approve all', 'btn sm', () => {
         mutate(asset, 'approved every surface', () => {
           for (const s of surfaces) ensurePlacement(asset, s.id).decision = 'approved';
@@ -1706,20 +2577,63 @@ function renderRail(asset) {
         renderReview(); renderCounters();
       }),
       btn('Auto-reframe all', 'btn sm', () => reframeAll(asset))));
-    rail.append(box);
   }
+  const editPanel = el('div', { className: 'rail-tab-content' }, editingBlock(asset));
+  if (asset.kind === 'video') editPanel.append(subsection('Video production', 'Timing, sound, and rendering', videoBlock(asset), { open: true, name: 'edit-subsection' }));
 
-  rail.append(el('h3', {}, `QA — ${asset.kind === 'video' ? 'Video' : PRESET_BY_ID[state.project.qaPreset]?.label}`));
-  rail.append(qaBlock(asset));
+  const reviewPanel = el('div', { className: 'rail-tab-content' },
+    subsection('Automated checks', 'Items to review',
+      el('div', { className: 'block', id: 'issueBlock' }, issueList(all, 'Nothing flagged. Human review still required.')),
+      { open: true, badge: all.some(i => i.level === 'block') ? el('span', { className: 'chip rejected' }, 'blocking') : null }),
+    subsection('QA checklist', 'Optional review checklist', qaBlock(asset)));
 
-  rail.append(el('h3', {}, 'Fix list',
-    (asset.fixes || []).length ? el('span', { className: 'chip needs-retouch' }, String(asset.fixes.length)) : null));
-  rail.append(fixBlock(asset));
+  const fixesPanel = el('div', { className: 'rail-tab-content' }, fixBlock(asset));
+  const deliverPanel = el('div', { className: 'rail-tab-content' }, placementBody);
+  const detailsPanel = el('div', { className: 'rail-tab-content' },
+    subsection('Measurements', 'Resolution, color, and detail', metricsBlock(asset), { open: true, name: 'details-subsection' }),
+    subsection('Asset details', 'Rating, role, and notes', metaBlock(asset), { name: 'details-subsection' }),
+    subsection('Activity', 'Saved project history', logBlock(asset), { name: 'details-subsection' }));
 
-  rail.append(el('h3', {}, 'Asset'));
-  rail.append(metaBlock(asset));
-  rail.append(el('h3', {}, 'Audit trail'));
-  rail.append(logBlock(asset));
+  const definitions = [
+    ['edit', 'Edit', editPanel],
+    ['review', 'Review', reviewPanel],
+    ['fixes', 'Fixes', fixesPanel],
+    ['deliver', 'Deliver', deliverPanel],
+    ['details', 'Details', detailsPanel]
+  ];
+  const tabList = el('div', { className: 'rail-tabs', role: 'tablist', ariaLabel: 'Studio workflow' });
+  const tabs = [];
+  const panels = [];
+  const activate = index => {
+    tabs.forEach((tab, tabIndex) => {
+      const selected = tabIndex === index;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      panels[tabIndex].hidden = !selected;
+    });
+  };
+  definitions.forEach(([id, label, content], index) => {
+    const tabId = `review-tab-${id}`;
+    const panelId = `review-panel-${id}`;
+    const tab = el('button', { id: tabId, type: 'button', role: 'tab' }, label);
+    tab.setAttribute('aria-controls', panelId);
+    tab.onclick = () => { state.reviewRailTab = id; activate(index); };
+    tab.onkeydown = event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      state.reviewRailTab = definitions[next][0];
+      activate(next); tabs[next].focus();
+    };
+    const panel = el('section', { id: panelId, className: 'rail-tab-panel', role: 'tabpanel' }, content);
+    panel.setAttribute('aria-labelledby', tabId);
+    tabs.push(tab); panels.push(panel); tabList.append(tab);
+  });
+  const requestedTab = definitions.findIndex(([id]) => id === state.reviewRailTab);
+  activate(requestedTab >= 0 ? requestedTab : 0);
+  rail.append(resizeHandle, railHeader, tabList, ...panels);
   return rail;
 }
 
@@ -1772,7 +2686,7 @@ function directionWizard() {
   };
   card.append(
     field('campaignGoal', 'What is this campaign for?', 'e.g. App launch \u2014 paid social and website hero'),
-    el('div', { style: 'display:flex;gap:10px' },
+    el('div', { className: 'wizard-field-row' },
       (() => { const f = field('brand', 'Brand', 'Your brand'); f.style.flex = '1'; return f; })(),
       (() => { const f = field('audience', 'Audience', 'Who has to stop scrolling'); f.style.flex = '1'; return f; })()),
     field('tone', 'Tone', 'e.g. warm, editorial, quietly confident'));
@@ -1817,8 +2731,8 @@ function directionWizard() {
  * (Real-ESRGAN and friends), then re-measure the result like any other asset.
  */
 async function upscaleAsset(asset) {
-  // Prefer the zero-setup bridge (engine.py + the bundled Real-ESRGAN binary);
-  // fall back to a connected ComfyUI's upscale models.
+  // Prefer the local bridge: Real-ESRGAN on supported GPUs, with explicit CPU
+  // recovery. A connected ComfyUI remains the secondary local engine.
   const bridge = await detectBridge();
   let engine = null, models = [];
   if (bridge.ok && bridge.upscale?.available) {
@@ -1827,51 +2741,63 @@ async function upscaleAsset(asset) {
     const savedBase = localStorage.getItem('cros:comfyBase') || `http://${location.hostname}:8188`;
     engine = await detectComfy(savedBase);
     if (!engine.ok) {
-      return toast('No engine found. Start the bridge (python engine.py) or link ComfyUI in the Generate panel \u2014 upscaling runs on your own GPU.', true);
+      return toast('Photo enhancement is not ready on this device.', true);
     }
     try { models = await listUpscaleModels(engine.base); } catch { /* handled */ }
     if (!models.length) {
-      return toast('Engine found, but no upscale model installed. Drop RealESRGAN_x4plus.pth into ComfyUI\u2019s models/upscale_models folder.', true);
+      return toast('Add the Photo enhancement pack in Workspace, then try again.', true);
     }
   }
   const pick = el('select', {});
-  for (const m of models) pick.append(el('option', { value: m, selected: /x4plus$/.test(m) }, m));
-  dialog('Upscale on your GPU',
+  const preferredModel = models.find(m => /realesrgan-x4plus$/.test(m))
+    || models.find(m => /cpu-lanczos-x4$/.test(m))
+    || models[0];
+  for (const [index, m] of models.entries()) pick.append(el('option', {
+    value: m,
+    selected: m === preferredModel
+  }, `Enhancement quality ${index + 1}`));
+  dialog('Enhance photo',
     el('div', {},
       el('p', { className: 'hint' },
-        `${asset.filename} \u00b7 ${asset.width}\u00d7${asset.height}. The result imports as a new linked asset, runs the same checks, and records provenance.`),
-      !covers(lic, 'review') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
-        'Free preview lane: 2× model. A license unlocks the full 4× lane.') : null,
-      el('label', { className: 'field' }, el('span', {}, 'Upscale model'), pick)),
+        'Choose the final size; Material Logic will add a linked copy and check it automatically.'),
+      !covers(lic, 'photo') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
+        'Preview supports 2×; licensed Photo plans unlock 4×.') : null,
+      el('label', { className: 'field' }, el('span', {}, 'Quality'), pick)),
     [btn('Cancel', 'btn', closeDialog),
      btn('Upscale', 'btn primary', async () => {
        const model = pick.value;
        closeDialog();
+       const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
+       if (!authorization.ok) return toast(`Online upscale authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+       let completedEngine = '';
        try {
          await busy(async () => {
-           toast('Upscaling on the engine\u2026');
+           toast('Enhancing photo\u2026');
            const blob = await store.getBlob(asset.id);
            const out = engine
              ? await upscaleOne(blob, asset.filename, model, () => {}, engine.base)
              : await upscaleViaBridge(blob, model);
+           completedEngine = engine ? 'the ComfyUI engine' : localUpscaleEngineLabel(out.engine);
+           await settleOutbound(authorization.authorization.id, await blobEvidenceHash(out.blob));
            const file = new File([out.blob], asset.filename.replace(/(\.[a-z0-9]+)?$/i, '_up$1'), { type: out.blob.type || 'image/png' });
            const up = newAsset(state.project.id, file);
            up.labels = { ...asset.labels };
            up.altText = asset.altText;
-           up.provenance = `Upscaled from ${asset.filename} with ${model} on ${engine ? 'the ComfyUI engine' : 'the local Real-ESRGAN bridge'}. ` + (asset.provenance || '');
+           up.provenance = `Upscaled from ${asset.filename} with ${model} on ${completedEngine}. ` + (asset.provenance || '');
            await store.addAsset(up, file);
            const url = await store.objectUrl(up.id);
            Object.assign(up, await probe(file, url));
-           log(up, `upscaled from ${asset.filename} (${model})`, state.reviewer);
+           log(up, 'enhanced photo', state.reviewer);
            await store.saveAsset(up);
            state.assets.push(up);
            await runAnalysis(up, { quiet: true });
          });
          state.assets = await store.listAssets(state.project.id);
          render();
-         toast('Upscaled and re-measured \u2014 the new asset is in the library.');
+         toast('Enhanced photo added to Library.');
        } catch (err) {
-         toast('Upscale failed: ' + err.message, true);
+         const release = await releaseUsage(authorization.authorization.id, 'render_failed');
+         toast(`Upscale failed: ${err.message}. ${release.message}`, true);
        }
      })]);
 }
@@ -1932,14 +2858,14 @@ function renderReview() {
   const assets = visibleAssets();
 
   if (!state.assets.length) {
-    if (!state.project.brief.campaignGoal) {
-      main.replaceChildren(el('div', { className: 'empty' }, directionWizard()));
-    } else {
-      main.replaceChildren(el('div', { className: 'empty' },
-        el('h2', {}, 'Direction set \u2014 now the assets'),
-        el('p', {}, `${state.project.brief.campaignGoal}. Drop stills or video anywhere on this window, or generate candidates from the Generate panel. Files stay on this machine.`),
-        btn('Add files', 'btn primary', () => $('#fileInput').click())));
-    }
+    main.replaceChildren(el('div', { className: 'empty photo-start-view' },
+      el('span', { className: 'eyebrow' }, 'Photo Studio'),
+      el('h2', {}, 'Create or open a photo'),
+      el('p', {}, 'Generate something new or bring in a photo, then Studio checks people before you edit.'),
+      el('div', { className: 'photo-start-actions' },
+        btn('Generate photo', 'btn primary', openPhotoCreation),
+        btn('Import photo or video', 'btn', () => $('#fileInput').click())),
+      photoWorkflowSteps(1)));
     return;
   }
   if (!assets.length) {
@@ -1957,16 +2883,14 @@ function renderReview() {
   const surface = SURFACE_BY_ID[state.activeSurface];
 
   const head = el('div', { className: 'stage-head' },
-    aria(btn('←', 'btn sm', () => { state.index = (state.index - 1 + assets.length) % assets.length; renderReview(); }), 'Previous asset'),
-    aria(btn('→', 'btn sm', () => { state.index = (state.index + 1) % assets.length; renderReview(); }), 'Next asset'),
+    btn('← Previous', 'btn sm', () => { state.index = (state.index - 1 + assets.length) % assets.length; renderReview(); }),
+    btn('Next →', 'btn sm', () => { state.index = (state.index + 1) % assets.length; renderReview(); }),
     el('span', { className: 'idx' }, `${state.index + 1} / ${assets.length}`),
-    el('span', { className: 'title' }, asset.filename),
-    el('span', { className: 'dims' }, asset.width ? `${asset.width}×${asset.height}` : '—'),
     el('span', { className: 'chip ' + asset.status }, STATUS_BY_ID[asset.status]?.label || asset.status),
     el('div', { className: 'spacer' }),
     (() => {
       const seg = el('div', { className: 'seg' });
-      for (const [v, label] of [['placement', 'Placement'], ['source', 'Full source'], ['compare', 'Compare']]) {
+      for (const [v, label] of [['source', 'Full source'], ['placement', 'Placement'], ['compare', 'Compare']]) {
         const b = el('button', { className: state.view === v ? 'on' : '' }, label);
         b.onclick = () => { state.view = v; renderReview(); };
         seg.append(b);
@@ -1995,7 +2919,14 @@ function renderReview() {
     stageBody = el('div', { className: 'stage' }, head, el('div', { className: 'viewport', id: 'viewport' }), stageTools(asset, surface, surfaces));
   }
 
-  main.replaceChildren(el('div', { className: 'review' }, stageBody, renderRail(asset)));
+  const rail = renderRail(asset);
+  const railOpen = reviewRailIsOpen();
+  rail.hidden = !railOpen;
+  const railToggle = btn('Review tools', 'btn sm review-rail-toggle', () => setReviewRailOpen(true));
+  railToggle.hidden = railOpen;
+  railToggle.setAttribute('aria-controls', 'rail');
+  railToggle.setAttribute('aria-expanded', String(railOpen));
+  main.replaceChildren(el('div', { className: 'review' }, stageBody, railToggle, rail));
   if (state.view !== 'compare') paintStage();
 }
 
@@ -2009,7 +2940,15 @@ function stageTools(asset, surface, surfaces) {
   const fills = el('div', { className: 'seg' });
   for (const [v, label] of [['crop', 'Crop'], ['blur', 'Blur fill'], ['contain', 'Letterbox']]) {
     const b = el('button', { className: p.fill === v ? 'on' : '' }, label);
-    b.onclick = () => { mutate(asset, `${surface.label} fill → ${label}`, () => { p.fill = v; }); renderReview(); };
+    b.onclick = () => {
+      mutate(asset, `${surface.label} fill → ${label}`, () => {
+        p.fill = v;
+        p.crop = v === 'crop' && asset.width && asset.height
+          ? defaultCrop(asset.width, asset.height, surface)
+          : { x: 0, y: 0, w: 1, h: 1 };
+      });
+      renderReview();
+    };
     fills.append(b);
   }
   const loupeBtn = btn('Loupe', 'btn sm' + (state.loupe ? ' on' : ''), () => {
@@ -2018,25 +2957,28 @@ function stageTools(asset, surface, surfaces) {
     renderReview();
   });
   const thirdsBtn = btn('Thirds', 'btn sm' + (state.thirds ? ' on' : ''), () => { state.thirds = !state.thirds; renderReview(); });
+  const zoomOutBtn = btn('Zoom out', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1 / 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); });
+  const zoomInBtn = btn('Zoom in', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); });
+  const resetBtn = btn('Reset view', 'btn sm', () => {
+    p.crop = asset.width ? defaultCrop(asset.width, asset.height, surface) : { x: 0, y: 0, w: 1, h: 1 };
+    touchAsset(asset); paintStage(); renderIssuesOnly();
+  });
+  const autoBtn = btn('Auto-reframe', 'btn sm', () => {
+    if (!asset.auto?.energy) return toast('Run automated checks first.', true);
+    mutate(asset, `auto-reframed ${surface.label}`, () => {
+      p.crop = smartCrop(asset.auto.energy, asset.width, asset.height, surface, defaultCrop(asset.width, asset.height, surface), asset.geometry?.faces || []);
+    });
+    renderReview();
+  });
+  const viewMenu = el('details', { className: 'stage-tool-menu' },
+    el('summary', { className: 'btn sm' }, 'View options'),
+    el('div', { className: 'stage-tool-menu-body' }, fills, loupeBtn, thirdsBtn));
 
   tools.append(
     el('span', { className: 'note' }, `${surface.groupLabel} · ${surface.label}`),
-    aria(btn('−', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1 / 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); }), 'Zoom out'),
-    aria(btn('+', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); }), 'Zoom in'),
-    btn('Reset', 'btn sm', () => {
-      p.crop = asset.width ? defaultCrop(asset.width, asset.height, surface) : { x: 0, y: 0, w: 1, h: 1 };
-      touchAsset(asset); paintStage(); renderIssuesOnly();
-    }),
-    btn('Auto-reframe', 'btn sm', () => {
-      if (!asset.auto?.energy) return toast('Run automated checks first.', true);
-      mutate(asset, `auto-reframed ${surface.label}`, () => {
-        p.crop = smartCrop(asset.auto.energy, asset.width, asset.height, surface, defaultCrop(asset.width, asset.height, surface), asset.geometry?.faces || []);
-      });
-      renderReview();
-    }),
-    fills, loupeBtn, thirdsBtn,
+    resetBtn, zoomOutBtn, zoomInBtn, autoBtn, viewMenu,
     el('div', { className: 'spacer' }),
-    el('span', { className: 'note' }, surface.note || 'Drag to reframe · scroll to zoom'),
+    el('span', { className: 'note direct-help' }, 'Grab picture to move · trackpad scroll to zoom · arrows nudge · 0 resets'),
     el('span', { className: 'kbd' }, 'A R D'),
     el('span', { className: 'kbd' }, '?'));
   return tools;
@@ -2085,23 +3027,114 @@ function preflightDialog(onProceed) {
   ]);
 }
 
+async function openPrintDelivery() {
+  const asset = currentAsset();
+  if (!asset || asset.kind !== 'image') return toast('Select a photo first.', true);
+  const decoded = await decode(asset);
+  if (!decoded) return toast('That photo could not be prepared.', true);
+  if (!asset.auto?.color) await runAnalysis(asset, { quiet: true });
+
+  const preset = el('select', {});
+  for (const option of PRINT_PRESETS) preset.append(el('option', {
+    value: option.id, selected: option.id === '8x10'
+  }, option.label));
+  const orientation = el('select', {},
+    el('option', { value: 'portrait' }, 'Portrait'),
+    el('option', { value: 'landscape' }, 'Landscape'));
+  const fit = el('select', {},
+    el('option', { value: 'crop' }, 'Fill · centered crop'),
+    el('option', { value: 'contain' }, 'Fit · white border'));
+  const bleed = el('input', { type: 'checkbox' });
+  const summary = el('div', { className: 'block', ariaLive: 'polite' });
+  const status = el('p', { className: 'hint', role: 'status', ariaLive: 'polite' });
+  const download = btn('Download print JPEG', 'btn primary');
+  let currentPlan = null;
+
+  const update = () => {
+    currentPlan = planPrint({
+      presetId: preset.value, orientation: orientation.value, fit: fit.value,
+      bleed: bleed.checked, sourceWidth: decoded.w, sourceHeight: decoded.h, ppi: PRINT_PPI
+    });
+    const color = printColorDecision(asset.auto?.color || {});
+    const qualityText = currentPlan.quality === 'ready'
+      ? 'Ready at 300 PPI.'
+      : currentPlan.quality === 'review'
+        ? `Review recommended at ${currentPlan.effectivePpi} effective PPI.`
+        : `Source is too small at ${currentPlan.effectivePpi} effective PPI.`;
+    summary.replaceChildren(
+      el('p', {}, `${currentPlan.pixelWidth} × ${currentPlan.pixelHeight} px · ${currentPlan.ppi} PPI · sRGB JPEG`),
+      el('p', { className: 'hint', style: 'margin-top:6px' },
+        `${qualityText}${currentPlan.bleedInches ? ' Includes 0.125 in bleed.' : ''}`),
+      !color.allowed ? el('p', { style: 'color:var(--bad);margin-top:6px' },
+        'This photo needs an accepted sRGB conversion before print delivery.') : null);
+    download.disabled = !currentPlan.canExport || !color.allowed;
+    status.textContent = download.disabled ? 'Choose a smaller print size or prepare the color first.' : '';
+  };
+
+  for (const control of [preset, orientation, fit, bleed]) control.onchange = update;
+  download.onclick = async () => {
+    const lic = await activeLicense();
+    if (!covers(lic, 'photo')) {
+      return dialog('A Photo license is required to download',
+        el('p', {}, 'Activate Photo Single Studio or Full Studio in Deliver, then reconnect for usage confirmation.'),
+        [btn('Close', 'btn primary', closeDialog)]);
+    }
+    download.disabled = true;
+    status.style.color = '';
+    status.textContent = 'Preparing your print…';
+    let authorizationId = null;
+    try {
+      const canvas = await busy(() => renderPrint(decoded.source, decoded.w, decoded.h,
+        currentPlan, ensureEditState(asset).adjustments));
+      const bytes = encodePrintJpeg(canvas, currentPlan.ppi);
+      const blob = new Blob([bytes], { type: 'image/jpeg' });
+      const evidenceHash = await blobEvidenceHash(blob);
+      const authorization = await authorizeOutbound({
+        product: 'photo', artifactKind: 'clean_export', quantity: 1, operationId: evidenceHash
+      });
+      if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');
+      authorizationId = authorization.authorization.id;
+      const stem = slug(String(asset.filename || 'photo').replace(/\.[^.]+$/, ''));
+      const suffix = `${currentPlan.presetId}-${currentPlan.orientation}-${currentPlan.ppi}ppi`;
+      await settleOutboundBeforeDelivery(authorizationId, evidenceHash,
+        () => downloadBlob(blob, `${stem}-${suffix}.jpg`));
+      status.textContent = `Downloaded ${currentPlan.pixelWidth} × ${currentPlan.pixelHeight} px at ${currentPlan.ppi} PPI.`;
+    } catch (error) {
+      const release = authorizationId ? await releaseUsage(authorizationId, 'print_export_failed') : null;
+      status.textContent = `Print was not downloaded: ${error.message}.${release ? ` ${release.message}` : ''}`;
+      status.style.color = 'var(--bad)';
+    } finally {
+      download.disabled = !currentPlan?.canExport || !printColorDecision(asset.auto?.color || {}).allowed;
+    }
+  };
+
+  const body = el('div', {},
+    el('p', { className: 'hint' }, 'Choose the finished size; Material Logic preserves the photo proportions.'),
+    el('label', { className: 'field' }, el('span', {}, 'Print size'), preset),
+    el('label', { className: 'field' }, el('span', {}, 'Orientation'), orientation),
+    el('label', { className: 'field' }, el('span', {}, 'Framing'), fit),
+    el('label', { className: 'toggle' }, bleed, 'Add 0.125 in bleed'),
+    summary, status);
+  update();
+  dialog('Print-ready photo', body, [btn('Cancel', 'btn', closeDialog), download]);
+}
+
 async function doExport(exportOpts = {}) {
   if (!state.project) return;
   if (!approvedPairs(state.assets).length) return toast('Nothing approved yet \u2014 approve at least one placement.', true);
-  if (!exportOpts.proof) {
-    const lic = await activeLicense();
-    if (!covers(lic, 'review')) {
-      return dialog('Clean export is a licensed feature',
-        el('div', {},
-          el('p', {}, 'The free plan exports proof packages \u2014 full-frame watermark, capped resolution \u2014 which are perfect for internal review and client sign-off.'),
-          el('p', { className: 'hint', style: 'margin-top:10px' },
-            'A Review or Complete license unlocks clean, full-resolution packages. Enter your key in the Deliver panel, or get one from the pricing page.')),
-        [btn('Export a proof instead', 'btn', () => { closeDialog(); doExport({ proof: true }); }),
-         btn('Close', 'btn primary', closeDialog)]);
-    }
+  const product = state.assets.some(asset => asset.kind === 'video') ? 'video' : 'photo';
+  const lic = await activeLicense();
+  if (!covers(lic, product)) {
+    return dialog('A matching license is required to download',
+      el('div', {},
+        el('p', {}, 'Free preview lets you edit, compare, and review inside Material Logic. It does not create downloadable files.'),
+        el('p', { className: 'hint', style: 'margin-top:10px' },
+          `Activate a ${product === 'video' ? 'Video' : 'Photo'} Single Studio or Full Studio license in Deliver, then reconnect for usage confirmation.`)),
+      [btn('Close', 'btn primary', closeDialog)]);
   }
   preflightDialog(async () => {
     const pairs = approvedPairs(state.assets);
+    let authorizationId = null;
     const bar = el('i');
     const status = el('p', {}, `Rendering ${pairs.length} placement(s)…`);
     dialog(exportOpts.proof ? 'Export proof package — watermarked, 960px' : 'Export campaign package',
@@ -2118,13 +3151,23 @@ async function doExport(exportOpts = {}) {
           status.textContent = `Rendering ${done} / ${total} — ${name}`;
           bar.style.width = `${(done / total) * 100}%`;
         }, extra, exportOpts));
-      downloadBlob(blob, filename);
+      const evidenceHash = await blobEvidenceHash(blob);
+      const authorization = await authorizeOutbound({
+        product,
+        artifactKind: exportOpts.proof ? 'proof_export' : 'clean_export',
+        quantity: pairs.length,
+        operationId: evidenceHash
+      });
+      if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');
+      authorizationId = authorization.authorization.id;
+      await settleOutboundBeforeDelivery(authorizationId, evidenceHash, () => downloadBlob(blob, filename));
       status.textContent = `Done — ${stats.placements} placement(s), ${stats.files} files, ${(blob.size / 1048576).toFixed(1)} MB.`;
       if (stats.failures.length) {
         status.after(el('p', { style: 'color:var(--warn)' }, `${stats.failures.length} render(s) failed. See EXPORT_WARNINGS.txt inside the zip.`));
       }
     } catch (err) {
-      status.textContent = 'Export failed: ' + err.message;
+      const release = authorizationId ? await releaseUsage(authorizationId, 'export_failed') : null;
+      status.textContent = `Export was not downloaded: ${err.message}.${release ? ` ${release.message}` : ''}`;
       status.style.color = 'var(--bad)';
     }
   });
@@ -2149,16 +3192,22 @@ async function exportClientPage() {
   dialog('Client review page', el('div', {}, status, el('div', { className: 'progress' }, bar),
     el('p', { className: 'hint' }, 'One HTML file with the images embedded. Email it. The client approves in their own browser and sends back a small JSON file you import here. No hosting, no accounts.')),
     [btn('Close', 'btn', closeDialog)]);
+  let authorization = null;
   try {
     const html = await busy(() => buildClientPage(state.project, state.assets, (n, total, name) => {
       status.textContent = `Embedding ${n} / ${total} — ${name}`;
       bar.style.width = `${(n / total) * 100}%`;
     }));
     const blob = new Blob([html], { type: 'text/html' });
-    downloadBlob(blob, `${slug(state.project.name)}-client-review.html`);
+    const evidenceHash = await blobEvidenceHash(blob);
+    authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'client_review', quantity: pairs.length, operationId: evidenceHash });
+    if (!authorization.ok) throw new Error(authorization.reason || 'online_authorization_required');
+    await settleOutboundBeforeDelivery(authorization.authorization.id, evidenceHash,
+      () => downloadBlob(blob, `${slug(state.project.name)}-client-review.html`));
     status.textContent = `Done — ${(blob.size / 1048576).toFixed(1)} MB, ${pairs.length} placement(s).`;
   } catch (err) {
-    status.textContent = 'Failed: ' + err.message;
+    const release = authorization?.ok ? await releaseUsage(authorization.authorization.id, 'export_failed') : null;
+    status.textContent = `Not downloaded: ${err.message}.${release ? ` ${release.message}` : ''}`;
     status.style.color = 'var(--bad)';
   }
 }
@@ -2178,6 +3227,9 @@ async function importVerdict(file) {
 async function exportContactSheet() {
   const pairs = approvedPairs(state.assets);
   if (!pairs.length) return toast('Nothing approved yet.', true);
+  const colorBlock = pairs.map(pair => ({ asset: pair.asset, decision: colorExportDecision(pair.asset.auto?.color || {}) }))
+    .find(entry => !entry.decision.allowed);
+  if (colorBlock) return toast(`${colorBlock.asset.filename} needs an accepted color conversion before export.`, true);
   const COLS = 4, CELL = 420, PAD = 24, LABEL = 46;
   const rows = Math.ceil(pairs.length / COLS);
   const canvas = el('canvas', { width: COLS * CELL + PAD * (COLS + 1), height: rows * (CELL + LABEL) + PAD * (rows + 1) + 90 });
@@ -2210,9 +3262,19 @@ async function exportContactSheet() {
     ctx.fillStyle = '#8b857c';
     ctx.fillText(`${asset.filename}`.slice(0, 52), x, y + CELL + 34);
   }
-  canvas.toBlob(b => {
-    downloadBlob(b, `${slug(state.project.name)}-contact-sheet.png`);
-    toast('Contact sheet saved.');
+  canvas.toBlob(async b => {
+    if (!b) return toast('Contact sheet rendering failed before authorization.', true);
+    const evidenceHash = await blobEvidenceHash(b);
+    const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'contact_sheet', quantity: pairs.length, operationId: evidenceHash });
+    if (!authorization.ok) return toast(`Online export authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+    try {
+      await settleOutboundBeforeDelivery(authorization.authorization.id, evidenceHash,
+        () => downloadBlob(b, `${slug(state.project.name)}-contact-sheet.png`));
+      toast('Contact sheet saved.');
+    } catch (error) {
+      const release = await releaseUsage(authorization.authorization.id, 'export_failed');
+      toast(`Contact sheet was not downloaded: ${error.message}. ${release.message}`, true);
+    }
   }, 'image/png');
 }
 
@@ -2308,10 +3370,31 @@ function wire() {
     ]);
   };
   document.querySelectorAll('#modeSeg button').forEach(b => {
-    b.onclick = () => { state.mode = b.dataset.mode; render(); };
+    b.onclick = () => {
+      state.mode = b.dataset.mode;
+      document.querySelector('.topbar-more')?.removeAttribute('open');
+      render();
+    };
   });
-  $('#menuBtn').onclick = e => { e.stopPropagation(); $('#sidebar').classList.toggle('open'); };
-  $('#main').addEventListener('pointerdown', () => $('#sidebar').classList.remove('open'));
+  const settingsButton = $('#menuBtn');
+  const settingsPanel = $('#sidebar');
+  settingsButton.textContent = 'Create';
+  settingsButton.setAttribute('aria-label', 'Create or open');
+  settingsPanel.classList.remove('open');
+  settingsPanel.classList.add('closed');
+  settingsButton.setAttribute('aria-expanded', 'false');
+  settingsButton.onclick = e => {
+    e.stopPropagation();
+    const open = settingsPanel.classList.contains('closed');
+    settingsPanel.classList.toggle('closed', !open);
+    settingsPanel.classList.toggle('open', open);
+    settingsButton.setAttribute('aria-expanded', String(open));
+  };
+  $('#main').addEventListener('pointerdown', () => {
+    settingsPanel.classList.remove('open');
+    settingsPanel.classList.add('closed');
+    settingsButton.setAttribute('aria-expanded', 'false');
+  });
 
   $('#themeBtn').onclick = () => {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
@@ -2320,6 +3403,7 @@ function wire() {
   };
 
   $('#exportBtn').onclick = doExport;
+  $('#exportMoreBtn').onclick = () => { document.querySelector('.topbar-more')?.removeAttribute('open'); doExport(); };
   $('#helpBtn').onclick = showHelp;
   $('#fileInput').onchange = e => { importFiles(e.target.files); e.target.value = ''; };
   $('#recoveryInput').onchange = e => { const f = e.target.files?.[0]; if (f) restoreProject(f); e.target.value = ''; };
@@ -2341,6 +3425,14 @@ function wire() {
   });
 
   window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !settingsPanel.classList.contains('closed')) {
+      settingsPanel.classList.remove('open');
+      settingsPanel.classList.add('closed');
+      settingsButton.setAttribute('aria-expanded', 'false');
+      settingsButton.focus();
+      e.preventDefault();
+      return;
+    }
     if (e.target.matches('input, textarea, select')) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return undo(); }
     if ($('#dlg').open) return;
@@ -2391,7 +3483,7 @@ if (['localhost', '127.0.0.1', '::1'].includes(location.hostname) && new URLSear
   window.__cros = {
     state, render, importFiles, runAnalysis, reframeAll, decidePlacement,
     preflight: () => preflight(state.project, state.assets),
-    issueCount, visibleAssets, ensurePlacement
+    issueCount, visibleAssets, ensurePlacement, generativeFillDialog, backupProject
   };
 }
 

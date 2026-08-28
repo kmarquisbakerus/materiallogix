@@ -1,1 +1,77 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow,noarchive"><meta http-equiv="refresh" content="0;url=/"><title>MaterialLogix Studio</title></head><body><p><a href="/">MaterialLogix Studio is preparing its complete release.</a></p></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Material Logic Studio — create, refine, and deliver</title>
+<meta name="description" content="Professional photo finishing, video production, and voice direction in one creative studio.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
+<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/studio-entry.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <button class="btn sm" type="button" id="menuBtn" aria-label="Create or open" aria-controls="sidebar" aria-expanded="false">Create</button>
+    <a class="brand" href="#studio-entry" aria-label="Material Logic Studio home">
+      <strong><span class="brand-material">Material</span><span class="brand-logix">Logix</span><span class="brand-studio">Studio</span></strong>
+    </a>
+    <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../">Material Logic</a><span>/</span><a href="./">Studio</a><span>/</span><b>Review</b></nav>
+    <select id="projectSelect" aria-label="Project"></select>
+    <button class="btn sm" type="button" id="newProject">New</button>
+    <div class="spacer"></div>
+    <button class="btn sm activity-toggle" type="button" aria-controls="activityRail" aria-expanded="false">Jobs</button>
+    <div class="counters" id="counters" role="status" aria-live="polite" aria-label="Project totals"></div>
+    <details class="topbar-more">
+      <summary>More</summary>
+      <div class="topbar-more-menu">
+        <span class="eyebrow">Workspace</span>
+        <div class="seg" id="modeSeg">
+          <button data-mode="review" class="on">Review</button>
+          <button data-mode="board">Board</button>
+        </div>
+        <button class="btn sm" type="button" id="themeBtn">Light / dark</button>
+        <button class="btn sm" type="button" id="helpBtn">Keyboard shortcuts</button>
+        <button class="btn sm mobile-export" type="button" id="exportMoreBtn">Export</button>
+      </div>
+    </details>
+    <button class="btn primary" id="exportBtn">Export</button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="Project workspace"></aside>
+    <main class="stage-wrap" id="main"></main>
+    <aside class="activity-rail" id="activityRail" aria-label="Jobs, execution location, progress, and usage"></aside>
+  </div>
+</div>
+
+<input type="file" id="fileInput" multiple accept="image/*,video/*" hidden>
+<input type="file" id="brandAssetInput" multiple accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg" hidden>
+<input type="file" id="verdictInput" accept="application/json,.json" hidden>
+<input type="file" id="recoveryInput" accept="application/zip,.zip" hidden>
+
+<dialog id="dlg">
+  <div class="dlg-head" id="dlgTitle"></div>
+  <div class="dlg-body" id="dlgBody"></div>
+  <div class="dlg-foot" id="dlgFoot"></div>
+</dialog>
+
+<script type="module" src="js/studio-nav.js"></script>
+<script type="module" src="js/activity.js?v=10"></script>
+<script type="module" src="js/bootstrap.js"></script>
+<script type="module" src="js/studio-entry.js"></script>
+<script>
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js');
+}
+</script>
+</body>
+</html>

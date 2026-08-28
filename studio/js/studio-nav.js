@@ -41,7 +41,7 @@ async function enforceAccessBoundary() {
 
   const gate = document.createElement('div');
   gate.id = 'mlPreviewGate';
-  gate.innerHTML = `<div class="gate-card"><div class="eyebrow">Verified access required</div><h1>MaterialLogix Studio</h1><p>This production workspace requires a server-verified account session. No browser-side password can unlock it.</p><a href="/?access=required">Return to MaterialLogix</a></div>`;
+  gate.innerHTML = `<div class="gate-card"><div class="eyebrow">Sign in to continue</div><h1>Choose your Studio.</h1><p>Secure sign-in is available on the published product. This public preview does not collect sign-in details; use it to choose Photo, Video, or Voice.</p><a href="${new URL('./?demo=1', location.href).href}">View Free Preview</a></div>`;
   document.body.append(gate);
 
   const app = document.querySelector('#app');

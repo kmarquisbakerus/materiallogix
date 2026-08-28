@@ -51,6 +51,8 @@ export const SURFACE_GROUPS = [
     id: 'google',
     label: 'Google Display',
     surfaces: [
+      { id: 'gd-responsive-landscape', label: 'Responsive landscape 1.91:1', w: 1200, h: 628, note: 'Keep the image free of overlaid logos, buttons, and repeated headline text.' },
+      { id: 'gd-responsive-vertical', label: 'Responsive vertical 9:16', w: 900, h: 1600, note: 'Google may crop or recombine this asset. Keep the subject clear and central.' },
       { id: 'gd-leaderboard', label: 'Leaderboard', w: 728, h: 90, note: 'Extreme crop. Usually needs its own composition.' },
       { id: 'gd-mpu', label: 'Medium rectangle', w: 300, h: 250 },
       { id: 'gd-halfpage', label: 'Half page', w: 300, h: 600 },
@@ -126,7 +128,8 @@ export const QA_CHECKS = [
   { id: 'hands', label: 'Hands, fingers, nails', ask: 'Correct count, joints, and nail shape?', group: 'Anatomy' },
   { id: 'teeth-eyes', label: 'Teeth and eyes', ask: 'Symmetrical catchlights, believable teeth, matching pupils?', group: 'Anatomy' },
   { id: 'body', label: 'Body physics', ask: 'Limbs, posture, and weight make physical sense?', group: 'Anatomy' },
-  { id: 'wardrobe', label: 'Wardrobe', ask: 'Seams, buttons, straps, and drape hold up on zoom?', group: 'Detail' },
+  { id: 'wardrobe', label: 'Fabric and wardrobe', ask: 'Do weave, texture, sheen, weight, drape, seams, buttons, and straps look physically believable on zoom?', group: 'Detail' },
+  { id: 'materials-light', label: 'Materials and environmental light', ask: 'Do surfaces, contact shadows, reflections, and light direction agree across the whole image?', group: 'Detail' },
   { id: 'jewelry', label: 'Jewelry and tattoos', ask: 'Consistent with the reference, not melted or duplicated?', group: 'Detail' },
   { id: 'background', label: 'Background integrity', ask: 'No warped text, repeated objects, or broken geometry?', group: 'Detail' },
   { id: 'crop-mobile', label: 'Mobile crop safety', ask: 'Survives a 9:16 crop with UI overlays?', group: 'Placement' },
@@ -141,9 +144,9 @@ export const QA_BY_ID = Object.fromEntries(QA_CHECKS.map(c => [c.id, c]));
 
 export const QA_PRESETS = [
   { id: 'human', label: 'Person in frame', checks: QA_CHECKS.map(c => c.id) },
-  { id: 'product', label: 'Product / scene', checks: ['skin', 'background', 'crop-mobile', 'crop-desktop', 'brand', 'policy', 'alt', 'rights'] },
-  { id: 'video', label: 'Video', checks: ['identity', 'face', 'hair', 'skin', 'naturalism', 'hands', 'body', 'wardrobe', 'background', 'crop-mobile', 'brand', 'policy', 'alt', 'rights'] },
-  { id: 'quick', label: 'Quick pass', checks: ['identity', 'naturalism', 'hands', 'crop-mobile', 'brand', 'policy'] }
+  { id: 'product', label: 'Product / scene', checks: ['skin', 'naturalism', 'wardrobe', 'materials-light', 'background', 'crop-mobile', 'crop-desktop', 'brand', 'policy', 'alt', 'rights'] },
+  { id: 'video', label: 'Video', checks: ['identity', 'face', 'hair', 'skin', 'naturalism', 'hands', 'body', 'wardrobe', 'materials-light', 'background', 'crop-mobile', 'brand', 'policy', 'alt', 'rights'] },
+  { id: 'quick', label: 'Quick pass', checks: ['identity', 'skin', 'naturalism', 'hands', 'wardrobe', 'materials-light', 'crop-mobile', 'brand', 'policy'] }
 ];
 
 export const PRESET_BY_ID = Object.fromEntries(QA_PRESETS.map(p => [p.id, p]));
@@ -183,11 +186,11 @@ export const SURFACE_PRESETS = [
 // Generation providers. Placeholders only: nothing is called in this build.
 
 export const PROVIDERS = [
-  { id: 'replicate', label: 'Replicate', kind: 'Images', env: 'REPLICATE_API_TOKEN' },
-  { id: 'fal', label: 'fal', kind: 'Images', env: 'FAL_KEY' },
-  { id: 'runway', label: 'Runway', kind: 'Video', env: 'RUNWAY_API_KEY' },
-  { id: 'higgsfield', label: 'Higgsfield', kind: 'Video', env: 'HIGGSFIELD_API_KEY' },
-  { id: 'openai', label: 'OpenAI', kind: 'Brief and QA text', env: 'OPENAI_API_KEY' }
+  { id: 'image-renderer', label: 'Image renderer', kind: 'Images', env: 'IMAGE_RENDERER_KEY' },
+  { id: 'image-refiner', label: 'Image refiner', kind: 'Images', env: 'IMAGE_REFINER_KEY' },
+  { id: 'motion-renderer', label: 'Motion renderer', kind: 'Video', env: 'MOTION_RENDERER_KEY' },
+  { id: 'motion-refiner', label: 'Motion refiner', kind: 'Video', env: 'MOTION_REFINER_KEY' },
+  { id: 'copy-review', label: 'Copy review', kind: 'Brief and QA text', env: 'COPY_REVIEW_KEY' }
 ];
 
 // ---------------------------------------------------------------------------
@@ -234,7 +237,7 @@ export function newAsset(projectId, file) {
     placements: {},
     edit: {
       mode: 'guided',
-      adjustments: { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 },
+      adjustments: { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 },
       pixelGrid: { enabled: false, columns: 12, sensitivity: 55 }
     },
     video: { trimStart: '', trimEnd: '', hook: '', believability: 0, looksAI: false, recast: false, cropNote: '', posterTime: null, comments: [] },
