@@ -5,19 +5,20 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v18';
+const CACHE = 'materiallogix-shell-v19';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 const SHELL = [
   './', 'index.html', 'voice.html', 'usage.html', 'admin.html', 'manifest.webmanifest', 'icon.svg',
   'css/app.css', 'css/studio-entry.css', 'assets/preview-stamp.wav',
-  'js/bootstrap.js', 'js/studio-shell.js', 'js/studio-nav.js', 'js/activity.js', 'js/privacy.js',
+  'js/bootstrap.js', 'js/studio-shell.js', 'js/studio-nav.js', 'js/api-root.js', 'js/activity.js', 'js/privacy.js',
   'js/studio-entry.js',
   'js/app.js', 'js/model.js', 'js/store.js', 'js/crop.js', 'js/analyze.js',
   'js/export.js', 'js/clientpage.js', 'js/history.js', 'js/zip.js',
-  'js/generate.js', 'js/inpaint-foundation.js', 'js/cloud-video.js', 'js/spin-viewer.js', 'js/geometry.js', 'js/human-geometry.js', 'js/device.js', 'js/voice.js',
+  'js/generate.js', 'js/inpaint-foundation.js', 'js/cloud-video.js', 'js/spin-viewer.js', 'js/geometry.js', 'js/human-geometry.js', 'js/device.js', 'js/raw.js', 'js/voice.js',
   'js/editing.js', 'js/print.js', 'js/house-voices.js', 'js/voice-quality.js', 'js/voice-reference.js', 'js/color-management.js',
   'js/pricing.js', 'js/pricing-catalog.js', 'js/license.js', 'js/license-key.js'
   ,'js/billing-client.js', 'js/usage.js', 'js/admin.js',
+  'assets/raw/worker.js',
   'site/media/studio-entry-photo.webp', 'site/media/studio-entry-video.webp', 'site/media/studio-entry-voice.webp'
 ];
 const SHELL_PATHS = new Set(SHELL.map(path => new URL(path, self.location.origin).pathname));

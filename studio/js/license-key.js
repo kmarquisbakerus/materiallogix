@@ -2,7 +2,7 @@
 // Safe to ship; only the private key (gitignored) can sign.
 export const LICENSE_PUBLIC_JWK = {
   "kty": "EC",
-  "x": "dJ8Nbx4r1VInlI87vJmnkuCDLcRuOv_ijVos5tzhHWM",
-  "y": "fjBKKF6UwTNJ2mWFRTn4ZUPwLUjSQ4POo6xP3687teg",
+  "x": "t6VjZDOG3v7kd0_nYfgwVMquu0WnWFAempGho_6HSsw",
+  "y": "QZeS07B885BQWSnkU4Ub9PQBK6bc1mGnPi6K-UdnNgQ",
   "crv": "P-256"
 };

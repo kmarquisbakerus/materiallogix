@@ -28,6 +28,7 @@ import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
 import { quoteCloudJob } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
+import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, props = {}, ...kids) => {
@@ -312,27 +313,52 @@ async function probe(file, url) {
 }
 
 async function importFiles(fileList) {
-  const files = [...fileList].filter(f => /^(image|video)\//.test(f.type) || /\.(?:hdr|pic|rgbe)$/i.test(f.name || ''));
-  if (!files.length) return toast('No images or video in that drop.', true);
+  const files = [...fileList].filter(isImportableMediaFile);
+  if (!files.length) return toast('No supported photo or video files in that drop.', true);
 
   const bar = el('i');
   const status = el('p', {}, `Importing ${files.length} file(s)…`);
   dialog('Import', el('div', {}, status, el('div', { className: 'progress' }, bar)), [btn('Close', 'btn', closeDialog)]);
 
   await busy(async () => {
-    let n = 0;
-    for (const file of files) {
-      status.textContent = `Importing ${++n} / ${files.length} — ${file.name}`;
+    let n = 0, imported = 0, blocked = 0;
+    let lastBlockedMessage = '';
+    for (const sourceFile of files) {
+      status.textContent = `Importing ${++n} / ${files.length} — ${sourceFile.name}`;
       bar.style.width = `${(n / files.length) * 100}%`;
+      let file = sourceFile;
+      let rawImport = null;
+      if (isRawCameraFile(sourceFile)) {
+        rawImport = await prepareRawCameraImport(sourceFile);
+        if (!rawImport.ok) {
+          blocked += 1;
+          lastBlockedMessage = rawImport.message;
+          status.textContent = rawImport.message;
+          continue;
+        }
+        file = rawImport.file;
+      }
       const asset = newAsset(state.project.id, file);
-      if (!file.type && /\.(?:hdr|pic|rgbe)$/i.test(file.name || '')) asset.mime = 'image/vnd.radiance';
+      if (!file.type && isRadianceFile(file)) asset.mime = 'image/vnd.radiance';
+      if (rawImport?.ok) {
+        asset.source = 'camera-raw-import';
+        asset.rawImport = rawImport.provenance;
+        asset.provenance = 'Camera RAW converted inside Studio from a verified offline decoder packet.';
+      }
       await store.addAsset(asset, file);
       const url = await store.objectUrl(asset.id);
-      Object.assign(asset, await probe(file, url));
-      log(asset, `imported (${file.type || 'unknown type'}, ${(file.size / 1048576).toFixed(1)} MB)`, state.reviewer);
+      Object.assign(asset, rawImport?.ok && rawImport.width && rawImport.height
+        ? { width: rawImport.width, height: rawImport.height, duration: 0 }
+        : await probe(file, url));
+      const sourceLabel = rawImport?.ok ? `camera RAW from ${sourceFile.name}` : (file.type || 'unknown type');
+      log(asset, `imported (${sourceLabel}, ${(sourceFile.size / 1048576).toFixed(1)} MB)`, state.reviewer);
       await store.saveAsset(asset);
       state.assets.push(asset);
       await runAnalysis(asset, { quiet: true });
+      imported += 1;
+    }
+    if (!imported && blocked) {
+      throw new Error(lastBlockedMessage || 'Camera RAW import needs setup before Studio can open that file.');
     }
   });
   state.assets = await store.listAssets(state.project.id);
