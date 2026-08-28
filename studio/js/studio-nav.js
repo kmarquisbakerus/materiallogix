@@ -1,6 +1,8 @@
 // Shared navigation and fail-closed production access boundary. Authentication
 // decisions belong to the same-origin server/edge, never downloadable JavaScript.
 
+import { apiUrl } from './api-root.js';
+
 async function enforceAccessBoundary() {
   const params = new URLSearchParams(location.search);
   const local = ['localhost', '127.0.0.1', '::1'].includes(location.hostname);
@@ -12,7 +14,7 @@ async function enforceAccessBoundary() {
 
   let authenticated = false;
   try {
-    const response = await fetch('/api/session', {
+    const response = await fetch(apiUrl('/api/session'), {
       credentials: 'include',
       cache: 'no-store',
       headers: { Accept: 'application/json' },

@@ -1,3 +1,5 @@
+import { apiUrl } from './api-root.js';
+
 const encoder = new TextEncoder();
 
 const CRC_TABLE = (() => {
@@ -114,7 +116,7 @@ export async function buildCloudVideoPackage(source, manifest, onProgress = () =
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set('Accept', 'application/json');
-  const response = await fetch(path, { ...options, headers, credentials: 'include', cache: 'no-store' });
+  const response = await fetch(apiUrl(path), { ...options, headers, credentials: 'include', cache: 'no-store' });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `cloud_${response.status}`);
   return payload;
@@ -188,7 +190,7 @@ export function watchCloudVideoJob(jobId, onProgress = () => {}, intervalMs = 30
 
 export function downloadCloudVideo(jobId) {
   const link = document.createElement('a');
-  link.href = `/api/cloud/video/jobs/${encodeURIComponent(jobId)}/output`;
+  link.href = apiUrl(`/api/cloud/video/jobs/${encodeURIComponent(jobId)}/output`);
   link.download = '';
   document.body.append(link);
   link.click();

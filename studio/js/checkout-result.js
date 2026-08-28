@@ -1,4 +1,5 @@
 import { activate } from './license.js';
+import { apiUrl } from './api-root.js';
 
 const params = new URLSearchParams(location.search);
 let sessionId = params.get('session_id');
@@ -18,7 +19,7 @@ if ((params.get('checkout') === 'success' || hasPending) && sessionId && claim) 
   cleanUrl.search = '';
   history.replaceState({}, '', cleanUrl);
   try {
-    const response = await fetch(`/api/checkout/result?session_id=${encodeURIComponent(sessionId)}&claim=${encodeURIComponent(claim)}`, {
+    const response = await fetch(apiUrl(`/api/checkout/result?session_id=${encodeURIComponent(sessionId)}&claim=${encodeURIComponent(claim)}`), {
       headers: { Accept: 'application/json' }
     });
     const result = await response.json();
@@ -26,7 +27,7 @@ if ((params.get('checkout') === 'success' || hasPending) && sessionId && claim) 
     const license = await activate(result.licenseKey);
     if (!license) throw new Error('activation_failed');
     try { sessionStorage.removeItem('materiallogix:pending-checkout'); } catch { /* unavailable */ }
-    fetch('/api/analytics/event', {
+    fetch(apiUrl('/api/analytics/event'), {
       method: 'POST',
       body: JSON.stringify({ event: 'license_activated', operationId: `activation:${sessionId}` }),
       keepalive: true

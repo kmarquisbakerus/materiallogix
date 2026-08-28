@@ -1,5 +1,6 @@
 import { cloudVideoSecondsForCents, CLOUD_PRICING } from './pricing.js';
 import { pendingUsageReleases } from './billing-client.js';
+import { apiUrl } from './api-root.js';
 
 const status = document.querySelector('#usageStatus');
 const cards = document.querySelector('#usageCards');
@@ -31,7 +32,7 @@ const resultLabel = item => item.status === 'voided'
       : 'Will retry automatically when the app is online';
 
 async function api(path, options = {}) {
-  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store',
+  const response = await fetch(apiUrl(path), { credentials: 'include', cache: 'no-store',
     headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(options.headers || {}) }, ...options });
   const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
   if (!response.ok) throw new Error(data.error || 'request_unavailable');

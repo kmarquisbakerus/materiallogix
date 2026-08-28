@@ -1,3 +1,5 @@
+import { apiUrl } from './api-root.js';
+
 const status = document.querySelector('#opsStatus');
 const cards = document.querySelector('#opsCards');
 const periodFilter = document.querySelector('#periodFilter');
@@ -66,7 +68,7 @@ async function load() {
   try {
     status.textContent = 'Loading privacy-minimized operational data…';
     const query = periodFilter.value ? `?period=${encodeURIComponent(periodFilter.value)}` : '';
-    const response = await fetch(`/api/admin/usage${query}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+    const response = await fetch(apiUrl(`/api/admin/usage${query}`), { credentials: 'include', headers: { Accept: 'application/json' } });
     const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
     if (!response.ok) throw new Error(data.error || 'operations_unavailable');
     snapshot = data;
@@ -110,8 +112,8 @@ async function loadPrivacyQueue() {
   try {
     privacySupportStatus.textContent = 'Loading the privacy request queue…';
     const query = `?status=${encodeURIComponent(privacyStatusFilter.value)}`;
-    const response = await fetch(`/api/admin/privacy-requests${query}`, {
-      credentials: 'same-origin', headers: { Accept: 'application/json' }
+    const response = await fetch(apiUrl(`/api/admin/privacy-requests${query}`), {
+      credentials: 'include', headers: { Accept: 'application/json' }
     });
     const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
     if (!response.ok) throw new Error(data.error || 'privacy_support_unavailable');
@@ -148,8 +150,8 @@ privacyRequestTable.addEventListener('click', async event => {
   button.disabled = true;
   privacySupportStatus.textContent = `${privacyActionLabel(action)} in progress…`;
   try {
-    const response = await fetch(`/api/admin/privacy-requests/${encodeURIComponent(item.id)}/actions`, {
-      method: 'POST', credentials: 'same-origin',
+    const response = await fetch(apiUrl(`/api/admin/privacy-requests/${encodeURIComponent(item.id)}/actions`), {
+      method: 'POST', credentials: 'include',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
       body: JSON.stringify(privacyActionPayload(action, item))
     });

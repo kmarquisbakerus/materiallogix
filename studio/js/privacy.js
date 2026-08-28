@@ -1,7 +1,9 @@
-const API = '/api/privacy/preferences';
-const DIAGNOSTIC_API = '/api/diagnostics/event';
-const PRIVACY_EXPORT_API = '/api/privacy/export';
-const PRIVACY_REQUEST_API = '/api/privacy/request';
+import { apiUrl } from './api-root.js';
+
+const API = apiUrl('/api/privacy/preferences');
+const DIAGNOSTIC_API = apiUrl('/api/diagnostics/event');
+const PRIVACY_EXPORT_API = apiUrl('/api/privacy/export');
+const PRIVACY_REQUEST_API = apiUrl('/api/privacy/request');
 const APP_VERSION = '0.1.0';
 
 const PROFILE_FIELDS = [
