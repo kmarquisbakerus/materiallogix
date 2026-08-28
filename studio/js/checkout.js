@@ -1,6 +1,6 @@
 import { PRODUCTS, TERMS, price } from './pricing.js';
+import { apiUrl } from './api-root.js';
 
-const API_ROOT = 'https://studio.materiallogix.com/api';
 const TERM_STORAGE = 'materiallogix:checkout-term';
 const ATTRIBUTION_STORAGE = 'materiallogix:attribution';
 const ANALYTICS_SESSION = 'materiallogix:analytics-session';
@@ -32,7 +32,7 @@ function analyticsSession() {
 }
 
 function sendAnalytics(event) {
-  fetch(`${API_ROOT}/analytics/event`, {
+  fetch(apiUrl('/api/analytics/event'), {
     method: 'POST',
     body: JSON.stringify({ event, operationId: `${analyticsSession()}:${event}`, attribution: attribution() }),
     keepalive: true
@@ -81,7 +81,7 @@ async function beginCheckout(button) {
   button.disabled = true;
   document.querySelector('#checkoutStatus').textContent = 'Opening secure Stripe checkout…';
   try {
-    const response = await fetch(`${API_ROOT}/checkout/session`, {
+    const response = await fetch(apiUrl('/api/checkout/session'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operationId },
       body: JSON.stringify({ sku: `${planId}_${termId}`, attribution: attribution() })

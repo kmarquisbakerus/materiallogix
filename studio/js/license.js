@@ -4,6 +4,7 @@
 // confirmed that its database record is active.
 
 import { LICENSE_PUBLIC_JWK } from './license-key.js';
+import { apiUrl } from './api-root.js';
 
 const b64uToBytes = s => {
   const normalized = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -51,7 +52,7 @@ export async function verifyLicense(key) {
 
 const STORE = 'cros:license';
 const CHECK_STORE = 'cros:licenseCheck';
-const CHECK_URL = 'https://studio.materiallogix.com/api/license/check';
+const CHECK_URL = apiUrl('/api/license/check');
 const CHECK_EVERY_H = 24;        // ping at most daily
 export const GRACE_DAYS = 3;     // licensed features require verification after this offline grace period
 

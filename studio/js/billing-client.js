@@ -1,6 +1,5 @@
 import { activeLicenseKey } from './license.js';
-const API_ORIGIN = typeof location !== 'undefined' && location.hostname === 'studio.materiallogix.com'
-  ? '' : 'https://studio.materiallogix.com';
+import { apiUrl } from './api-root.js';
 const PENDING_RELEASES_STORE = 'materiallogix:pending-usage-releases';
 const MAX_PENDING_RELEASES = 48;
 let releaseFlushPromise = null;
@@ -70,7 +69,7 @@ function queuedReleaseError(cause) {
 }
 
 async function billingRequest(path, body, idempotencyKey) {
-  const response = await fetch(`${API_ORIGIN}/api/${path}`, {
+  const response = await fetch(apiUrl(path), {
     method: 'POST',
     cache: 'no-store',
     headers: {
