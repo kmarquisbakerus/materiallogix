@@ -31,11 +31,20 @@ const encoder = new TextEncoder();
  * @param {Array<{name: string, data: Uint8Array|string, date?: Date}>} entries
  * @returns {Blob}
  */
+const ZIP32_LIMIT = 0xfff00000; // just under 4 GiB: this writer has no ZIP64 records
+
 export function makeZip(entries) {
   const now = new Date();
   const chunks = [];
   const central = [];
   let offset = 0;
+  let totalBytes = 0;
+  for (const entry of entries) {
+    totalBytes += typeof entry.data === 'string' ? entry.data.length : entry.data.byteLength;
+    if (totalBytes > ZIP32_LIMIT) {
+      throw new Error('This archive would exceed 4 GB, which this recovery format cannot store safely. Split the project or remove large media before exporting.');
+    }
+  }
 
   for (const entry of entries) {
     const nameBytes = encoder.encode(entry.name);

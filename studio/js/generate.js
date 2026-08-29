@@ -7,7 +7,11 @@
 // Direct ComfyUI media traffic is loopback-only. Phone-over-Wi-Fi uses the
 // Material Logic bridge, which requires the one-time PIN shown by engine.py.
 const isLoopbackHost = h => h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
-const isPrivateIpv4 = h => /^(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
+// A private address must be a literal dotted quad: a DNS name that merely
+// starts with a private prefix (10.attacker.example) must never pass.
+const isPrivateIpv4 = h => /^\d{1,3}(\.\d{1,3}){3}$/.test(h)
+  && h.split('.').every(octet => Number(octet) <= 255)
+  && /^(127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h);
 const BRIDGE_HOST = (typeof location !== 'undefined' && isPrivateIpv4(location.hostname)) ? location.hostname : '127.0.0.1';
 const DEFAULT_BASE = 'http://127.0.0.1:8188';
 
@@ -36,17 +40,27 @@ export const NATURAL_PHOTO_AVOID = [
   'rigid mannequin posture',
   'forced group attention',
   'inconsistent lighting or reflections',
-  'halos or generative artifacts'
+  'halos or generative artifacts',
+  'garbled text, invented logos, or spurious watermarks',
+  'cloned or duplicated faces',
+  'cut-out subject edges or plastic-looking bokeh'
 ].join(', ');
 
-const HUMAN_TERMS = /\b(person|people|human|woman|women|man|men|girl|girls|boy|boys|child|children|adult|model|creator|artist|designer|team|friends?|family|couple|face|portrait|selfie|hands?|body|bodies)\b/i;
+const HUMAN_TERMS = /\b(person|people|human|humans|woman|women|man|men|girl|girls|boy|boys|child|children|kid|kids|baby|babies|toddler|teen|teenager|teenagers|adult|adults|elderly|senior|seniors|gentleman|lady|guy|guys|folks|someone|somebody|he|she|him|her|his|model|models|creator|artist|artists|designer|designers|team|colleague|colleagues|coworker|staff|crew|worker|workers|friends?|family|couple|pair|group|crowd|audience|face|faces|portrait|selfie|hands?|body|bodies|figure|silhouette|chef|barista|bartender|waiter|waitress|nurse|doctor|dancer|athlete|runner|cyclist|skater|musician|singer|student|teacher|customer|client|guest|shopper|passenger|player|stylist|photographer|engineer|farmer|builder|mechanic)\b/i;
 const DIRECTIVES = {
   camera: /\b(look(?:ing)? (?:at|into) (?:the )?camera|eye contact|direct gaze|camera-facing)\b/i,
-  composition: /\b(centered|symmetrical)\b/i,
+  composition: /\b(centered|symmetrical|rule of thirds)\b/i,
+  framing: /\b(close[- ]?up|wide shot|full[- ]body|headshot|overhead|top[- ]down|low angle|high angle|macro|crop(?:ped)?)\b/i,
+  optics: /\b(\d{2,3}\s?mm|wide[- ]angle|telephoto|bokeh|depth of field|f\/\d|shallow focus|deep focus|fisheye|tilt[- ]shift)\b/i,
+  medium: /\b(grain|grainy|film|analog|35mm|polaroid|clean|pristine|no grain)\b/i,
   pose: /\b(posed|formal portrait|studio portrait|headshot|fashion pose)\b/i,
-  expression: /\b(smile|smiling|laugh|laughing|open mouth|speaking|talking|shouting|singing)\b/i,
+  expression: /\b(smile|smiling|laugh|laughing|open mouth|speaking|talking|shouting|singing|serious|neutral expression|frown|frowning|crying|angry|surprised)\b/i,
   handsHidden: /\b(hands? (?:hidden|concealed|outside|out of) (?:the )?frame|no hands?|hands? not visible)\b/i
 };
+
+// Optical and medium character. Absence of these is a strong synthetic tell.
+export const CAMERA_GUIDANCE = 'natural lens perspective with believable depth of field and focus falloff';
+export const MEDIUM_GUIDANCE = 'subtle sensor grain and natural highlight roll-off rather than a perfectly clean digital render';
 
 const avoidRules = [
   [/\b(waxy|plastic) skin\b/i, 'waxy or plastic skin'],
@@ -57,7 +71,10 @@ const avoidRules = [
   [/\b(rigid|mannequin) posture\b/i, 'rigid mannequin posture'],
   [/\bforced group attention\b/i, 'forced group attention'],
   [/\b(inconsistent lighting|inconsistent reflections?)\b/i, 'inconsistent lighting or reflections'],
-  [/\b(halos?|generative artifacts?)\b/i, 'halos or generative artifacts']
+  [/\b(halos?|generative artifacts?)\b/i, 'halos or generative artifacts'],
+  [/\b(text|lettering|logos?|watermarks?|signage?)\b/i, 'garbled text, invented logos, or spurious watermarks'],
+  [/\b(clones?|duplicate faces?|twins?|identical)\b/i, 'cloned or duplicated faces'],
+  [/\b(bokeh|cut[- ]?out)\b/i, 'cut-out subject edges or plastic-looking bokeh']
 ];
 
 /**
@@ -69,7 +86,7 @@ export function compilePhotoPrompt(prompt, negative = '', styleIntent = 'natural
   const requested = String(prompt || '').trim();
   const avoided = String(negative || '').trim();
   if (!requested) throw new Error('Prompt is empty.');
-  if (!['natural', 'stylized'].includes(styleIntent)) throw new Error('Unknown Photo style intent.');
+  if (!['natural', 'stylized', 'film'].includes(styleIntent)) throw new Error('Unknown Photo style intent.');
   if (styleIntent === 'stylized') return {
     prompt: requested,
     negative: avoided,
@@ -84,9 +101,11 @@ export function compilePhotoPrompt(prompt, negative = '', styleIntent = 'natural
     .map(([name]) => name);
   const additions = [NATURAL_PHOTO_GUIDANCE];
   const appliedRules = ['photographic-integrity'];
+  if (!explicitOverrides.includes('optics')) { additions.push(CAMERA_GUIDANCE); appliedRules.push('optical-plausibility'); }
+  if (styleIntent === 'film' && !explicitOverrides.includes('medium')) { additions.push(MEDIUM_GUIDANCE); appliedRules.push('capture-medium'); }
   if (humanScene) {
     const humanRules = [];
-    if (!explicitOverrides.includes('composition') && !explicitOverrides.includes('pose')) humanRules.push('candid environmental composition');
+    if (!explicitOverrides.includes('composition') && !explicitOverrides.includes('pose') && !explicitOverrides.includes('framing')) humanRules.push('candid environmental composition');
     if (!explicitOverrides.includes('camera')) humanRules.push('independent believable gaze and attention between people');
     if (!explicitOverrides.includes('pose')) humanRules.push('natural task-focused body language rather than mannequin posing');
     if (!explicitOverrides.includes('handsHidden')) humanRules.push('complete anatomically credible hands or hands naturally outside the frame');
@@ -153,20 +172,75 @@ async function getJson(base, path, timeout = 2500) {
   return res.json();
 }
 
-/** Is a local ComfyUI running, and on what hardware? */
+/** Is a local engine running, and on what hardware? */
 export async function detectComfy(base = DEFAULT_BASE) {
   try {
     const stats = await getJson(base, '/system_stats');
     const dev = stats.devices?.[0];
+    const type = String(dev?.type || '').toLowerCase();
+    const cpuOnly = type === 'cpu';
     return {
       ok: true,
       base,
-      device: dev?.name || 'GPU',
+      cpuOnly,
+      deviceType: type || null,
+      device: dev?.name || (cpuOnly ? 'Processor' : 'GPU'),
       vramGB: dev?.vram_total ? +(dev.vram_total / 1073741824).toFixed(1) : null
     };
   } catch {
     return { ok: false, base };
   }
+}
+
+// Speed lanes for a machine with no graphics card. Same engine, same models,
+// fewer steps and a smaller canvas, then enlarge.
+// Best quality is the same picture a graphics card would make, only slower.
+// Faster is smaller, and every label says so.
+export const CPU_PRESETS = Object.freeze({
+  draft: { label: 'Faster', steps: 12, maxSide: 768 },
+  full: { label: 'Best quality', steps: 22, maxSide: null }
+});
+
+/** Fit a requested size into a preset without breaking the 64px grid. */
+export function cpuJobSettings(preset, width, height) {
+  const p = CPU_PRESETS[preset] || CPU_PRESETS.draft;
+  if (!p.maxSide) return { width, height, steps: p.steps };
+  const longest = Math.max(width, height);
+  const scale = longest > p.maxSide ? p.maxSide / longest : 1;
+  const fit = v => Math.max(512, Math.round(v * scale / 64) * 64);
+  return { width: fit(width), height: fit(height), steps: p.steps };
+}
+
+const PACE_KEY = 'cros:cpuSecondsPerStepPixel';
+
+/** Remember how fast this machine actually was. */
+export function recordCpuPace(seconds, steps, width, height) {
+  const work = steps * width * height;
+  if (!(seconds > 0) || !(work > 0)) return;
+  try { localStorage.setItem(PACE_KEY, String(seconds / work)); } catch { /* private mode */ }
+}
+
+/**
+ * How long one job should take without a graphics card. Measured once, then
+ * reused. Before the first run it is a range, not a promise.
+ */
+export function estimateCpuSeconds(steps, width, height, cores = 4) {
+  const work = steps * width * height;
+  let rate = 0;
+  try { rate = Number(localStorage.getItem(PACE_KEY)) || 0; } catch { /* private mode */ }
+  if (rate > 0) return { seconds: Math.round(work * rate), measured: true };
+  // Starting point only: a 1024 square at 22 steps runs roughly ten seconds a
+  // step on eight cores. Replaced by the real number after the first render.
+  const perCore = 7.6e-5;
+  return { seconds: Math.round(work * perCore / Math.max(2, cores)), measured: false };
+}
+
+/** Plain wording for a wait, never a bare number of seconds. */
+export function waitLabel(seconds) {
+  if (seconds < 90) return 'about a minute';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 10) return `about ${minutes} minutes`;
+  return `${Math.round(minutes / 5) * 5} minutes or so`;
 }
 
 /** Models the local install actually has. The app never assumes a filename. */
@@ -220,6 +294,7 @@ export async function inspectInpaintCompatibility(base = DEFAULT_BASE) {
  */
 export function buildTxt2Img({ ckpt, prompt, negative = '', styleIntent = 'natural', width = 1024, height = 1024, steps = 22, cfg = 6.5, seed }) {
   if (!ckpt) throw new Error('No checkpoint model selected.');
+  if (String(prompt || '').length > 1000 || String(negative || '').length > 1000) throw new Error('Prompt text is too long.');
   const styled = applyPhotoStyleDefaults(prompt, negative, styleIntent);
   const s = seed ?? Math.floor(Math.random() * 2 ** 32);
   return {
@@ -642,14 +717,14 @@ export async function upscaleOne(blob, filename, model, onStatus = () => {}, bas
 }
 
 /** Submit one job and wait for its image. Returns { blob, seed, filename }. */
-export async function generateOne(opts, onStatus = () => {}, base = DEFAULT_BASE) {
+export async function generateOne(opts, onStatus = () => {}, base = DEFAULT_BASE, timeoutMinutes = 10) {
   const { seed, graph } = buildTxt2Img(opts);
-  const out = await runGraph(graph, onStatus, base);
+  const out = await runGraph(graph, onStatus, base, timeoutMinutes);
   return { ...out, seed };
 }
 
 /** Shared submit-and-poll loop for any workflow graph. */
-export async function runGraph(graph, onStatus = () => {}, base = DEFAULT_BASE) {
+export async function runGraph(graph, onStatus = () => {}, base = DEFAULT_BASE, timeoutMinutes = 10) {
   base = localBase(base);
   onStatus('queued');
   const res = await fetch(base + '/prompt', {
@@ -661,12 +736,18 @@ export async function runGraph(graph, onStatus = () => {}, base = DEFAULT_BASE) 
   const { prompt_id } = await res.json();
 
   // Poll history until the job lands. Local jobs run seconds to minutes.
-  const deadline = Date.now() + 10 * 60 * 1000;
+  const deadline = Date.now() + Math.max(10, timeoutMinutes) * 60 * 1000;
+  let unreachable = 0;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 1500));
     onStatus('generating');
     const hist = await getJson(base, `/history/${prompt_id}`, 5000).catch(() => null);
-    const entry = hist?.[prompt_id];
+    if (!hist) {
+      if (++unreachable >= 8) throw new Error('The local engine stopped responding mid-job. Check that it is still running, then try again.');
+      continue;
+    }
+    unreachable = 0;
+    const entry = hist[prompt_id];
     if (entry?.status?.status_str === 'error') {
       throw new Error('Generation failed inside ComfyUI — check its console.');
     }
@@ -678,8 +759,11 @@ export async function runGraph(graph, onStatus = () => {}, base = DEFAULT_BASE) 
       if (!imgRes.ok) throw new Error('Generated, but the image could not be fetched.');
       return { blob: await imgRes.blob(), filename: img.filename };
     }
+    if (entry?.status?.completed) {
+      throw new Error('The job finished without producing an image — it may have been interrupted in the engine.');
+    }
   }
-  throw new Error('Timed out waiting for the local GPU.');
+  throw new Error('The engine is still working past the time limit. Try a smaller size or the faster setting.');
 }
 
 // --- the local bridge (engine.py): zero-setup Real-ESRGAN -------------------

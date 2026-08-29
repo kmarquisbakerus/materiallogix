@@ -12,13 +12,18 @@ import {
 } from './analyze.js';
 import { buildPackage, decisionsMarkdown, approvedPairs, slug } from './export.js';
 import { buildClientPage, applyClientVerdict } from './clientpage.js';
-import { snapshot, snapshotProject, popUndo, log, logMarkdown } from './history.js';
+import { snapshot, snapshotProject, popUndo, clearUndo, log, logMarkdown } from './history.js';
 import { downloadBlob, makeZip, readStoreZip } from './zip.js';
 import { activeLicense, activate, activationFailureReason, deactivate, covers } from './license.js';
 import { assessInpaintMaskedBoundary, blendInpaintMaskedCandidate,
   bridgeFetch, detectComfy, listCheckpoints, inspectInpaintCompatibility, generateOne, normalizeInpaintSelection,
   normalizeInpaintPath, summarizeInpaintMask, inpaintOne, listUpscaleModels, upscaleOne, detectBridge,
-  upscaleViaBridge, localUpscaleModelLabel, localUpscaleEngineLabel } from './generate.js';
+  upscaleViaBridge, localUpscaleModelLabel, localUpscaleEngineLabel,
+  CPU_PRESETS, cpuJobSettings, estimateCpuSeconds, recordCpuPace, waitLabel } from './generate.js';
+import { probeDevice, deviceSummary } from './device.js';
+import { featureEnabled } from './features.js';
+import { guidanceFor } from './capture-guidance.js';
+import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pacer.js';
 import { analyzeGeometry } from './geometry.js';
 import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
 import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
@@ -26,7 +31,7 @@ import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './c
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
-import { quoteCloudJob } from './pricing.js';
+import { quoteCloudJob, recordExport } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
 
@@ -107,15 +112,23 @@ const btn = (label, cls = 'btn', onclick) => {
 /** Names a control whose visible label is a glyph. */
 const aria = (node, label) => { node.setAttribute('aria-label', label); node.title = label; return node; };
 
-let saveTimer = null;
+const pendingSaves = new Map();
+function scheduleSave(key, save) {
+  clearTimeout(pendingSaves.get(key)?.timer);
+  const timer = setTimeout(() => { pendingSaves.delete(key); save(); }, 220);
+  pendingSaves.set(key, { timer, save });
+}
+function flushPendingSaves() {
+  for (const [, entry] of pendingSaves) { clearTimeout(entry.timer); entry.save(); }
+  pendingSaves.clear();
+}
 function touchAsset(asset) {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => store.saveAsset(asset), 220);
+  scheduleSave(`asset:${asset.id}`, () => store.saveAsset(asset));
 }
 function touchProject() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => store.saveProject(state.project), 220);
+  scheduleSave('project', () => store.saveProject(state.project));
 }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingSaves(); });
 
 /** Every state change to an asset goes through here: undo + audit for free. */
 function mutate(asset, label, fn) {
@@ -126,6 +139,9 @@ function mutate(asset, label, fn) {
 }
 
 const activeSurfaces = () => (state.project?.surfaces || []).map(id => SURFACE_BY_ID[id]).filter(Boolean);
+/** Surfaces an asset can actually ship to: TikTok placements are video-only,
+ * so stills must never see them in the stage, shortcuts, or auto-reframe. */
+const surfacesForAsset = asset => activeSurfaces().filter(surface => asset?.kind === 'video' || surface.group !== 'tiktok');
 
 function ensurePlacement(asset, surfaceId) {
   if (!asset.placements[surfaceId]) {
@@ -282,14 +298,21 @@ async function analyzeAll() {
   const status = el('p', {}, `Analysing ${pending.length} asset(s)…`);
   dialog('Automated checks', el('div', {}, status, el('div', { className: 'progress' }, bar)),
     [btn('Close', 'btn', closeDialog)]);
-  await busy(async () => {
-    let n = 0;
-    for (const a of pending) {
-      status.textContent = `Analysing ${++n} / ${pending.length} — ${a.filename}`;
-      bar.style.width = `${(n / pending.length) * 100}%`;
-      await runAnalysis(a, { quiet: true });
-    }
-  });
+  try {
+    await busy(async () => {
+      let n = 0;
+      for (const a of pending) {
+        status.textContent = `Analysing ${++n} / ${pending.length} — ${a.filename}`;
+        bar.style.width = `${(n / pending.length) * 100}%`;
+        await runAnalysis(a, { quiet: true });
+      }
+    });
+  } catch (error) {
+    closeDialog();
+    render();
+    toast(error?.message || 'Analysis stopped early. Already-analysed assets kept their results.', true);
+    return;
+  }
   status.textContent = `Done. ${pending.length} asset(s) analysed.`;
   render();
 }
@@ -320,8 +343,10 @@ async function importFiles(fileList) {
   const status = el('p', {}, `Importing ${files.length} file(s)…`);
   dialog('Import', el('div', {}, status, el('div', { className: 'progress' }, bar)), [btn('Close', 'btn', closeDialog)]);
 
+  let imported = 0, blocked = 0;
+  try {
   await busy(async () => {
-    let n = 0, imported = 0, blocked = 0;
+    let n = 0;
     let lastBlockedMessage = '';
     for (const sourceFile of files) {
       status.textContent = `Importing ${++n} / ${files.length} — ${sourceFile.name}`;
@@ -343,7 +368,9 @@ async function importFiles(fileList) {
       if (rawImport?.ok) {
         asset.source = 'camera-raw-import';
         asset.rawImport = rawImport.provenance;
-        asset.provenance = 'Camera RAW converted inside Studio from a verified offline decoder packet.';
+        asset.provenance = rawImport.mode === 'embedded-preview'
+          ? 'Imported from the finished JPEG the camera stored inside this RAW file. Full RAW development unlocks once the verified offline decoder packet is installed.'
+          : 'Camera RAW converted inside Studio from a verified offline decoder packet.';
       }
       await store.addAsset(asset, file);
       const url = await store.objectUrl(asset.id);
@@ -361,10 +388,17 @@ async function importFiles(fileList) {
       throw new Error(lastBlockedMessage || 'Camera RAW import needs setup before Studio can open that file.');
     }
   });
+  } catch (error) {
+    closeDialog();
+    state.assets = await store.listAssets(state.project.id).catch(() => state.assets);
+    render();
+    toast(error?.message || 'Import failed. Files already imported are safe in the library.', true);
+    return;
+  }
   state.assets = await store.listAssets(state.project.id);
   closeDialog();
   render();
-  toast(`Imported and analysed ${files.length} file(s).`);
+  toast(`Imported and analysed ${imported} file(s).${blocked ? ` ${blocked} file(s) were blocked.` : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -441,15 +475,43 @@ function generatePanel() {
         el('summary', {}, 'Phone connection'),
         el('p', { className: 'hint' }, 'Enter the Wi-Fi address shown by Material Logic to control Studio from your phone and run guided face, hand, and body scans.'),
         el('label', { className: 'field' }, el('span', {}, 'Wi-Fi address'), baseInput));
+      const routes = el('div', {});
       local.replaceChildren(
         el('p', { className: 'hint' }, 'Photo creation needs setup before you can generate an image.'),
+        routes,
         phoneConnection,
         btn('Try again', 'btn sm', () => renderLocal(true)));
+
+      // Fastest first: another computer already running Studio, then this one.
+      const [bridge, device] = await Promise.all([detectBridge(), probeDevice().catch(() => null)]);
+      if (bridge.ok) {
+        baseInput.value = bridge.base;
+        localStorage.setItem('cros:comfyBase', bridge.base);
+        routes.replaceChildren(
+          el('p', { className: 'hint' }, 'Material Logic is running on another computer here. That one is fastest.'),
+          btn('Use that computer', 'btn primary sm', () => renderLocal(true)));
+        return;
+      }
+      const onMac = /mac/i.test(`${navigator.userAgentData?.platform || navigator.platform || ''} ${navigator.userAgent || ''}`);
+      if (onMac && await featureEnabled('mac_byo_engine')) {
+        routes.replaceChildren(macEngineSetup(() => renderLocal(true)));
+        return;
+      }
+      const lines = ['Install Material Logic for Windows to create photos on this computer.'];
+      if (device && device.verdict === 'draft-capable') {
+        lines.push('Your graphics card works here. Renders come back in seconds.');
+      } else if (device) {
+        lines.push('No graphics card Studio can use. Photos render on the processor, a minute or two each.');
+        lines.push(deviceSummary(device));
+      }
+      routes.replaceChildren(...lines.map(text => el('p', { className: 'hint' }, text)));
       return;
     }
     let ckpts = [];
     try { ckpts = await listCheckpoints(comfyStatus.base); } catch { /* handled below */ }
-    const head = el('p', { className: 'hint' }, 'Photo creation is ready.');
+    const head = el('p', { className: 'hint' }, comfyStatus.cpuOnly
+      ? `Photo creation is ready on ${comfyStatus.device}.`
+      : 'Photo creation is ready.');
     if (!ckpts.length) {
       local.replaceChildren(head,
         el('p', { className: 'hint' }, 'Add a Photo quality pack, then try again.'),
@@ -462,33 +524,84 @@ function generatePanel() {
     const negBox = el('input', { type: 'text', placeholder: 'Avoid (optional)', value: state.project.brief.mustAvoid || '' });
     const styleSel = el('select', {},
       el('option', { value: 'natural' }, 'Photographic · believable by default'),
+      el('option', { value: 'film' }, 'Film · adds grain and highlight roll-off'),
       el('option', { value: 'stylized' }, 'Stylized · follow my direction'));
+    // Shape only. Pixels and timing live on one line below, so the list
+    // stays short and nothing in it can go stale.
+    const SIZES = [
+      ['1024x1024', 'Social square'],
+      ['832x1216', 'Phone portrait'],
+      ['1216x832', 'Wide banner']
+    ];
     const sizeSel = el('select', {});
-    for (const [v, label] of [['1024x1024', 'Square 1024'], ['832x1216', 'Portrait 832\u00d71216'], ['1216x832', 'Wide 1216\u00d7832']]) {
-      sizeSel.append(el('option', { value: v }, label));
-    }
+    for (const [value, name] of SIZES) sizeSel.append(el('option', { value }, name));
     const countSel = el('select', {});
     for (const n of [1, 2, 4]) countSel.append(el('option', { value: String(n) }, `${n} image${n > 1 ? 's' : ''}`));
     const status = el('p', { className: 'hint', style: 'margin:8px 0 0' }, '');
-    const go = btn('Generate photos', 'btn primary', async () => {
+
+    // No graphics card: same engine, but the customer picks speed over polish
+    // and sees a real clock instead of a spinner.
+    const speedSel = el('select', {});
+    for (const [value, preset] of Object.entries(CPU_PRESETS)) {
+      speedSel.append(el('option', { value }, preset.label));
+    }
+    const outputNote = el('p', { className: 'hint' }, '');
+    const jobPlan = () => {
       const [w, h] = sizeSel.value.split('x').map(Number);
+      if (!comfyStatus.cpuOnly) return { width: w, height: h, steps: undefined, seconds: 0 };
+      const fit = cpuJobSettings(speedSel.value, w, h);
+      const { seconds, measured } = estimateCpuSeconds(fit.steps, fit.width, fit.height, navigator.hardwareConcurrency || 4);
+      return { ...fit, seconds, measured };
+    };
+    // One line, after both choices: what this makes and how long it takes.
+    const refreshOutput = () => {
+      const plan = jobPlan();
+      const size = `${plan.width} \u00d7 ${plan.height}`;
+      if (!comfyStatus.cpuOnly) { outputNote.textContent = `Makes ${size}.`; return; }
+      outputNote.textContent = plan.measured
+        ? `Makes ${size} in ${waitLabel(plan.seconds)}, measured on this computer.`
+        : `Makes ${size} in roughly ${waitLabel(plan.seconds)}. Your first render sets the real number.`;
+    };
+    speedSel.onchange = refreshOutput;
+    sizeSel.onchange = refreshOutput;
+    refreshOutput();
+
+    const go = btn('Generate photos', 'btn primary', async () => {
       const count = Number(countSel.value);
       go.disabled = true;
+      let ticker = null;
       try {
         await busy(async () => {
           for (let i = 0; i < count; i++) {
-            status.textContent = `Image ${i + 1} of ${count} \u2014 queued\u2026`;
+            const plan = jobPlan();
+            const label = `Image ${i + 1} of ${count}`;
+            status.textContent = `${label} \u2014 queued\u2026`;
+            const startedAt = Date.now();
+            const tick = () => {
+              const elapsed = Math.round((Date.now() - startedAt) / 1000);
+              const mins = Math.floor(elapsed / 60), secs = String(elapsed % 60).padStart(2, '0');
+              status.textContent = comfyStatus.cpuOnly
+                ? `${label} \u2014 creating\u2026 ${mins}:${secs} elapsed. It is safe to leave this open.`
+                : `${label} \u2014 creating\u2026`;
+            };
             const { blob, seed } = await generateOne({
               ckpt: ckptSel.value,
               prompt: promptBox.value,
               negative: negBox.value,
               styleIntent: styleSel.value,
-              width: w, height: h
-            }, () => { status.textContent = `Image ${i + 1} of ${count} \u2014 creating\u2026`; }, comfyStatus.base);
+              width: plan.width, height: plan.height, steps: plan.steps
+            }, () => {
+              if (!ticker) { tick(); ticker = setInterval(tick, 1000); }
+            }, comfyStatus.base, comfyStatus.cpuOnly ? 45 : 10);
+            if (ticker) { clearInterval(ticker); ticker = null; }
+            if (comfyStatus.cpuOnly) {
+              recordCpuPace((Date.now() - startedAt) / 1000, plan.steps, plan.width, plan.height);
+              refreshSpeedNote();
+            }
             const file = new File([blob], `gen_${seed}_${i + 1}.png`, { type: 'image/png' });
             const asset = newAsset(state.project.id, file);
             asset.source = 'generated-local';
-            asset.provenance = `Created in Material Logic (seed ${seed}; ${styleSel.value} style intent). Prompt: ${promptBox.value.slice(0, 300)}`;
+            asset.provenance = `Created in Material Logic (seed ${seed}; ${styleSel.value} style intent; ${plan.width}\u00d7${plan.height} on ${comfyStatus.cpuOnly ? 'the processor' : comfyStatus.device}). Prompt: ${promptBox.value.slice(0, 300)}`;
             await store.addAsset(asset, file);
             const url = await store.objectUrl(asset.id);
             Object.assign(asset, await probe(file, url));
@@ -505,6 +618,7 @@ function generatePanel() {
       } catch (err) {
         status.textContent = 'Failed: ' + err.message;
       } finally {
+        if (ticker) clearInterval(ticker);
         go.disabled = false;
       }
     });
@@ -517,11 +631,64 @@ function generatePanel() {
       el('div', { style: 'display:flex;gap:8px' },
         el('label', { className: 'field', style: 'flex:1' }, el('span', {}, 'Size'), sizeSel),
         el('label', { className: 'field', style: 'flex:1' }, el('span', {}, 'Count'), countSel)),
+      ...(comfyStatus.cpuOnly
+        ? [el('label', { className: 'field' }, el('span', {}, 'Speed'), speedSel)]
+        : []),
+      outputNote,
       go, status);
   };
   renderLocal();
 
   return wrap;
+}
+
+// Set when the Mac packets are published.
+const MAC_PACKET_URL = '';
+const MAC_PACKET_LITE_URL = '';
+
+// The signed Mac app is not out yet. The packet runs Studio from the Mac
+// itself, which is what keeps every browser working.
+function macEngineSetup(onConnected) {
+  const command = 'python main.py --enable-cors-header ' + location.origin;
+  const commandBox = el('code', { className: 'setup-command' }, command);
+  const copy = btn('Copy command', 'btn sm', async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      copy.textContent = 'Copied';
+      setTimeout(() => { copy.textContent = 'Copy command'; }, 2000);
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(commandBox);
+      const selection = getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  });
+  if (!MAC_PACKET_URL) {
+    return el('div', {},
+      el('p', { className: 'hint' }, 'Studio runs on your Mac through ComfyUI.'),
+      el('div', { className: 'setup-command-row' }, commandBox, copy),
+      btn('Connect', 'btn primary sm', onConnected),
+      el('details', { className: 'connection-details' },
+        el('summary', {}, 'Setting this up'),
+        el('ol', { className: 'setup-steps' },
+          el('li', {}, 'Install ComfyUI for Apple silicon.'),
+          el('li', {}, 'Start it with the command above.'),
+          el('li', {}, 'Add a Photo quality pack, then connect.')),
+        el('p', { className: 'hint' }, 'Runs on your graphics card. Nothing leaves the Mac.'),
+        el('p', { className: 'hint' }, 'Chrome for now. Safari can block the connection.')));
+  }
+  return el('div', {},
+    el('p', { className: 'hint' }, 'Download Material Logic for Mac.'),
+    el('div', { className: 'setup-choice' },
+      el('a', { className: 'btn primary sm', href: MAC_PACKET_URL }, 'With the engine'),
+      el('a', { className: 'btn sm', href: MAC_PACKET_LITE_URL || MAC_PACKET_URL }, 'Without it')),
+    el('details', { className: 'connection-details' },
+      el('summary', {}, 'Which one'),
+      el('p', { className: 'hint' }, 'The engine makes the photos. Without it Studio still reviews, edits, and exports.'),
+      el('p', { className: 'hint' }, 'With the engine is one file and nothing else to install. Without it is a small file, and Studio fetches the engine the first time you create.'),
+      el('p', { className: 'hint' }, 'Runs on your graphics card. Nothing leaves the Mac.')),
+    btn('Connect', 'btn primary sm', onConnected));
 }
 
 function localToolsPanel() {
@@ -653,7 +820,9 @@ function renderSidebar() {
     }
   });
 
+  // Demo assets are a local convenience, not a shipped feature.
   const demoBtn = btn('Load demo assets', 'btn sm', loadDemo);
+  demoBtn.hidden = /(^|\.)materiallogix\.com$/i.test(location.hostname);
   const generation = panel('Generate photo', !state.assets.length, generatePanel());
   generation.dataset.photoGeneration = 'true';
   const activeAsset = currentAsset();
@@ -849,14 +1018,18 @@ async function backupProject() {
     assets: state.assets
   }, null, 2);
   const entries = [{ name: 'project.json', data: manifest }];
-  await busy(async () => {
-    for (const asset of state.assets) {
-      const blob = await store.getBlob(asset.id);
-      if (blob) entries.push({ name: `media/${asset.id}`, data: new Uint8Array(await blob.arrayBuffer()) });
-    }
-  });
-  downloadBlob(makeZip(entries), `${slug(state.project.name)}-recovery.zip`);
-  toast(`Recovery file saved with ${entries.length - 1} media file(s).`);
+  try {
+    await busy(async () => {
+      for (const asset of state.assets) {
+        const blob = await store.getBlob(asset.id);
+        if (blob) entries.push({ name: `media/${asset.id}`, data: new Uint8Array(await blob.arrayBuffer()) });
+      }
+    });
+    downloadBlob(makeZip(entries), `${slug(state.project.name)}-recovery.zip`);
+    toast(`Recovery file saved with ${entries.length - 1} media file(s).`);
+  } catch (error) {
+    toast(error?.message || 'The recovery file could not be created. Nothing was saved.', true);
+  }
 }
 
 async function restoreProject(file) {
@@ -1047,11 +1220,19 @@ async function paintStage() {
   const safe = safeOverlay(surface);
   if (safe) frame.append(safe);
   viewport.replaceChildren(frame);
-  attachPlacementDrag(frame, asset, surface);
+  // Repaint the crop into the live frame during drags: replacing the frame
+  // itself would release the pointer capture and kill the drag mid-gesture.
+  let stageCanvas = canvas;
+  const repaintPlacement = () => {
+    const next = renderCrop(d.source, d.w, d.h, p.crop, ps, p.fill, null, edit.adjustments);
+    stageCanvas.replaceWith(next);
+    stageCanvas = next;
+  };
+  attachPlacementDrag(frame, asset, surface, repaintPlacement);
   attachLoupe(frame, d, () => p.crop);
 }
 
-function attachPlacementDrag(frame, asset, surface) {
+function attachPlacementDrag(frame, asset, surface, repaint = paintStage) {
   const p = asset.placements[surface.id];
   let drag = null;
   frame.onpointerdown = e => {
@@ -1065,7 +1246,7 @@ function attachPlacementDrag(frame, asset, surface) {
     p.crop = panCrop(drag.crop,
       -((e.clientX - drag.x) / r.width) * drag.crop.w,
       -((e.clientY - drag.y) / r.height) * drag.crop.h);
-    paintStage();
+    repaint();
   };
   frame.onpointerup = frame.onpointercancel = () => {
     if (!drag) return;
@@ -1080,7 +1261,7 @@ function attachPlacementDrag(frame, asset, surface) {
     e.preventDefault();
     p.crop = zoomCrop(p.crop, e.deltaY < 0 ? 1.08 : 1 / 1.08);
     touchAsset(asset);
-    paintStage();
+    repaint();
     renderIssuesOnly();
   };
   frame.onkeydown = e => {
@@ -1817,11 +1998,13 @@ async function playWithComments(asset) {
   };
   input.onkeydown = e => { if (e.key === 'Enter') { add(); e.stopPropagation(); } };
 
-  dialog(asset.filename,
+  const stopPlayback = () => { vid.pause(); vid.removeAttribute('src'); vid.load(); };
+  const commentsDialog = dialog(asset.filename,
     el('div', {}, vid,
       el('div', { style: 'display:flex;gap:6px;margin-top:12px' }, input, btn('Add timecode', 'btn', add)),
       listBox),
-    [btn('Close', 'btn', () => { renderReview(); closeDialog(); })]);
+    [btn('Close', 'btn', () => { stopPlayback(); renderReview(); closeDialog(); })]);
+  commentsDialog.addEventListener('close', stopPlayback, { once: true });
   paint();
 }
 
@@ -1833,20 +2016,25 @@ async function extractIdentityPack(asset) {
   const countSel = el('select', {});
   for (const n of [8, 12, 16]) countSel.append(el('option', { value: String(n) }, `${n} frames`));
   const shootGuide = el('div', { className: 'spin-shoot-guide' });
+  // Play the pace out loud so they can film to it on a phone.
+  const guideDial = el('div', { className: 'pace-dial' });
+  let stopGuide = null;
+  const playGuide = btn('Play the pace', 'btn sm', () => {
+    if (stopGuide) { stopGuide(); stopGuide = null; playGuide.textContent = 'Play the pace'; return; }
+    playGuide.textContent = 'Stop';
+    stopGuide = runPaceGuide({
+      kind: modeSel.value,
+      mount: guideDial,
+      onDone: () => { stopGuide = null; playGuide.textContent = 'Play again'; }
+    });
+  });
   const paintShootGuide = () => {
-    const body = modeSel.value === 'body';
+    const guide = guidanceFor(modeSel.value);
     shootGuide.replaceChildren(
-      el('strong', {}, body ? 'Full-body 360° — one easy circle' : 'Face 180° — left, center, right'),
-      el('p', {}, 'Keep the laptop or camera still. You turn; the computer does not.'),
-      el('ol', {}, ...(body ? [
-        'Start facing the camera with your full body visible.',
-        'Turn slowly in one direction. Keep your arms slightly away from your sides.',
-        'Stop when you face the camera again. Aim for about 20 seconds.'
-      ] : [
-        'Start looking straight at the camera with your chin level.',
-        'Turn slowly toward your left shoulder, return through center, then toward your right shoulder.',
-        'Keep the movement smooth and finish in about 16 seconds.'
-      ]).map(step => el('li', {}, step))));
+      el('strong', {}, guide.title),
+      el('p', {}, guide.target),
+      el('ol', {}, ...guide.steps.map(step => el('li', {}, step))),
+      el('p', { className: 'hint' }, guide.graded));
   };
   modeSel.onchange = paintShootGuide;
   dialog('Create identity reference set',
@@ -1854,6 +2042,9 @@ async function extractIdentityPack(asset) {
       el('p', { className: 'hint' },
         'Creates evenly spaced reference frames from this video for one approved subject.'),
       shootGuide,
+      el('div', { className: 'pace-row' }, guideDial,
+        el('div', {}, playGuide,
+          el('p', { className: 'hint' }, 'Turn with the ticks. The last few drop in pitch as you finish.'))),
       el('label', { className: 'field' }, el('span', {}, 'Subject'), nameInput),
       el('label', { className: 'field' }, el('span', {}, 'Capture type'), modeSel),
       el('label', { className: 'field' }, el('span', {}, 'Frames'), countSel)),
@@ -1864,6 +2055,7 @@ async function extractIdentityPack(asset) {
        const captureMode = modeSel.value;
        const packId = crypto.randomUUID();
        closeDialog();
+       let extracted = 0;
        await busy(async () => {
          const url = await store.objectUrl(asset.id);
          const probeFrame = await grabVideoFrame(url, 0);
@@ -1886,8 +2078,10 @@ async function extractIdentityPack(asset) {
            log(ref, `extracted from ${asset.filename}`, state.reviewer);
            await store.addAsset(ref, file);
            await runAnalysis(ref, { quiet: true });
+           extracted += 1;
          }
        });
+       if (!extracted) return;
        state.assets = await store.listAssets(state.project.id);
        render();
 
@@ -1906,6 +2100,15 @@ async function extractIdentityPack(asset) {
              : `Coverage: ${rep.facesFound}/${rep.frames} frames tracked · ${rep.yawSpreadDeg}° of head turn · verdict: ${rep.verdict}.`),
            rep.gaps.length ? el('p', { className: 'hint' }, 'Missing angles: ' + rep.gaps.join(', ')) : null,
            ...rep.flags.map(f => el('p', { className: 'hint', style: 'color:var(--warn)' }, f)),
+           ...(() => {
+             // Where the turn drifted, not just that it did.
+             const trace = paceTrace(captureMode, rep);
+             if (!trace.steps.length) return [];
+             const bar = el('div', { className: 'pace-trace' });
+             bar.innerHTML = paceTraceSvg(trace);
+             return [el('p', { className: 'hint', style: 'margin:10px 0 2px' }, 'Turn speed'), bar,
+               el('p', { className: 'hint' }, trace.advice)];
+           })(),
            rep.verdict !== 'good' ? el('p', { className: 'hint' }, 'Re-shoot with a slower turn to fill the gaps — the pack works better the wider the sweep.') : null,
            el('p', { className: 'hint' }, 'Laptop controls: open the spin preview, then drag directly on the picture, use a two-finger trackpad scroll, or press the left and right arrow keys.'));
          dialog('Capture report — ' + person, lines, [
@@ -1914,7 +2117,7 @@ async function extractIdentityPack(asset) {
          ]);
        } else {
          dialog('Reference set created — ' + person, el('div', {},
-           el('p', {}, `${count} frames were extracted successfully.`),
+           el('p', {}, `${extracted} frames were extracted successfully.`),
            el('p', { className: 'hint' }, 'Tracking was unavailable offline, so angle coverage is not verified. You can still inspect every frame with the easy spin preview.')),
          [btn('Close', 'btn', closeDialog),
           btn('Open easy spin preview', 'btn primary', () => openIdentitySpinPreview(person, packAssets, captureMode))]);
@@ -2155,6 +2358,7 @@ async function generativeFillDialog(asset) {
   const negative = el('textarea', { maxLength: 1000, placeholder: 'Optional: details to avoid' });
   const styleIntent = el('select', {},
     el('option', { value: 'natural' }, 'Match believable photography'),
+    el('option', { value: 'film' }, 'Add film character'),
     el('option', { value: 'stylized' }, 'Apply a stylized direction'));
   const defaults = { x: 25, y: 25, width: 50, height: 50 };
   const fields = {};
@@ -2542,7 +2746,7 @@ function renderRail(asset) {
     el('strong', {}, 'Review tools'),
     el('span', { className: 'spacer' }),
     btn('Close', 'btn sm rail-close', () => setReviewRailOpen(false)));
-  const surfaces = activeSurfaces().filter(surface => asset.kind === 'video' || surface.group !== 'tiktok');
+  const surfaces = surfacesForAsset(asset);
   const subsection = (title, detail, body, { open = false, badge = null, name = 'review-subsection' } = {}) => el('details', {
     className: 'rail-subsection', name, open
   }, el('summary', {},
@@ -2679,7 +2883,7 @@ function renderIssuesOnly() {
 function reframeAll(asset) {
   if (!asset.auto?.energy) return toast('Run automated checks first — reframing uses the energy map.', true);
   mutate(asset, 'auto-reframed every surface', () => {
-    for (const s of activeSurfaces()) {
+    for (const s of surfacesForAsset(asset)) {
       const p = ensurePlacement(asset, s.id);
       const base = defaultCrop(asset.width, asset.height, s);
       p.crop = smartCrop(asset.auto.energy, asset.width, asset.height, s, base, asset.geometry?.faces || []);
@@ -2904,7 +3108,7 @@ function renderReview() {
 
   state.index = Math.min(state.index, assets.length - 1);
   const asset = assets[state.index];
-  const surfaces = activeSurfaces();
+  const surfaces = asset ? surfacesForAsset(asset) : activeSurfaces();
   if (!surfaces.find(s => s.id === state.activeSurface)) state.activeSurface = surfaces[0]?.id || null;
   const surface = SURFACE_BY_ID[state.activeSurface];
 
@@ -3124,6 +3328,7 @@ async function openPrintDelivery() {
       const suffix = `${currentPlan.presetId}-${currentPlan.orientation}-${currentPlan.ppi}ppi`;
       await settleOutboundBeforeDelivery(authorizationId, evidenceHash,
         () => downloadBlob(blob, `${stem}-${suffix}.jpg`));
+      recordExport(1);
       status.textContent = `Downloaded ${currentPlan.pixelWidth} × ${currentPlan.pixelHeight} px at ${currentPlan.ppi} PPI.`;
     } catch (error) {
       const release = authorizationId ? await releaseUsage(authorizationId, 'print_export_failed') : null;
@@ -3187,6 +3392,7 @@ async function doExport(exportOpts = {}) {
       if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');
       authorizationId = authorization.authorization.id;
       await settleOutboundBeforeDelivery(authorizationId, evidenceHash, () => downloadBlob(blob, filename));
+      if (!exportOpts.proof) recordExport(pairs.length);
       status.textContent = `Done — ${stats.placements} placement(s), ${stats.files} files, ${(blob.size / 1048576).toFixed(1)} MB.`;
       if (stats.failures.length) {
         status.after(el('p', { style: 'color:var(--warn)' }, `${stats.failures.length} render(s) failed. See EXPORT_WARNINGS.txt inside the zip.`));
@@ -3354,7 +3560,19 @@ function render() {
   if (state.mode === 'board') renderBoard(); else renderReview();
 }
 
+/** Editing works best on the dark surface: the workspace defaults to dark
+ * until the person picks a theme themselves, which then always wins. */
+function applyWorkspaceTheme() {
+  try {
+    if (localStorage.getItem('cros:themePinned')) return;
+    document.documentElement.dataset.theme = 'dark';
+    localStorage.setItem('cros:theme', 'dark');
+  } catch { /* storage unavailable */ }
+}
+
 async function boot(selectId) {
+  clearUndo();
+  if (location.hash === '#workspace') applyWorkspaceTheme();
   state.projects = await store.listProjects();
   if (!state.projects.length) {
     const p = newProject('First campaign');
@@ -3426,9 +3644,10 @@ function wire() {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
     localStorage.setItem('cros:theme', next);
+    localStorage.setItem('cros:themePinned', '1');
   };
 
-  $('#exportBtn').onclick = doExport;
+  $('#exportBtn').onclick = () => doExport();
   $('#exportMoreBtn').onclick = () => { document.querySelector('.topbar-more')?.removeAttribute('open'); doExport(); };
   $('#helpBtn').onclick = showHelp;
   $('#fileInput').onchange = e => { importFiles(e.target.files); e.target.value = ''; };
@@ -3460,11 +3679,11 @@ function wire() {
       return;
     }
     if (e.target.matches('input, textarea, select')) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return undo(); }
     if ($('#dlg').open) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return undo(); }
     const asset = currentAsset();
     const assets = visibleAssets();
-    const surfaces = activeSurfaces();
+    const surfaces = asset ? surfacesForAsset(asset) : activeSurfaces();
 
     if (e.shiftKey && /^[!@#$%]$/.test(e.key)) {
       const n = '!@#$%'.indexOf(e.key) + 1;
@@ -3499,6 +3718,7 @@ function wire() {
   });
 
   window.addEventListener('beforeunload', e => {
+    flushPendingSaves();
     if (state.busy) { e.preventDefault(); e.returnValue = ''; }
   });
 }
@@ -3514,4 +3734,10 @@ if (['localhost', '127.0.0.1', '::1'].includes(location.hostname) && new URLSear
 }
 
 wire();
-boot();
+boot().catch(error => {
+  console.error(error);
+  const viewport = $('#viewport') || document.body;
+  viewport.replaceChildren(el('div', { className: 'empty' },
+    el('h2', {}, 'Studio could not start'),
+    el('p', {}, 'The local project store could not be opened. Close other Studio tabs, leave private browsing, or free some disk space, then reload.')));
+});

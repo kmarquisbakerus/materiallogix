@@ -48,7 +48,8 @@ export async function probeDevice() {
 }
 
 export function deviceSummary(d) {
-  if (!d.webgpu) return 'No WebGPU in this browser — on-device generation is not possible here.';
+  const cores = d.cores ? `${d.cores} processor cores` : 'processor';
   const mem = d.deviceMemoryGB ? `${d.deviceMemoryGB}+ GB RAM` : 'unknown RAM';
+  if (!d.webgpu) return `${cores} · ${mem} · no graphics card this browser can reach`;
   return `${d.adapter || 'GPU'} · ${d.maxBufferMB} MB max buffer · ${mem}`;
 }

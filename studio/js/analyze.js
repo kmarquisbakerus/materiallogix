@@ -338,10 +338,12 @@ export function captureCoverage(frames) {
     ? Math.max(...yaws.map(y => y.yaw)) - Math.min(...yaws.map(y => y.yaw))
     : 0;
 
-  // Big yaw jumps between consecutive frames mean the turn was too fast.
+  // Big yaw jumps between consecutive frames mean the turn was too fast; a
+  // skipped undetected frame widens the jump, so rate by the frame gap.
   let fastTurns = 0;
   for (let i = 1; i < yaws.length; i++) {
-    if (Math.abs(yaws[i].yaw - yaws[i - 1].yaw) > 40) fastTurns++;
+    const gap = Math.max(1, yaws[i].frame - yaws[i - 1].frame);
+    if (Math.abs(yaws[i].yaw - yaws[i - 1].yaw) / gap > 40) fastTurns++;
   }
   if (fastTurns) flags.push(`${fastTurns} jump(s) over 40° between frames — turn about half as fast.`);
 
@@ -350,6 +352,7 @@ export function captureCoverage(frames) {
     facesFound: frames.length - missing,
     yawSpreadDeg: spread,
     coveredBuckets: buckets.size,
+    samples: yaws,
     gaps,
     flags,
     verdict: spread >= 120 && gaps.length <= 1 && !crowded && missing <= 1
@@ -373,13 +376,15 @@ export function estimateBodyYawDeg(body) {
   const midSh = { x: (body.lShoulder.x + body.rShoulder.x) / 2, y: (body.lShoulder.y + body.rShoulder.y) / 2 };
   const torso = Math.hypot(midSh.x - midHip.x, midSh.y - midHip.y);
   if (torso < 1e-4) return null;
-  const span = (body.lShoulder.x - body.rShoulder.x) / torso;   // signed
+  // The projected shoulder line shrinks with the cosine of the turn and flips
+  // sign past the profile, so acos recovers the folded angle exactly; the
+  // nose's sideways offset carries the sine sign that unfolds the direction.
+  const span = (body.lShoulder.x - body.rShoulder.x) / torso;   // signed, tracks cos(yaw)
   const s = Math.max(-1, Math.min(1, span / FRONT_SPAN));
-  const facing = (body.nose?.v ?? 1) >= 0.5;
-  let yaw = facing
-    ? Math.asin(s) * 180 / Math.PI                    // -90..90, 0 = front
-    : 180 - Math.asin(s) * 180 / Math.PI;             // 90..270, 180 = back
-  return Math.round(((yaw % 360) + 360) % 360);
+  const folded = Math.acos(s) * 180 / Math.PI;                  // 0..180
+  const noseOffset = Number.isFinite(body.nose?.x) ? body.nose.x - midSh.x : 0;
+  const yaw = noseOffset >= 0 ? folded : 360 - folded;
+  return Math.round(yaw) % 360;
 }
 
 /** Coverage verdict for a full-body turntable, in 45-degree buckets of 360. */
@@ -403,7 +408,8 @@ export function captureCoverageBody(frames) {
   for (let i = 1; i < yaws.length; i++) {
     let d = Math.abs(yaws[i].yaw - yaws[i - 1].yaw) % 360;
     if (d > 180) d = 360 - d;
-    if (d > 60) fastTurns++;
+    const gap = Math.max(1, yaws[i].frame - yaws[i - 1].frame);
+    if (d / gap > 60) fastTurns++;
   }
   if (fastTurns) flags.push(`${fastTurns} jump(s) over 60° between frames - spin about half as fast.`);
 
@@ -411,6 +417,7 @@ export function captureCoverageBody(frames) {
     frames: frames.length,
     bodiesFound: frames.length - missing,
     coveredBuckets: buckets.size,
+    samples: yaws,
     gaps,
     flags,
     verdict: buckets.size >= 7 && missing <= 1 && !fastTurns ? 'good'
@@ -420,10 +427,11 @@ export function captureCoverageBody(frames) {
 
 // --- perceptual hash (dHash) ----------------------------------------------
 
-function dHash(source) {
+function dHash(source, mirror = false) {
   const c = document.createElement('canvas');
   c.width = 9; c.height = 8;
   const ctx = c.getContext('2d', { willReadFrequently: true });
+  if (mirror) { ctx.translate(9, 0); ctx.scale(-1, 1); }
   ctx.drawImage(source, 0, 0, 9, 8);
   const d = ctx.getImageData(0, 0, 9, 8).data;
   const lum = (x, y) => {
@@ -571,6 +579,7 @@ export async function analyzeAsset(source, w, h, blob, colorTransform = null) {
     megapixels: +((w * h) / 1e6).toFixed(2),
     bytes: blob?.size || 0,
     hash: dHash(source),
+    hashMirror: dHash(source, true),
     sharpness: sharpnessScore(lap),
     exposure: exposure(s),
     cameraNoise: estimateCameraNoise(s),
@@ -661,7 +670,12 @@ export function assetIssues(asset, allAssets, project) {
   const dead = new Set(['rejected', 'needs-new-generation']);
   for (const other of allAssets) {
     if (other.id === asset.id || !other.auto?.hash) continue;
-    const dist = hammingDistance(a.hash, other.auto.hash);
+    // A mirrored regeneration must not slip past the rejected-duplicate block.
+    const dist = Math.min(
+      hammingDistance(a.hash, other.auto.hash),
+      hammingDistance(a.hashMirror, other.auto.hash),
+      hammingDistance(a.hash, other.auto.hashMirror)
+    );
     if (dist <= 6) {
       if (dead.has(other.status) || other.role === 'rejected-example') {
         out.push(issue('block', 'dupe-rejected', `Near-identical to a rejected asset (${other.filename}, distance ${dist}).`, 'Do not ship. Generate a genuinely different take.'));

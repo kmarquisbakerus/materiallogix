@@ -5,7 +5,54 @@ export function supportedVoiceReference({ name = '', type = '' } = {}) {
   return String(type).startsWith('audio/') && SUPPORTED_EXTENSIONS.has(extension);
 }
 
-export function assessVoiceReference(buffer, { minimumSeconds = 10, recommendedSeconds = 20 } = {}) {
+// How much audio a plan may submit, and what is done with it. A real
+// fine-tune needs thirty minutes; below that the reference is prompted, not
+// trained, so Starter is honestly zero-shot.
+const FINE_TUNE_MINIMUM_SECONDS = 30 * 60;
+
+const VOICE_PLANS = Object.freeze({
+  voice_starter: {
+    method: 'prompt',
+    minimumSeconds: 10,
+    recommendedSeconds: 120,
+    maximumSeconds: 300
+  },
+  single: {
+    method: 'train',
+    minimumSeconds: 10,
+    recommendedSeconds: FINE_TUNE_MINIMUM_SECONDS,
+    maximumSeconds: 3600
+  },
+  full: {
+    method: 'train',
+    minimumSeconds: 10,
+    recommendedSeconds: 2 * 3600,
+    maximumSeconds: 2 * 3600
+  }
+});
+
+export function voiceSampleLimits(plan) {
+  return VOICE_PLANS[plan] || VOICE_PLANS.voice_starter;
+}
+
+/**
+ * Prompting or training, for this plan and this much audio. A train-capable
+ * plan still prompts until enough audio exists to train on.
+ */
+export function voiceMethod(plan, seconds) {
+  const limits = voiceSampleLimits(plan);
+  if (limits.method !== 'train') return 'prompt';
+  const usable = Math.min(Number(seconds) || 0, limits.maximumSeconds);
+  return usable >= FINE_TUNE_MINIMUM_SECONDS ? 'train' : 'prompt';
+}
+
+export { FINE_TUNE_MINIMUM_SECONDS };
+
+export function assessVoiceReference(buffer, options = {}) {
+  const limits = voiceSampleLimits(options.plan);
+  const minimumSeconds = options.minimumSeconds ?? limits.minimumSeconds;
+  const recommendedSeconds = options.recommendedSeconds ?? limits.recommendedSeconds;
+  const maximumSeconds = options.maximumSeconds ?? limits.maximumSeconds;
   if (!buffer || !Number.isFinite(buffer.duration) || buffer.duration < minimumSeconds) {
     return { status: 'blocked', reasons: ['reference_too_short'], advisories: [] };
   }
@@ -34,11 +81,17 @@ export function assessVoiceReference(buffer, { minimumSeconds = 10, recommendedS
   if (activeFraction < 0.35) reasons.push('reference_mostly_silent');
   if (clippedFraction > 0.005) reasons.push('reference_clipped');
   if (activeMedian < 0.018 || separationDb < 10) reasons.push('reference_noisy_or_unclear');
+  // Over the plan limit is trimmed, never rejected.
+  const usableSeconds = Math.min(buffer.duration, maximumSeconds);
+  const advisories = [];
+  if (usableSeconds < recommendedSeconds) advisories.push('longer_sample_recommended');
+  if (buffer.duration > maximumSeconds) advisories.push('sample_capped_at_plan_limit');
   return {
-    status: reasons.length ? 'blocked' : 'pass', reasons,
-    advisories: buffer.duration < recommendedSeconds ? ['longer_sample_recommended'] : [],
+    status: reasons.length ? 'blocked' : 'pass', reasons, advisories,
+    limits: { minimumSeconds, recommendedSeconds, maximumSeconds },
     metrics: {
-      durationSeconds: +buffer.duration.toFixed(2), activeFraction: +activeFraction.toFixed(3),
+      durationSeconds: +buffer.duration.toFixed(2), usableSeconds: +usableSeconds.toFixed(2),
+      activeFraction: +activeFraction.toFixed(3),
       clippedPercent: +(clippedFraction * 100).toFixed(3), separationDb: +separationDb.toFixed(1)
     }
   };

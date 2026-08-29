@@ -185,7 +185,12 @@ export function loadGeometry() {
         outputSegmentationMasks: true
       });
       return { faceLm, handLm, poseLm };
-    })().catch(() => null);
+    })().catch(() => {
+      // One offline start must not disable people mapping for the whole
+      // session: forget the failure so the next call can try again.
+      enginePromise = null;
+      return null;
+    });
   }
   return enginePromise;
 }

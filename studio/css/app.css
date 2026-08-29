@@ -100,7 +100,10 @@ body {
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 ::selection { background: var(--gold-wash); }
-:focus-visible { outline: 1px solid var(--gold); outline-offset: 2px; }
+/* transition: none keeps the ring instant — controls that transition "all"
+   would otherwise delay the discrete outline-style flip by half the
+   transition, leaving keyboard focus invisible right when it lands. */
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; transition: none; }
 
 .eyebrow, .rail h3, .panel > summary, .panel-head {
   font: 400 9.5px/1 var(--sans);
@@ -964,3 +967,24 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important;
     animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Setup steps for a customer-installed engine. */
+.setup-steps { margin: 8px 0; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.setup-command-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.setup-command {
+  flex: 1 1 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .28);
+  font-size: 12px;
+  word-break: break-all;
+}
+.setup-choice { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0; }
+.setup-choice > div { flex: 1 1 200px; }
+.setup-choice p { margin: 6px 0 0; }
+.pace-trace svg { display: block; width: 100%; }
+.pace-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.pace-dial { flex: 0 0 auto; min-width: 160px; min-height: 160px; }
+.pace-dial svg { display: block; }
+@media (max-width: 560px) { .pace-row { justify-content: center; text-align: center; } }

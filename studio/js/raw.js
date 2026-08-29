@@ -1,3 +1,5 @@
+import { extractEmbeddedPreview } from './raw-preview.js';
+
 const RAW_EXTENSIONS = new Set([
   '3fr', 'arw', 'cr2', 'cr3', 'dcr', 'dng', 'erf', 'fff', 'iiq',
   'k25', 'kdc', 'mef', 'mos', 'mrw', 'nef', 'nrw', 'orf', 'pef',
@@ -48,17 +50,27 @@ export async function inspectRawHeader(file) {
   if (file.size < 16) return { accepted: false, code: 'raw_file_too_small' };
 
   const head = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+  const ascii = (offset, text) => [...text].every((ch, i) => head[offset + i] === ch.charCodeAt(0));
   const littleTiff = head[0] === 0x49 && head[1] === 0x49 && head[2] === 0x2a && head[3] === 0x00;
   const bigTiff = head[0] === 0x4d && head[1] === 0x4d && head[2] === 0x00 && head[3] === 0x2a;
-  const dngTiff = littleTiff || bigTiff;
   const cr2 = littleTiff && head[8] === 0x43 && head[9] === 0x52;
+  const cr3 = ascii(4, 'ftyp') && ascii(8, 'crx ');
+  const raf = ascii(0, 'FUJIFILMCCD-RAW');
+  const x3f = ascii(0, 'FOVb');
 
-  if (!dngTiff) return { accepted: false, code: 'raw_container_unrecognized' };
+  let container = null;
+  if (cr2) container = 'cr2-tiff';
+  else if (littleTiff || bigTiff) container = 'tiff-raw';
+  else if (cr3) container = 'cr3-bmff';
+  else if (raf) container = 'raf-fujifilm';
+  else if (x3f) container = 'x3f-foveon';
+
+  if (!container) return { accepted: false, code: 'raw_container_unrecognized' };
   return {
     accepted: true,
     code: 'raw_header_accepted',
-    container: cr2 ? 'cr2-tiff' : 'tiff-raw',
-    byteOrder: littleTiff ? 'little' : 'big'
+    container,
+    byteOrder: littleTiff ? 'little' : bigTiff ? 'big' : 'n/a'
   };
 }
 
@@ -77,6 +89,27 @@ function defaultWorkerFactory(workerUrl) {
   return new Worker(workerUrl, { type: 'module' });
 }
 
+async function embeddedPreviewImport(file, inspection) {
+  const preview = await extractEmbeddedPreview(file);
+  if (!preview.ok) return null;
+  const outputName = String(file.name || 'camera-raw').replace(/\.[^.]+$/, '') + '-camera-preview.jpg';
+  return {
+    ok: true,
+    mode: 'embedded-preview',
+    file: new File([preview.jpeg], outputName, { type: 'image/jpeg' }),
+    width: preview.width,
+    height: preview.height,
+    inspection,
+    provenance: {
+      sourceFilename: file.name || '',
+      sourceBytes: file.size || 0,
+      decoder: { name: 'embedded-camera-preview', version: preview.source },
+      color: { name: 'camera-rendered', version: 'as-shot' },
+      worker: 'offline'
+    }
+  };
+}
+
 export async function prepareRawCameraImport(file, options = {}) {
   const inspection = await inspectRawHeader(file);
   if (!inspection.accepted) {
@@ -87,13 +120,20 @@ export async function prepareRawCameraImport(file, options = {}) {
   const workerFactory = options.workerFactory || defaultWorkerFactory;
   const worker = workerFactory(workerUrl);
   if (!worker) {
+    const preview = await embeddedPreviewImport(file, inspection);
+    if (preview) return preview;
     return { ok: false, code: 'raw_decoder_unavailable', message: setupMessage('raw_decoder_unavailable'), inspection };
   }
 
   return new Promise(resolve => {
+    const resolveWithFallback = failure => {
+      embeddedPreviewImport(file, inspection)
+        .catch(() => null)
+        .then(preview => resolve(preview || failure));
+    };
     const timer = setTimeout(() => {
       worker.terminate?.();
-      resolve({ ok: false, code: 'raw_decoder_timeout', message: setupMessage('raw_decoder_timeout'), inspection });
+      resolveWithFallback({ ok: false, code: 'raw_decoder_timeout', message: setupMessage('raw_decoder_timeout'), inspection });
     }, options.timeoutMs || RAW_DECODE_TIMEOUT_MS);
 
     worker.onmessage = event => {
@@ -101,7 +141,7 @@ export async function prepareRawCameraImport(file, options = {}) {
       worker.terminate?.();
       const data = event.data || {};
       if (!data.ok || !data.blob) {
-        resolve({
+        resolveWithFallback({
           ok: false,
           code: data.code || 'raw_decoder_unavailable',
           message: data.message || setupMessage(data.code),
@@ -112,6 +152,7 @@ export async function prepareRawCameraImport(file, options = {}) {
       const outputName = String(file.name || 'camera-raw').replace(/\.[^.]+$/, '') + '.png';
       resolve({
         ok: true,
+        mode: 'decoded',
         file: new File([data.blob], outputName, { type: data.mime || 'image/png' }),
         width: data.width || 0,
         height: data.height || 0,
@@ -128,7 +169,7 @@ export async function prepareRawCameraImport(file, options = {}) {
     worker.onerror = () => {
       clearTimeout(timer);
       worker.terminate?.();
-      resolve({ ok: false, code: 'raw_decoder_unavailable', message: setupMessage('raw_decoder_unavailable'), inspection });
+      resolveWithFallback({ ok: false, code: 'raw_decoder_unavailable', message: setupMessage('raw_decoder_unavailable'), inspection });
     };
     worker.postMessage({ type: 'decode-camera-raw', file, limits: { maxBytes: RAW_MAX_BYTES } });
   });
