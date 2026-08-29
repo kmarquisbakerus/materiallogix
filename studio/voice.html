@@ -151,7 +151,8 @@ import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from 
 import { voiceGuidance } from './js/capture-guidance.js';
 
 const $ = s => document.querySelector(s);
-const BRIDGE = `http://${location.hostname || '127.0.0.1'}:8189`;
+const BRIDGE_HOST = /^(localhost$|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(location.hostname) ? location.hostname : '127.0.0.1';
+const BRIDGE = `http://${BRIDGE_HOST}:8189`;
 let engineReady = false;
 let knownVoicePacks = [];
 
