@@ -220,6 +220,30 @@ async function checkEngine() {
     $('#engineState').textContent = engineReady
       ? (j.voice.warm ? 'engine warm — renders are fast' : 'engine installed — first render loads the model (~30s)')
       : 'Local voice engine is not installed. Imported-audio enhancement remains available.';
+    $('#voiceSetupBtn')?.remove();
+    if (!engineReady) {
+      // One click, honest cost, no page-leaving.
+      const setup = document.createElement('button');
+      setup.id = 'voiceSetupBtn';
+      setup.className = 'btn sm';
+      setup.type = 'button';
+      setup.textContent = 'Set up Voice on this computer — wants 6 GB free';
+      setup.onclick = async () => {
+        setup.disabled = true;
+        setup.textContent = 'Setting up Voice… this can take a while';
+        try {
+          const res = await fetch(BRIDGE + '/engines/voice/install', { method: 'POST' });
+          const out = await res.json();
+          if (!res.ok) throw new Error(out.error || 'setup failed');
+          await checkEngine();
+        } catch (error) {
+          setup.disabled = false;
+          setup.textContent = 'Voice setup did not finish — try again';
+          $('#engineState').textContent = String(error.message || error);
+        }
+      };
+      $('#engineState').after(setup);
+    }
   } catch {
     $('#engineState').textContent = 'Voice tools are offline. Open MaterialLogix Studio on your computer to render.';
     rebuildVoiceOptions();
