@@ -227,7 +227,14 @@ async function checkEngine() {
       setup.id = 'voiceSetupBtn';
       setup.className = 'btn sm';
       setup.type = 'button';
-      setup.textContent = 'Set up Voice on this computer — wants 6 GB free';
+      // The bridge checked the disk; the number only appears when it is the problem.
+      const room = j.voice?.setup;
+      if (room?.roomKnown && !room.hasRoom) {
+        setup.textContent = `Voice needs ${room.neededGb} GB free to set up — this computer has ${room.freeGb} GB`;
+        setup.disabled = true;
+      } else {
+        setup.textContent = 'Set up Voice on this computer';
+      }
       setup.onclick = async () => {
         setup.disabled = true;
         setup.textContent = 'Setting up Voice… this can take a while';
