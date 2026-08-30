@@ -168,12 +168,14 @@ async function createStarter(product, starter) {
 
 function enterWorkspace(kind) {
   try { sessionStorage.setItem('mlx:start-product', kind); } catch { /* unavailable */ }
-  closeEntrance({ focus: false });
-  history.replaceState(null, '', `${location.pathname}${location.search}#workspace`);
   if (kind === 'voice') {
+    // Leave the entrance up while the browser navigates - closing it first
+    // flashes the workspace for a beat before the Voice page arrives.
     location.assign(preserveDemo('voice.html'));
     return;
   }
+  closeEntrance({ focus: false });
+  history.replaceState(null, '', `${location.pathname}${location.search}#workspace`);
   if (kind === 'video') {
     // Reload so the workspace greets you as Video Studio with its own
     // import action, instead of the Photo start page behind a file dialog.
@@ -240,7 +242,7 @@ function productCard(product, state) {
   const wash = make('div', 'studio-entry-card__wash');
   const content = make('div', 'studio-entry-card__content');
   const top = make('div', 'studio-entry-card__top');
-  top.append(make('span', 'studio-entry-card__number', product.number), make('span', 'studio-entry-card__badge', words.badge));
+  top.append(make('span', 'studio-entry-card__badge', words.badge));
   const kicker = make('p', 'studio-entry-card__kicker', product.kicker);
   const title = make('h2', '', product.title);
   const copy = make('p', 'studio-entry-card__copy', product.copy);

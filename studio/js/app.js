@@ -424,6 +424,13 @@ function photoWorkflowSteps(active = 1) {
         el('span', {}, String(index + 1)), label)));
 }
 
+function openPhotoCreationDialog() {
+  // From the start page, generation deserves the centre of the screen —
+  // not a drawer. The dialog closes itself when the photos arrive.
+  const d = dialog('Generate a photo', generatePanel(), [btn('Close', 'btn', closeDialog)]);
+  d.classList.add('generate-dialog');
+}
+
 function openPhotoCreation() {
   const sidebar = $('#sidebar');
   sidebar.classList.remove('closed');
@@ -614,6 +621,8 @@ function generatePanel() {
         state.assets = await store.listAssets(state.project.id);
         status.textContent = `Done \u2014 ${count} photo${count === 1 ? '' : 's'} added and checked.`;
         render();
+        const dlg = $('#dlg');
+        if (dlg.open && dlg.classList.contains('generate-dialog')) { dlg.classList.remove('generate-dialog'); closeDialog(); }
         toast(`Created ${count} candidate${count === 1 ? '' : 's'}.`);
       } catch (err) {
         status.textContent = 'Failed: ' + err.message;
@@ -3121,7 +3130,7 @@ function renderReview() {
       el('h2', {}, 'Create or open a photo'),
       el('p', {}, 'Generate something new or bring in a photo, then Studio checks people before you edit.'),
       el('div', { className: 'photo-start-actions' },
-        btn('Generate photo', 'btn primary', openPhotoCreation),
+        btn('Generate photo', 'btn primary', openPhotoCreationDialog),
         btn('Import photo or video', 'btn', () => $('#fileInput').click())),
       photoWorkflowSteps(1)));
     return;
