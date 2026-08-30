@@ -230,7 +230,7 @@ async function checkEngine() {
       // The bridge checked the disk; the number only appears when it is the problem.
       const room = j.voice?.setup;
       if (room?.roomKnown && !room.hasRoom) {
-        setup.textContent = `Voice needs ${room.neededGb} GB free to set up — this computer has ${room.freeGb} GB`;
+        setup.textContent = `Clear ${room.neededGb} GB and Voice moves in. This computer has ${room.freeGb}.`;
         setup.disabled = true;
       } else {
         setup.textContent = 'Set up Voice on this computer';
