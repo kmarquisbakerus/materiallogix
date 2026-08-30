@@ -780,19 +780,16 @@ function localToolsPanel() {
 
 /** Load the product-made QA proof in both the packaged app and source checkout. */
 async function loadDemo() {
-  const names = ['upscale-qa.png'];
+  // One canonical location: the proof ships with the app's own assets in
+  // every layout, so there is nothing to hunt for.
   const files = [];
-  for (const n of names) {
-    for (const base of ['samples/', 'site/media/']) {
-      try {
-        const r = await fetch(base + n);
-        if (!r.ok) continue;
-        const b = await r.blob();
-        files.push(new File([b], n, { type: b.type || 'image/png' }));
-        break;
-      } catch { /* try the next packaged location */ }
+  try {
+    const r = await fetch('assets/upscale-qa.png');
+    if (r.ok) {
+      const b = await r.blob();
+      files.push(new File([b], 'upscale-qa.png', { type: b.type || 'image/png' }));
     }
-  }
+  } catch { /* handled below */ }
   if (!files.length) return toast('The product-made QA proof could not be loaded.', true);
   if (!state.project.brief.campaignGoal) {
     state.project.brief.brand = state.project.brief.brand || 'Demo';
