@@ -2,6 +2,7 @@
 // decisions belong to the same-origin server/edge, never downloadable JavaScript.
 
 import { apiUrl } from './api-root.js';
+import { APP_VERSION, MINIMUM_COMPATIBLE, versionBehind } from './app-version.js';
 
 async function enforceAccessBoundary() {
   const params = new URLSearchParams(location.search);
@@ -37,6 +38,41 @@ async function enforceAccessBoundary() {
 }
 
 await enforceAccessBoundary();
+
+// Installed copies check the live stamp once per boot. The hosted app is
+// always current, so it skips.
+async function checkForUpdates() {
+  if (location.hostname === 'materiallogix.com') return;
+  let stamp;
+  try {
+    const response = await fetch('https://materiallogix.com/studio/version.json', {
+      cache: 'no-store', signal: AbortSignal.timeout(4000)
+    });
+    if (!response.ok) return;
+    stamp = await response.json();
+  } catch { return; }
+  if (!stamp?.version || !versionBehind(APP_VERSION, stamp.version)) return;
+  const blocking = versionBehind(APP_VERSION, stamp.minimum || '0.0.0');
+  const bar = document.createElement('div');
+  bar.id = 'mlUpdateBar';
+  bar.setAttribute('role', blocking ? 'alertdialog' : 'status');
+  bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483000;display:flex;gap:14px;align-items:center;justify-content:center;padding:12px 18px;background:#171512;color:#f4efe4;border-top:1px solid #d6b26e;font:500 13px/1.4 Inter,sans-serif';
+  bar.innerHTML = `<span>${blocking
+    ? 'This copy is too old to work correctly. Update to continue.'
+    : `A newer Studio (${stamp.version}) is available.`}</span>
+    <a href="https://materiallogix.com/#access" style="color:#171512;background:#d6b26e;padding:7px 14px;border-radius:9px;text-decoration:none;font-weight:600">Get the update</a>`;
+  if (!blocking) {
+    const later = document.createElement('button');
+    later.textContent = 'Later';
+    later.style.cssText = 'background:none;border:1px solid #4a4438;color:#a69c86;padding:7px 12px;border-radius:9px;cursor:pointer';
+    later.onclick = () => bar.remove();
+    bar.append(later);
+  } else {
+    document.querySelector('#app')?.setAttribute('inert', '');
+  }
+  document.body.append(bar);
+}
+checkForUpdates();
 
 const select = document.querySelector('#studioServiceSelect');
 if (select) {
