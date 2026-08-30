@@ -19,6 +19,7 @@
 <h2>Scope</h2>
 <p>This website, the license verification endpoint, and the shipped applications. The engines run locally on user machines; vulnerabilities in upstream open-source components should also go to those projects.</p>
 <h2>Design posture</h2>
+<p><b>Local network.</b> Phone control over Wi-Fi is off by default. When on, the connection is encrypted (TLS) and gated by a high-entropy access token carried in the pairing code; repeated wrong tokens lock the caller out, and only this computer's own addresses are accepted. The desktop bridge otherwise serves the local machine only.</p>
 <p>The product is local-first: local creative files stay on the user's device. Account, license, billing, privacy-choice, security, cloud-job, and user-approved optional diagnostic records are separated by purpose and protected with least-privilege access. Optional diagnostics exclude media, prompts, scripts, filenames, project names, free-form error text, and voice recordings. Cloud jobs are packaged, authorized, metered, and stored separately from account credentials.</p>
 </main>
 <footer class="legal-footer"><div class="legal-footer-inner"><span>MaterialLogix Studio™ · LibraSide Technologies, LLC</span><div class="legal-footer-links"><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="security.html">Security</a><a href="index.html">All legal</a></div></div></footer>
