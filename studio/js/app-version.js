@@ -1,6 +1,6 @@
 // One version, one source. The publisher stamps studio/version.json from
 // these; installed copies compare against the live stamp at boot.
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.2.0';
 export const MINIMUM_COMPATIBLE = '0.1.0';
 
 export function versionBehind(local, remote) {
