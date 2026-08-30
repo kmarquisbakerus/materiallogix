@@ -8,7 +8,7 @@ import {
   defaultCrop, clampCrop, zoomCrop, panCrop, snapToRatio, renderCrop, loadImage, grabVideoFrame
 } from './crop.js';
 import {
-  analyzeAsset, assetIssues, placementIssues, preflight, smartCrop, captureCoverage, captureCoverageBody
+  analyzeAsset, assetIssues, placementIssues, preflight, smartCrop, captureCoverage, captureCoverageBody, cornerSignature, captureFrameQuality
 } from './analyze.js';
 import { buildPackage, decisionsMarkdown, approvedPairs, slug } from './export.js';
 import { buildClientPage, applyClientVerdict } from './clientpage.js';
@@ -2076,6 +2076,7 @@ async function extractIdentityPack(asset) {
          for (let i = 0; i < count; i++) {
            const t = duration * ((i + 0.5) / count);
            const { canvas } = await grabVideoFrame(url, t);
+           const corners = cornerSignature(canvas);
            const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
            const file = new File([blob], `${slug(person)}_identity_${String(i + 1).padStart(2, '0')}.png`, { type: 'image/png' });
            const ref = newAsset(state.project.id, file);
@@ -2087,6 +2088,7 @@ async function extractIdentityPack(asset) {
            ref.width = canvas.width;
            ref.height = canvas.height;
            ref.provenance = `Identity frame ${i + 1}/${count} at ${t.toFixed(2)}s from ${asset.filename}`;
+           ref.captureCorners = corners;
            log(ref, `extracted from ${asset.filename}`, state.reviewer);
            await store.addAsset(ref, file);
            await runAnalysis(ref, { quiet: true });
@@ -2106,6 +2108,7 @@ async function extractIdentityPack(asset) {
          const rep = captureMode === 'body'
            ? captureCoverageBody(packFrames)
            : captureCoverage(packFrames);
+         rep.flags = [...rep.flags, ...captureFrameQuality(packAssets, captureMode)];
          const lines = el('div', {},
            el('p', {}, captureMode === 'body'
              ? `Coverage: ${rep.bodiesFound}/${rep.frames} frames tracked · ${rep.coveredBuckets}/8 angle zones of the full 360° · verdict: ${rep.verdict}.`

@@ -450,6 +450,66 @@ function dHash(source, mirror = false) {
   return hex;
 }
 
+// --- capture frame quality --------------------------------------------------
+// The scan is only as good as its worst frames. Each extracted identity
+// frame already carries the analyzers' measurements; this turns them into
+// per-frame verdicts with fix-it advice, and a corner signature taken at
+// extraction time turns "keep the camera still" into a measurement.
+
+export function cornerSignature(canvas) {
+  const ctx = canvas.getContext('2d');
+  const pick = (x, y) => {
+    const s = Math.max(8, Math.round(Math.min(canvas.width, canvas.height) * 0.08));
+    const d = ctx.getImageData(x ? canvas.width - s : 0, y ? canvas.height - s : 0, s, s).data;
+    let sum = 0, sq = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      sum += g; sq += g * g;
+    }
+    const n = d.length / 4;
+    return [sum / n, Math.sqrt(Math.max(0, sq / n - (sum / n) ** 2))];
+  };
+  // Top corners only: the turning subject owns the middle and bottom.
+  return [pick(0, 0), pick(1, 0)];
+}
+
+export function captureFrameQuality(packAssets, mode = 'face') {
+  const flags = [];
+  packAssets.forEach((a, index) => {
+    const n = index + 1;
+    const auto = a.auto || {};
+    if (auto.sharpness !== undefined && auto.sharpness < 6) {
+      flags.push(`Frame ${n} is blurred - turn slower and hold the light.`);
+    }
+    if (auto.exposure?.blown > 0.2) flags.push(`Frame ${n} is blown out - dim or angle the light.`);
+    if (auto.exposure?.crushed > 0.45) flags.push(`Frame ${n} is too dark - add light before capturing.`);
+    const people = mode === 'body' ? (a.geometry?.bodies?.length || 0) : (a.geometry?.faces?.length || 0);
+    if (people > 1) flags.push(`Frame ${n} has ${people} people - capture one person at a time.`);
+    if (mode === 'face') {
+      const face = a.geometry?.faces?.[0];
+      if (face && a.width && face.width / a.width < 0.14) {
+        flags.push(`Frame ${n}: the face is small in frame - step closer to the camera.`);
+      }
+    }
+  });
+  // Camera movement: the top background corners should stay put while the
+  // person turns. Compare each frame's corner means to the first frame's.
+  const signed = packAssets.filter(a => Array.isArray(a.captureCorners));
+  if (signed.length >= 3) {
+    const base = signed[0].captureCorners;
+    let moved = 0;
+    for (const a of signed.slice(1)) {
+      const drift = a.captureCorners.reduce((worst, corner, i) =>
+        Math.max(worst, Math.abs(corner[0] - base[i][0])), 0);
+      if (drift > 34) moved += 1;
+    }
+    if (moved / (signed.length - 1) > 0.4) {
+      flags.push('The camera moved during the capture - keep the laptop or camera still; you turn, the computer does not.');
+    }
+  }
+  return flags;
+}
+
 export function hammingDistance(a, b) {
   if (!a || !b || a.length !== b.length) return 64;
   let d = 0;
