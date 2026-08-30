@@ -51,16 +51,24 @@ async function checkForUpdates() {
     if (!response.ok) return;
     stamp = await response.json();
   } catch { return; }
-  if (!stamp?.version || !versionBehind(APP_VERSION, stamp.version)) return;
-  const blocking = versionBehind(APP_VERSION, stamp.minimum || '0.0.0');
+  // A fetched value never reaches innerHTML: only strict semver is trusted,
+  // and the bar is built from text nodes.
+  const semver = /^\d+\.\d+\.\d+$/;
+  if (!semver.test(stamp?.version || '') || !versionBehind(APP_VERSION, stamp.version)) return;
+  const blocking = semver.test(stamp?.minimum || '') && versionBehind(APP_VERSION, stamp.minimum);
   const bar = document.createElement('div');
   bar.id = 'mlUpdateBar';
   bar.setAttribute('role', blocking ? 'alertdialog' : 'status');
   bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483000;display:flex;gap:14px;align-items:center;justify-content:center;padding:12px 18px;background:#171512;color:#f4efe4;border-top:1px solid #d6b26e;font:500 13px/1.4 Inter,sans-serif';
-  bar.innerHTML = `<span>${blocking
+  const message = document.createElement('span');
+  message.textContent = blocking
     ? 'This copy is too old to work correctly. Update to continue.'
-    : `A newer Studio (${stamp.version}) is available.`}</span>
-    <a href="https://materiallogix.com/#access" style="color:#171512;background:#d6b26e;padding:7px 14px;border-radius:9px;text-decoration:none;font-weight:600">Get the update</a>`;
+    : `A newer Studio (${stamp.version}) is available.`;
+  const link = document.createElement('a');
+  link.href = 'https://materiallogix.com/#access';
+  link.textContent = 'Get the update';
+  link.style.cssText = 'color:#171512;background:#d6b26e;padding:7px 14px;border-radius:9px;text-decoration:none;font-weight:600';
+  bar.append(message, link);
   if (!blocking) {
     const later = document.createElement('button');
     later.textContent = 'Later';

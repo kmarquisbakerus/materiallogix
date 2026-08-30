@@ -11,15 +11,94 @@ export const EDIT_DEFAULTS = Object.freeze({
   adjustments: Object.freeze({
     exposure: 0, contrast: 0, highlights: 0, shadows: 0,
     temperature: 0, tint: 0, saturation: 0, vibrance: 0,
-    denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0
+    denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0,
+    rotate: 0, heals: Object.freeze([]),
+    selective: Object.freeze({ exposure: 0, temperature: 0, saturation: 0, strokes: Object.freeze([]) }),
+    curve: null
   }),
   pixelGrid: Object.freeze({ enabled: false, columns: 12, sensitivity: 55 })
 });
+
+/** Anchored edits live in normalized source coordinates; anything malformed is dropped, not repaired. */
+const sanitizeStamps = (list, maxRadius) => (Array.isArray(list) ? list : [])
+  .filter(spot => [spot?.x, spot?.y, spot?.r].every(Number.isFinite) && spot.r > 0)
+  .map(spot => ({ x: clamp(spot.x, 0, 1), y: clamp(spot.y, 0, 1), r: clamp(spot.r, 0.001, maxRadius) }));
+
+export const CURVE_IDENTITY = Object.freeze([
+  Object.freeze({ x: 0, y: 0 }), Object.freeze({ x: 85, y: 85 }),
+  Object.freeze({ x: 170, y: 170 }), Object.freeze({ x: 255, y: 255 })
+]);
+
+/** Anything but four finite points falls back to the identity curve. */
+const sanitizeCurve = value => {
+  const raw = Array.isArray(value) ? value : [];
+  if (raw.length !== 4 || raw.some(p => ![p?.x, p?.y].every(Number.isFinite))) {
+    return CURVE_IDENTITY.map(p => ({ ...p }));
+  }
+  return raw.map(p => ({ x: clamp(p.x, 0, 255), y: clamp(p.y, 0, 255) })).sort((a, b) => a.x - b.x);
+};
+
+/**
+ * 256-entry lookup table from the four-point luminance curve, shaped with a
+ * monotone cubic so tones never overshoot between points. Identity returns
+ * null: no table, no work.
+ */
+export function buildLuminanceLut(points) {
+  const pts = sanitizeCurve(points);
+  if (pts.every(p => Math.abs(p.y - p.x) < 0.5)) return null;
+  const stops = [];
+  for (const p of pts) {
+    if (stops.length && Math.abs(p.x - stops[stops.length - 1].x) < 0.5) stops[stops.length - 1] = p;
+    else stops.push(p);
+  }
+  const count = stops.length;
+  const lut = new Uint8ClampedArray(256);
+  if (count === 1) { lut.fill(clampByte(stops[0].y)); return lut; }
+  const xs = stops.map(p => p.x);
+  const ys = stops.map(p => p.y);
+  const widths = [];
+  const slopes = [];
+  for (let i = 0; i < count - 1; i++) {
+    widths.push(Math.max(0.0001, xs[i + 1] - xs[i]));
+    slopes.push((ys[i + 1] - ys[i]) / widths[i]);
+  }
+  const tangents = [slopes[0]];
+  for (let i = 1; i < count - 1; i++) {
+    tangents.push(slopes[i - 1] * slopes[i] <= 0 ? 0
+      : 3 * (widths[i - 1] + widths[i]) / ((2 * widths[i] + widths[i - 1]) / slopes[i - 1] + (widths[i] + 2 * widths[i - 1]) / slopes[i]));
+  }
+  tangents.push(slopes[count - 2]);
+  for (let x = 0; x < 256; x++) {
+    if (x <= xs[0]) { lut[x] = clampByte(ys[0]); continue; }
+    if (x >= xs[count - 1]) { lut[x] = clampByte(ys[count - 1]); continue; }
+    let i = 0;
+    while (x > xs[i + 1]) i++;
+    const t = (x - xs[i]) / widths[i];
+    const t2 = t * t;
+    const t3 = t2 * t;
+    lut[x] = clampByte(ys[i] * (2 * t3 - 3 * t2 + 1) + widths[i] * tangents[i] * (t3 - 2 * t2 + t)
+      + ys[i + 1] * (3 * t2 - 2 * t3) + widths[i] * tangents[i + 1] * (t3 - t2));
+  }
+  return lut;
+}
+
+const sanitizeSelective = value => {
+  const raw = value && typeof value === 'object' ? value : {};
+  return {
+    exposure: clamp(raw.exposure, -1, 1),
+    temperature: clamp(raw.temperature, -100, 100),
+    saturation: clamp(raw.saturation, -100, 100),
+    strokes: sanitizeStamps(raw.strokes, 0.15)
+  };
+};
 
 export function ensureEditState(asset) {
   asset.edit = asset.edit || {};
   asset.edit.mode = asset.edit.mode === 'advanced' ? 'advanced' : 'guided';
   asset.edit.adjustments = { ...EDIT_DEFAULTS.adjustments, ...(asset.edit.adjustments || {}) };
+  asset.edit.adjustments.heals = sanitizeStamps(asset.edit.adjustments.heals, 0.08);
+  asset.edit.adjustments.selective = sanitizeSelective(asset.edit.adjustments.selective);
+  asset.edit.adjustments.curve = sanitizeCurve(asset.edit.adjustments.curve);
   asset.edit.pixelGrid = { ...EDIT_DEFAULTS.pixelGrid, ...(asset.edit.pixelGrid || {}) };
   return asset.edit;
 }
@@ -96,16 +175,89 @@ export function edgeAwareDenoiseRgba(input, width, height, amount = 0) {
 }
 
 /**
+ * One-click spot repair: each spot is rebuilt from a ring of surrounding
+ * pixels, distance-weighted, then feathered into the untouched frame.
+ */
+function healSpotsRgba(data, width, height, heals, frame) {
+  for (const spot of heals) {
+    const [cx, cy] = frame.point(spot.x, spot.y);
+    const radius = Math.min(Math.max(frame.radius(spot.r), 2), Math.min(width, height) / 3);
+    if (cx < -radius || cy < -radius || cx > width + radius || cy > height + radius) continue;
+    const ring = radius * 1.45;
+    const count = Math.max(12, Math.min(40, Math.round(ring)));
+    const samples = [];
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * 2 * Math.PI;
+      const x = Math.round(clamp(cx + Math.cos(angle) * ring, 0, width - 1));
+      const y = Math.round(clamp(cy + Math.sin(angle) * ring, 0, height - 1));
+      const j = (y * width + x) * 4;
+      samples.push([x, y, data[j], data[j + 1], data[j + 2]]);
+    }
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const x1 = Math.min(width - 1, Math.ceil(cx + radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const y1 = Math.min(height - 1, Math.ceil(cy + radius));
+    const floor = radius * radius * 0.06;
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const blend = 1 - smoothstep(0.62, 1, Math.hypot(x - cx, y - cy) / radius);
+        if (blend <= 0) continue;
+        let weightSum = 0, r = 0, g = 0, b = 0;
+        for (const [sampleX, sampleY, sampleR, sampleG, sampleB] of samples) {
+          const weight = 1 / ((x - sampleX) ** 2 + (y - sampleY) ** 2 + floor);
+          weightSum += weight;
+          r += sampleR * weight; g += sampleG * weight; b += sampleB * weight;
+        }
+        const i = (y * width + x) * 4;
+        data[i] = clampByte(data[i] + (r / weightSum - data[i]) * blend);
+        data[i + 1] = clampByte(data[i + 1] + (g / weightSum - data[i + 1]) * blend);
+        data[i + 2] = clampByte(data[i + 2] + (b / weightSum - data[i + 2]) * blend);
+      }
+    }
+  }
+}
+
+/** Soft-edged mask from brush stamps, in canvas space; overlapping touches keep the strongest one. */
+function selectiveMaskFor(strokes, frame, width, height) {
+  const mask = new Float32Array(width * height);
+  for (const stamp of strokes) {
+    const [cx, cy] = frame.point(stamp.x, stamp.y);
+    const radius = Math.max(frame.radius(stamp.r), 1.5);
+    const x0 = Math.max(0, Math.floor(cx - radius));
+    const x1 = Math.min(width - 1, Math.ceil(cx + radius));
+    const y0 = Math.max(0, Math.floor(cy - radius));
+    const y1 = Math.min(height - 1, Math.ceil(cy + radius));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const soft = 1 - smoothstep(0.55, 1, Math.hypot(x - cx, y - cy) / radius);
+        if (soft <= 0) continue;
+        const i = y * width + x;
+        if (soft > mask[i]) mask[i] = soft;
+      }
+    }
+  }
+  return mask;
+}
+
+/**
  * Apply every visible photo adjustment to a rendered canvas. This is the
  * authoritative preview/export path; previewFilter remains a lightweight CSS
- * approximation for surfaces that cannot read pixels.
+ * approximation for surfaces that cannot read pixels. `frame` maps normalized
+ * source coordinates onto this canvas so anchored edits stay anchored.
  */
-export function applyPixelAdjustments(canvas, adjustments = {}) {
+export function applyPixelAdjustments(canvas, adjustments = {}, frame = null) {
   const a = { ...EDIT_DEFAULTS.adjustments, ...adjustments };
   const width = canvas.width;
   const height = canvas.height;
   if (!width || !height) return canvas;
-  if (!Object.values(a).some(value => Math.abs(Number(value) || 0) > 0.0001)) return canvas;
+  const heals = sanitizeStamps(a.heals, 0.08);
+  const selective = sanitizeSelective(a.selective);
+  const selectiveActive = selective.strokes.length > 0 &&
+    (Math.abs(selective.exposure) > 0.0001 || Math.abs(selective.temperature) > 0.0001 || Math.abs(selective.saturation) > 0.0001);
+  const lut = buildLuminanceLut(a.curve);
+  // Straighten is geometry, applied while the crop is drawn; alone it never needs a pixel pass.
+  const slidersActive = Object.entries(a).some(([key, value]) => key !== 'rotate' && Math.abs(Number(value) || 0) > 0.0001);
+  if (!slidersActive && !heals.length && !selectiveActive && !lut) return canvas;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
   const blur = clamp(a.blur, 0, 20) / 4;
@@ -119,11 +271,20 @@ export function applyPixelAdjustments(canvas, adjustments = {}) {
     ctx.filter = 'none';
   }
 
+  const anchor = frame || { point: (nx, ny) => [nx * width, ny * height], radius: nr => Math.abs(Number(nr) || 0) * width };
   const image = ctx.getImageData(0, 0, width, height);
+  // Repairs land first so every grade below works on the healed photograph.
+  if (heals.length) healSpotsRgba(image.data, width, height, heals, anchor);
   if (clamp(a.denoise, 0, 100) > 0) {
     image.data.set(edgeAwareDenoiseRgba(image.data, width, height, a.denoise));
   }
   const data = image.data;
+  const mask = selectiveActive ? selectiveMaskFor(selective.strokes, anchor, width, height) : null;
+  // A repair-only edit is finished here; the tonal pass has nothing to do.
+  if (!slidersActive && !mask && !lut) {
+    ctx.putImageData(image, 0, 0);
+    return canvas;
+  }
   const exposure = Math.pow(2, clamp(a.exposure, -2, 2));
   const contrast = 1 + clamp(a.contrast, -100, 100) / 100;
   const highlights = clamp(a.highlights, -100, 100) / 100;
@@ -168,6 +329,27 @@ export function applyPixelAdjustments(canvas, adjustments = {}) {
       r = luma + (r - luma) * colorScale;
       g = luma + (g - luma) * colorScale;
       b = luma + (b - luma) * colorScale;
+
+      if (mask) {
+        const strength = mask[y * width + x];
+        if (strength > 0.004) {
+          const gain = Math.pow(2, selective.exposure * strength);
+          r *= gain; g *= gain; b *= gain;
+          const warmth = (selective.temperature / 100) * strength * 24;
+          r += warmth; b -= warmth;
+          const brushLuma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          const brushScale = Math.max(0, 1 + (selective.saturation / 100) * strength);
+          r = brushLuma + (r - brushLuma) * brushScale;
+          g = brushLuma + (g - brushLuma) * brushScale;
+          b = brushLuma + (b - brushLuma) * brushScale;
+        }
+      }
+
+      if (lut) {
+        const toneIn = Math.max(0, Math.min(255, 0.2126 * r + 0.7152 * g + 0.0722 * b));
+        const lift = lut[Math.round(toneIn)] - toneIn;
+        r += lift; g += lift; b += lift;
+      }
 
       if (grain > 0) {
         const hash = Math.sin((x + 1) * 12.9898 + (y + 1) * 78.233) * 43758.5453;

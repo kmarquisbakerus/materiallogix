@@ -39,6 +39,32 @@ export function panCrop(crop, dx, dy) {
   return clampCrop({ ...crop, x: crop.x + dx, y: crop.y + dy });
 }
 
+/** Degrees the straighten tool accepts, clamped at render so stored state can never leak a corner. */
+const MAX_STRAIGHTEN_DEG = 15;
+
+export function straightenRad(value) {
+  const deg = Math.max(-MAX_STRAIGHTEN_DEG, Math.min(MAX_STRAIGHTEN_DEG, Number(value) || 0));
+  return deg * Math.PI / 180;
+}
+
+/** Zoom that keeps a w×h frame fully covered by its own rotated copy. */
+export function straightenCover(rad, w, h) {
+  const a = Math.abs(rad);
+  return Math.cos(a) + Math.max(w / h, h / w) * Math.sin(a);
+}
+
+/** Draw a crop region into its destination rect, tilted and auto-zoomed when straightening. */
+export function drawStraightened(ctx, source, sx, sy, sw, sh, dx, dy, dw, dh, rad, clip) {
+  if (!rad) return ctx.drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh);
+  ctx.save();
+  if (clip) { ctx.beginPath(); ctx.rect(dx, dy, dw, dh); ctx.clip(); }
+  ctx.translate(dx + dw / 2, dy + dh / 2);
+  ctx.rotate(rad);
+  ctx.scale(straightenCover(rad, dw, dh), straightenCover(rad, dw, dh));
+  ctx.drawImage(source, sx, sy, sw, sh, -dw / 2, -dh / 2, dw, dh);
+  ctx.restore();
+}
+
 /**
  * True when the crop window no longer matches the surface ratio — which means
  * the export would distort. Used to snap after a manual resize.
@@ -62,6 +88,41 @@ export function snapToRatio(crop, srcW, srcH, surface) {
   return clampCrop({ x: cx - w / 2, y: cy - h / 2, w, h });
 }
 
+/** Destination rect the crop occupies inside a surface for a given fill. */
+export function placementRect(srcW, srcH, crop, surface, fill = 'crop') {
+  if (fill === 'crop') return { x: 0, y: 0, w: surface.w, h: surface.h };
+  const sw = crop.w * srcW;
+  const sh = crop.h * srcH;
+  const scale = Math.min(surface.w / sw, surface.h / sh);
+  return { x: (surface.w - sw * scale) / 2, y: (surface.h - sh * scale) / 2, w: sw * scale, h: sh * scale };
+}
+
+/**
+ * Maps normalized source coordinates into a rendered placement, straighten
+ * included, so edits anchored to the photograph land on the right pixels.
+ */
+export function adjustmentFrame(crop, rect, rotate = 0) {
+  const rad = straightenRad(rotate);
+  const cover = straightenCover(rad, rect.w, rect.h);
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const point = (nx, ny) => {
+    const lx = rect.x + ((nx - crop.x) / crop.w) * rect.w - cx;
+    const ly = rect.y + ((ny - crop.y) / crop.h) * rect.h - cy;
+    return [cx + (lx * cos - ly * sin) * cover, cy + (lx * sin + ly * cos) * cover];
+  };
+  const unpoint = (x, y) => {
+    const lx = (x - cx) / cover;
+    const ly = (y - cy) / cover;
+    const ux = lx * cos + ly * sin + cx;
+    const uy = -lx * sin + ly * cos + cy;
+    return [crop.x + ((ux - rect.x) / rect.w) * crop.w, crop.y + ((uy - rect.y) / rect.h) * crop.h];
+  };
+  return { point, unpoint, radius: nr => Math.abs(Number(nr) || 0) * (rect.w / crop.w) * cover };
+}
+
 /**
  * Render one placement to an offscreen canvas at full surface resolution.
  * `fill` is 'crop' (cover), 'contain' (letterbox on flat colour) or
@@ -81,18 +142,18 @@ export function renderCrop(source, srcW, srcH, crop, surface, fill = 'crop', tar
   const sy = crop.y * srcH;
   const sw = crop.w * srcW;
   const sh = crop.h * srcH;
+  const rad = straightenRad(adjustments?.rotate);
 
   if (fill === 'crop') {
-    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, surface.w, surface.h);
-    return adjustments ? applyPixelAdjustments(canvas, adjustments) : canvas;
+    drawStraightened(ctx, source, sx, sy, sw, sh, 0, 0, surface.w, surface.h, rad, false);
+    return adjustments
+      ? applyPixelAdjustments(canvas, adjustments, adjustmentFrame(crop, { x: 0, y: 0, w: surface.w, h: surface.h }, adjustments.rotate))
+      : canvas;
   }
 
   // Letterboxed modes: fit the crop inside the frame, then fill the gutters.
-  const scale = Math.min(surface.w / sw, surface.h / sh);
-  const dw = sw * scale;
-  const dh = sh * scale;
-  const dx = (surface.w - dw) / 2;
-  const dy = (surface.h - dh) / 2;
+  const rect = placementRect(srcW, srcH, crop, surface, fill);
+  const { x: dx, y: dy, w: dw, h: dh } = rect;
 
   // Always lay down an opaque ground first. A canvas blur samples transparent
   // black outside the drawn rect, so without this the gutters come back with
@@ -102,17 +163,26 @@ export function renderCrop(source, srcW, srcH, crop, surface, fill = 'crop', tar
 
   if (fill === 'blur') {
     const radius = Math.round(Math.max(surface.w, surface.h) * 0.04);
-    // Overscan far enough that the blur's own faded edge falls off-canvas.
-    const cover = Math.max(surface.w / sw, surface.h / sh) * (1.15 + (radius * 4) / Math.max(surface.w, surface.h));
+    // Overscan far enough that the blur's own faded edge falls off-canvas,
+    // straighten swing included.
+    const cover = Math.max(surface.w / sw, surface.h / sh) * (1.15 + (radius * 4) / Math.max(surface.w, surface.h))
+      * straightenCover(rad, surface.w, surface.h);
     const bw = sw * cover;
     const bh = sh * cover;
+    if (rad) {
+      ctx.save();
+      ctx.translate(surface.w / 2, surface.h / 2);
+      ctx.rotate(rad);
+      ctx.translate(-surface.w / 2, -surface.h / 2);
+    }
     ctx.filter = `blur(${radius}px)`;
     ctx.drawImage(source, sx, sy, sw, sh, (surface.w - bw) / 2, (surface.h - bh) / 2, bw, bh);
     ctx.filter = 'none';
+    if (rad) ctx.restore();
   }
 
-  ctx.drawImage(source, sx, sy, sw, sh, dx, dy, dw, dh);
-  return adjustments ? applyPixelAdjustments(canvas, adjustments) : canvas;
+  drawStraightened(ctx, source, sx, sy, sw, sh, dx, dy, dw, dh, rad, true);
+  return adjustments ? applyPixelAdjustments(canvas, adjustments, adjustmentFrame(crop, rect, adjustments.rotate)) : canvas;
 }
 
 /**

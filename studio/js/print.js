@@ -1,4 +1,4 @@
-import { canvasToBytes, renderCrop } from './crop.js';
+import { adjustmentFrame, canvasToBytes, drawStraightened, placementRect, renderCrop, straightenRad } from './crop.js';
 import { colorExportDecision } from './color-management.js';
 import { applyPixelAdjustments } from './editing.js';
 
@@ -96,12 +96,11 @@ export function renderPrint(source, sourceWidth, sourceHeight, plan, adjustments
   context.imageSmoothingQuality = 'high';
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, canvas.width, canvas.height);
-  const scale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
-  const width = sourceWidth * scale;
-  const height = sourceHeight * scale;
-  context.drawImage(source, 0, 0, sourceWidth, sourceHeight,
-    (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
-  return adjustments ? applyPixelAdjustments(canvas, adjustments) : canvas;
+  const full = { x: 0, y: 0, w: 1, h: 1 };
+  const rect = placementRect(sourceWidth, sourceHeight, full, { w: canvas.width, h: canvas.height }, 'contain');
+  drawStraightened(context, source, 0, 0, sourceWidth, sourceHeight,
+    rect.x, rect.y, rect.w, rect.h, straightenRad(adjustments?.rotate), true);
+  return adjustments ? applyPixelAdjustments(canvas, adjustments, adjustmentFrame(full, rect, adjustments.rotate)) : canvas;
 }
 
 function requireJpeg(bytes) {

@@ -5,7 +5,8 @@ import {
 } from './model.js';
 import * as store from './store.js';
 import {
-  defaultCrop, clampCrop, zoomCrop, panCrop, snapToRatio, renderCrop, loadImage, grabVideoFrame
+  defaultCrop, clampCrop, zoomCrop, panCrop, snapToRatio, renderCrop, loadImage, grabVideoFrame,
+  adjustmentFrame, placementRect
 } from './crop.js';
 import {
   analyzeAsset, assetIssues, placementIssues, preflight, smartCrop, captureCoverage, captureCoverageBody, cornerSignature, captureFrameQuality
@@ -27,7 +28,7 @@ import { screenPrompt } from './prompt-guard.js';
 import { wordBudgetForSeconds } from './voice.js';
 import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pacer.js';
 import { analyzeGeometry } from './geometry.js';
-import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
+import { CURVE_IDENTITY, buildLuminanceLut, ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
 import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
@@ -59,6 +60,9 @@ const state = {
   reviewRailTab: 'edit',
   loupe: false,
   loupeZoom: 1,
+  editTool: null,              // null | 'heal' | 'brush' — stage input routes to the armed retouch tool
+  healSize: 1.2,               // spot radius as a percentage of the frame width
+  brushSize: 4,                // selective brush radius as a percentage of the frame width
   filters: { status: '', role: '', kind: '', surface: '', issues: '', rating: 0, q: '' },
   reviewer: localStorage.getItem('cros:reviewer') || 'reviewer',
   decoded: new Map(),         // assetId -> { source, w, h, url }
@@ -113,6 +117,13 @@ const btn = (label, cls = 'btn', onclick) => {
 };
 /** Names a control whose visible label is a glyph. */
 const aria = (node, label) => { node.setAttribute('aria-label', label); node.title = label; return node; };
+
+const svgEl = (tag, attrs = {}, ...kids) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  for (const kid of kids) node.append(kid);
+  return node;
+};
 
 const pendingSaves = new Map();
 function scheduleSave(key, save) {
@@ -1216,6 +1227,11 @@ async function paintStage() {
     if (edit.pixelGrid.enabled) wrap.append(pixelGridOverlay(pixelGridReview(d.source, d.w, d.h, edit.pixelGrid.columns, edit.pixelGrid.sensitivity)));
     viewport.replaceChildren(wrap);
     attachLoupe(wrap, d, () => ({ x: 0, y: 0, w: 1, h: 1 }));
+    if (asset.kind === 'image' && state.editTool) {
+      attachEditTool(wrap, () => sourcePreview, asset, d,
+        () => adjustmentFrame({ x: 0, y: 0, w: 1, h: 1 },
+          { x: 0, y: 0, w: sourcePreview.width, h: sourcePreview.height }, edit.adjustments.rotate));
+    }
     return;
   }
 
@@ -1242,6 +1258,10 @@ async function paintStage() {
   };
   attachPlacementDrag(frame, asset, surface, repaintPlacement);
   attachLoupe(frame, d, () => p.crop);
+  if (asset.kind === 'image' && state.editTool) {
+    attachEditTool(frame, () => stageCanvas, asset, d,
+      () => adjustmentFrame(p.crop, placementRect(d.w, d.h, p.crop, ps, p.fill), edit.adjustments.rotate));
+  }
 }
 
 function attachPlacementDrag(frame, asset, surface, repaint = paintStage) {
@@ -1413,6 +1433,104 @@ function attachSourceDrag(wrap, rect, asset, surface) {
 }
 
 // --- loupe: true 1:1 source pixels, the only way to judge hands and skin ---
+
+/** Stage-side retouch input: while a tool is armed it owns the pointer, replacing drag and loupe. */
+function attachEditTool(host, getCanvas, asset, decoded, frameFor) {
+  host.classList.add('retouch');
+  const edit = ensureEditState(asset);
+  const sourcePoint = e => {
+    const canvas = getCanvas();
+    const box = canvas.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    return frameFor().unpoint(
+      (e.clientX - box.left) * canvas.width / box.width,
+      (e.clientY - box.top) * canvas.height / box.height);
+  };
+  // The champagne overlay marks the painted mask; the true grade lands on the next repaint.
+  const paintOverlay = () => {
+    if (state.editTool !== 'brush') return;
+    const canvas = getCanvas();
+    let overlay = host.querySelector('.retouch-overlay');
+    if (!overlay) {
+      overlay = el('canvas', { className: 'retouch-overlay' });
+      host.append(overlay);
+    }
+    overlay.width = canvas.width;
+    overlay.height = canvas.height;
+    const ctx = overlay.getContext('2d');
+    ctx.fillStyle = 'rgba(201,168,106,0.32)';
+    const frame = frameFor();
+    for (const stamp of edit.adjustments.selective.strokes) {
+      const [x, y] = frame.point(stamp.x, stamp.y);
+      ctx.beginPath();
+      ctx.arc(x, y, frame.radius(stamp.r), 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  };
+  paintOverlay();
+  let stroke = null;
+  host.onpointerenter = null;
+  host.onpointerdown = e => {
+    const at = sourcePoint(e);
+    if (!at) return;
+    if (state.editTool === 'heal') return healAt(asset, decoded, at[0], at[1]);
+    if (state.editTool !== 'brush') return;
+    snapshot(asset, 'painted the selective brush');
+    stroke = { last: at };
+    host.setPointerCapture(e.pointerId);
+    brushStamp(asset, at);
+    paintOverlay();
+  };
+  host.onpointermove = e => {
+    if (!stroke) return;
+    const at = sourcePoint(e);
+    if (!at) return;
+    if (Math.hypot(at[0] - stroke.last[0], at[1] - stroke.last[1]) < (state.brushSize / 100) * 0.35) return;
+    stroke.last = at;
+    brushStamp(asset, at);
+    paintOverlay();
+  };
+  host.onpointerup = host.onpointercancel = () => {
+    if (!stroke) return;
+    stroke = null;
+    log(asset, 'painted the selective brush', state.reviewer);
+    touchAsset(asset);
+    renderReview();
+  };
+}
+
+function brushStamp(asset, [nx, ny]) {
+  if (nx < -0.02 || nx > 1.02 || ny < -0.02 || ny > 1.02) return;
+  ensureEditState(asset).adjustments.selective.strokes.push({
+    x: Math.min(1, Math.max(0, nx)),
+    y: Math.min(1, Math.max(0, ny)),
+    r: Math.max(0.002, Math.min(0.15, state.brushSize / 100))
+  });
+}
+
+function healAt(asset, decoded, nx, ny) {
+  if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return;
+  const edit = ensureEditState(asset);
+  const r = Math.max(0.004, Math.min(0.03, state.healSize / 100));
+  const left = Math.min(Math.max(0, (nx - r) * 100), 99.9);
+  const top = Math.min(Math.max(0, (ny - r) * 100), 99.9);
+  // The inpaint contract bounds the repair before a pixel moves.
+  let spec;
+  try {
+    spec = makeInpaintJobSpec({
+      width: decoded.w, height: decoded.h, operation: 'remove', execution: 'local', selectionKind: 'brush',
+      selection: { x: left, y: top, width: Math.min(2 * r * 100, 100 - left), height: Math.min(2 * r * 100, 100 - top) },
+      maskCoverage: Math.PI * r * r * (decoded.w / decoded.h)
+    });
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  mutate(asset, `healed a spot (${(spec.maskCoverage * 100).toFixed(2)}% of frame)`, () => {
+    edit.adjustments.heals = [...edit.adjustments.heals, { x: nx, y: ny, r }];
+  });
+  renderReview();
+}
 
 function attachLoupe(host, decoded, cropFn) {
   host.onpointerenter = host.onpointermove = e => {
@@ -2620,19 +2738,19 @@ function editingBlock(asset) {
     btn('Refined clarity', 'btn sm', () => applyPreset('Refined clarity', { exposure: 0.08, contrast: 8, vibrance: 10, sharpen: 8, blur: 0 })),
     btn('Warm editorial', 'btn sm', () => applyPreset('Warm editorial', { exposure: 0.04, contrast: 6, temperature: 12, tint: 2, vibrance: 6 })),
     btn('Neutral color match', 'btn sm', () => applyPreset('Neutral color match', { exposure: 0, contrast: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0 })),
-    btn('Reset adjustments', 'btn sm', () => applyPreset('reset', { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0 }))
+    btn('Reset adjustments', 'btn sm', () => applyPreset('reset', { exposure: 0, contrast: 0, highlights: 0, shadows: 0, temperature: 0, tint: 0, saturation: 0, vibrance: 0, denoise: 0, blur: 0, sharpen: 0, grain: 0, vignette: 0, rotate: 0 }))
   );
   wrap.append(presets);
 
-  const slider = (key, label, min, max, step = 1) => {
-    const value = edit.adjustments[key] ?? 0;
+  const boundSlider = (target, key, label, min, max, step = 1) => {
+    const value = target[key] ?? 0;
     const readout = el('output', {}, String(value));
     const input = el('input', { type: 'range', min, max, step, value });
     let captured = false;
     const capture = () => { if (!captured) { snapshot(asset, `adjusted ${label}`); captured = true; } };
     input.oninput = () => {
       capture();
-      edit.adjustments[key] = Number(input.value);
+      target[key] = Number(input.value);
       readout.textContent = input.value;
       touchAsset(asset);
       paintStage();
@@ -2640,15 +2758,152 @@ function editingBlock(asset) {
     input.onchange = () => { log(asset, `${label} → ${input.value}`, state.reviewer); captured = false; };
     return el('label', { className: 'editor-slider' }, el('span', {}, label), input, readout);
   };
+  const slider = (key, label, min, max, step = 1) => boundSlider(edit.adjustments, key, label, min, max, step);
   const controlGroup = (title, ...controls) => el('details', { className: 'editor-control-group', name: 'photo-editor-controls' },
     el('summary', {}, title), el('div', { className: 'editor-control-body' }, ...controls));
 
+  const healTools = () => {
+    const armed = state.editTool === 'heal';
+    const toggle = btn(armed ? 'Spot heal · armed' : 'Spot heal', 'btn sm' + (armed ? ' on' : ''), () => {
+      state.editTool = armed ? null : 'heal';
+      renderReview();
+    });
+    toggle.setAttribute('aria-pressed', String(armed));
+    const size = el('input', { type: 'range', min: 0.4, max: 3, step: 0.1, value: state.healSize });
+    const sizeOut = el('output', {}, String(state.healSize));
+    size.oninput = () => { state.healSize = Number(size.value); sizeOut.textContent = size.value; };
+    const heals = edit.adjustments.heals || [];
+    return el('div', { className: 'editor-tool' },
+      el('div', { className: 'editor-tool-row' }, toggle,
+        heals.length ? btn(`Clear spots (${heals.length})`, 'btn sm', () => {
+          mutate(asset, 'cleared healed spots', () => { edit.adjustments.heals = []; });
+          renderReview();
+        }) : null),
+      el('label', { className: 'editor-slider' }, el('span', {}, 'Spot size'), size, sizeOut),
+      el('p', { className: 'hint' }, armed
+        ? 'Click a blemish on the photo to blend it away.'
+        : 'One click rebuilds a small spot from its surroundings.'));
+  };
+
+  const brushTools = () => {
+    const armed = state.editTool === 'brush';
+    const selective = edit.adjustments.selective;
+    const toggle = btn(armed ? 'Paint mask · armed' : 'Paint mask', 'btn sm' + (armed ? ' on' : ''), () => {
+      state.editTool = armed ? null : 'brush';
+      renderReview();
+    });
+    toggle.setAttribute('aria-pressed', String(armed));
+    const size = el('input', { type: 'range', min: 1, max: 8, step: 0.5, value: state.brushSize });
+    const sizeOut = el('output', {}, String(state.brushSize));
+    size.oninput = () => { state.brushSize = Number(size.value); sizeOut.textContent = size.value; };
+    return el('div', { className: 'editor-tool' },
+      el('div', { className: 'editor-tool-row' }, toggle,
+        selective.strokes.length ? btn(`Clear mask (${selective.strokes.length})`, 'btn sm', () => {
+          mutate(asset, 'cleared the selective mask', () => { selective.strokes = []; });
+          renderReview();
+        }) : null),
+      el('label', { className: 'editor-slider' }, el('span', {}, 'Brush size'), size, sizeOut),
+      boundSlider(selective, 'exposure', 'Exposure', -1, 1, 0.05),
+      boundSlider(selective, 'temperature', 'Temperature', -100, 100),
+      boundSlider(selective, 'saturation', 'Saturation', -100, 100),
+      el('p', { className: 'hint' }, armed
+        ? 'Paint on the photo; these adjustments apply only inside the mask.'
+        : 'Paint a soft mask, then grade only what it covers.'));
+  };
+
+  const curveTools = () => {
+    const W = 240, H = 150, PAD = 10;
+    const toSvg = p => [PAD + (p.x / 255) * (W - 2 * PAD), H - PAD - (p.y / 255) * (H - 2 * PAD)];
+    const svg = svgEl('svg', {
+      viewBox: `0 0 ${W} ${H}`, class: 'curve-editor', role: 'img',
+      'aria-label': 'Luminance curve. Drag one of the four points to shape tones.'
+    });
+    for (const f of [1 / 3, 2 / 3]) {
+      svg.append(
+        svgEl('line', { class: 'curve-grid', x1: PAD + f * (W - 2 * PAD), y1: PAD, x2: PAD + f * (W - 2 * PAD), y2: H - PAD }),
+        svgEl('line', { class: 'curve-grid', x1: PAD, y1: PAD + f * (H - 2 * PAD), x2: W - PAD, y2: PAD + f * (H - 2 * PAD) }));
+    }
+    const [dx0, dy0] = toSvg({ x: 0, y: 0 });
+    const [dx1, dy1] = toSvg({ x: 255, y: 255 });
+    svg.append(svgEl('line', { class: 'curve-ref', x1: dx0, y1: dy0, x2: dx1, y2: dy1 }));
+    const line = svgEl('polyline', { class: 'curve-line' });
+    svg.append(line);
+    const dots = edit.adjustments.curve.map(() => svgEl('circle', { class: 'curve-dot', r: 5.5 }));
+    svg.append(...dots);
+    const redraw = () => {
+      const lut = buildLuminanceLut(edit.adjustments.curve);
+      const points = [];
+      for (let x = 0; x <= 255; x += 5) points.push(toSvg({ x, y: lut ? lut[x] : x }).join(','));
+      line.setAttribute('points', points.join(' '));
+      edit.adjustments.curve.forEach((p, i) => {
+        const [cx, cy] = toSvg(p);
+        dots[i].setAttribute('cx', cx);
+        dots[i].setAttribute('cy', cy);
+      });
+    };
+    redraw();
+    let drag = -1;
+    svg.onpointerdown = e => {
+      const box = svg.getBoundingClientRect();
+      const sx = (e.clientX - box.left) * W / box.width;
+      const sy = (e.clientY - box.top) * H / box.height;
+      let bestDist = 22;
+      edit.adjustments.curve.forEach((p, i) => {
+        const [cx, cy] = toSvg(p);
+        const dist = Math.hypot(cx - sx, cy - sy);
+        if (dist < bestDist) { drag = i; bestDist = dist; }
+      });
+      if (drag < 0) return;
+      snapshot(asset, 'shaped the luminance curve');
+      svg.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    };
+    svg.onpointermove = e => {
+      if (drag < 0) return;
+      const box = svg.getBoundingClientRect();
+      const x = (((e.clientX - box.left) * W / box.width) - PAD) / (W - 2 * PAD) * 255;
+      const y = (H - PAD - ((e.clientY - box.top) * H / box.height)) / (H - 2 * PAD) * 255;
+      const curve = edit.adjustments.curve;
+      const p = curve[drag];
+      p.y = Math.max(0, Math.min(255, y));
+      // End points hold the black and white anchors; inner points stay ordered.
+      if (drag > 0 && drag < curve.length - 1) {
+        p.x = Math.max(curve[drag - 1].x + 6, Math.min(curve[drag + 1].x - 6, x));
+      }
+      redraw();
+      touchAsset(asset);
+      paintStage();
+    };
+    svg.onpointerup = svg.onpointercancel = () => {
+      if (drag < 0) return;
+      drag = -1;
+      log(asset, 'shaped the luminance curve', state.reviewer);
+      touchAsset(asset);
+    };
+    return el('div', { className: 'editor-tool' }, svg,
+      el('div', { className: 'editor-tool-row' }, btn('Reset curve', 'btn sm', () => {
+        mutate(asset, 'reset the luminance curve', () => {
+          edit.adjustments.curve = CURVE_IDENTITY.map(p => ({ ...p }));
+        });
+        renderReview();
+      })),
+      el('p', { className: 'hint' }, 'One luminance curve, four points, applied with every other adjustment.'));
+  };
+
   if (edit.mode === 'guided') {
     wrap.append(
+      slider('rotate', 'Straighten', -15, 15, 0.1),
       slider('exposure', 'Light', -1, 1, 0.05), slider('contrast', 'Contrast', -50, 50),
       slider('temperature', 'Warmth', -50, 50), slider('vibrance', 'Color', -50, 50),
       slider('denoise', 'Noise cleanup', 0, 100));
+    if (asset.kind === 'image') wrap.append(healTools());
   } else {
+    wrap.append(
+      controlGroup('Geometry',
+        slider('rotate', 'Straighten', -15, 15, 0.1)));
+    if (asset.kind === 'image') wrap.append(
+      controlGroup('Repair', healTools()),
+      controlGroup('Selective brush', brushTools()));
     wrap.append(
       controlGroup('Tone',
         slider('exposure', 'Exposure', -2, 2, 0.05), slider('contrast', 'Contrast', -100, 100),
@@ -2660,6 +2915,7 @@ function editingBlock(asset) {
         slider('denoise', 'Noise reduction', 0, 100), slider('sharpen', 'Sharpening', 0, 100),
         slider('blur', 'Optical blur', 0, 20, 0.25),
         slider('grain', 'Film grain', 0, 100), slider('vignette', 'Vignette', 0, 100)));
+    if (asset.kind === 'image') wrap.append(controlGroup('Curves', curveTools()));
   }
 
   const gridToggle = el('input', { type: 'checkbox', checked: edit.pixelGrid.enabled });
