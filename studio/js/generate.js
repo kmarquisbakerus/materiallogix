@@ -5,7 +5,7 @@
 // your own provider key) and tier 3 (managed, billed) are Phase 2.
 
 // Direct ComfyUI media traffic is loopback-only. Phone-over-Wi-Fi uses the
-// Material Logic bridge, which requires the one-time PIN shown by engine.py.
+// Material Logic bridge, which requires the access token shown by engine.py.
 const isLoopbackHost = h => h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
 // A private address must be a literal dotted quad: a DNS name that merely
 // starts with a private prefix (10.attacker.example) must never pass.
@@ -145,7 +145,7 @@ export function assertLocalEngineUrl(value, { allowPrivateLan = false } = {}) {
 
 const localBase = base => assertLocalEngineUrl(base).href.replace(/\/$/, '');
 
-/** Fetch with the bridge PIN when set; prompts once if the bridge asks. */
+/** Fetch with the bridge token when set; prompts once if the bridge asks. */
 export async function bridgeFetch(url, opts = {}) {
   const safeUrl = assertLocalEngineUrl(url, { allowPrivateLan: true }).href;
   const withPin = pin => fetch(safeUrl, {
@@ -156,7 +156,7 @@ export async function bridgeFetch(url, opts = {}) {
   if (res.status === 403) {
     const j = await res.clone().json().catch(() => ({}));
     if (j.pinRequired) {
-      const pin = prompt('Enter the Wi-Fi PIN shown in the bridge console on your computer:');
+      const pin = prompt('Enter the Wi-Fi access token shown in the bridge console (or scan the code):');
       if (pin) {
         localStorage.setItem('cros:bridgePin', pin.trim());
         res = await withPin(pin.trim());
