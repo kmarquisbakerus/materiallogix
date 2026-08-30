@@ -53,10 +53,9 @@
 <body class="voice-studio">
 <div id="app">
   <header class="topbar">
-    <div class="brand">
-      <strong>Voice Studio</strong>
-      <span>MaterialLogix™</span>
-    </div>
+    <a class="brand" href="index.html" aria-label="MaterialLogix Studio home">
+      <strong><span class="brand-material">Material</span><span class="brand-logix">Logix</span><span class="brand-studio">Voice Studio</span></strong>
+    </a>
     <nav class="breadcrumbs" aria-label="Breadcrumb"><a href="../">MaterialLogix™</a><span>/</span><a href="index.html">Studio</a><span>/</span><b>Voice</b></nav>
     <div class="spacer"></div>
     <button class="btn sm activity-toggle" type="button" aria-controls="activityRail" aria-expanded="false">Jobs</button>
@@ -85,6 +84,12 @@ Create with freedom. Finish with *confidence*.</textarea>
         <label class="eyebrow" for="exag" style="width:110px">Performance intensity</label>
         <input type="range" id="exag" min="0.25" max="1.4" step="0.05" value="0.6">
         <span class="v" id="exagV">0.60</span>
+      </div>
+      <div class="knob">
+        <label class="eyebrow" for="fitTarget" style="width:110px">Fit to video</label>
+        <select id="fitTarget" style="flex:1"><option value="">No fit — natural length</option></select>
+        <input type="number" id="fitSeconds" min="0" max="600" step="1" placeholder="seconds" style="display:none;width:90px" aria-label="Custom length in seconds">
+        <span class="v" id="fitStatus"></span>
       </div>
       <div class="knob voice-advanced">
         <label class="eyebrow" for="cfg" style="width:110px">Pacing variation</label>
@@ -147,8 +152,10 @@ import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-cl
 import { bridgeFetch } from './js/generate.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
 import { voiceReferenceConsent } from './js/voice-quality.js';
+import { ensureGuardianAck } from './js/capture-guidance.js';
 import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from './js/voice-reference.js';
 import { voiceGuidance } from './js/capture-guidance.js';
+import { listAssets } from './js/store.js';
 
 const $ = s => document.querySelector(s);
 const BRIDGE_HOST = /^(localhost$|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(location.hostname) ? location.hostname : '127.0.0.1';
@@ -235,10 +242,56 @@ async function paintVoiceGuidance() {
 }
 paintVoiceGuidance();
 
+// The fit target is the project's own videos - pick one and the read is
+// sized and rendered to land on that exact cut. Custom seconds stays for
+// footage that lives elsewhere.
+async function paintFitTargets() {
+  const select = $('#fitTarget');
+  try {
+    const projectId = new URLSearchParams(location.search).get('project') || localStorage.getItem('cros:project');
+    if (!projectId) throw new Error('no project');
+    const assets = await listAssets(projectId);
+    for (const a of assets.filter(item => item.kind === 'video' && item.duration)) {
+      const option = document.createElement('option');
+      option.value = String(a.duration);
+      option.textContent = `${a.filename} — ${a.duration.toFixed(0)}s`;
+      select.append(option);
+    }
+  } catch { /* voice-only projects have no videos to offer */ }
+  const custom = document.createElement('option');
+  custom.value = 'custom';
+  custom.textContent = 'Custom length…';
+  select.append(custom);
+}
+paintFitTargets();
+const fitSecondsValue = () => {
+  const pick = $('#fitTarget').value;
+  if (pick === 'custom') return Number($('#fitSeconds').value) || 0;
+  return Number(pick) || 0;
+};
+$('#fitTarget').addEventListener('change', () => {
+  $('#fitSeconds').style.display = $('#fitTarget').value === 'custom' ? '' : 'none';
+  paintPlan();
+});
+$('#fitSeconds').addEventListener('input', () => paintPlan());
+
 function paintPlan() {
   const plan = performancePlan(activeScriptText());
   $('#planSummary').textContent =
     `${plan.segments.length} segment(s), ${plan.totalWords} words, ~${planDuration(plan)}s read.`;
+  const target = fitSecondsValue();
+  const fitStatus = $('#fitStatus');
+  if (target > 0) {
+    const planned = planDuration(plan);
+    const ratio = planned / target;
+    fitStatus.textContent = ratio > 1.12
+      ? `cut ~${Math.ceil(plan.totalWords - plan.totalWords / ratio)} words`
+      : ratio < 0.88
+        ? `room for ~${Math.floor(plan.totalWords / ratio - plan.totalWords)} more words`
+        : 'fits';
+  } else {
+    fitStatus.textContent = '';
+  }
   $('#plan').replaceChildren(...plan.segments.map(s =>
     Object.assign(document.createElement('div'), {
       className: 'planline',
@@ -416,6 +469,7 @@ $('#render').onclick = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        targetSeconds: fitSecondsValue() > 0 ? fitSecondsValue() : undefined,
         cfgWeight: Number($('#cfg').value),
         temperature: selectedProfile?.temperature,
         languageId: lang,
@@ -543,6 +597,7 @@ $('#recBtn').onclick = async () => {
     rec.stop();
     return;
   }
+  if (!(await ensureGuardianAck())) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
     rec = new MediaRecorder(stream);
