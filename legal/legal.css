@@ -168,3 +168,9 @@ th { color: var(--muted); font: 500 10px/1.2 var(--sans); letter-spacing: .16em;
 }
 
 .brand-word{display:inline-flex;align-items:baseline;font:400 18px/1.15 var(--serif);letter-spacing:-.02em}.brand-material{color:var(--ink)}.brand-logix{color:transparent;background:linear-gradient(112deg,#7a5423 0%,#b98232 16%,#e3c98b 36%,#c49a4e 50%,#ecd9a0 60%,#a8752e 80%,#d3b26c 92%,#7d5825 100%);-webkit-background-clip:text;background-clip:text}.brand-tm{margin-left:1px;align-self:flex-start;font:600 9px/1 var(--sans);color:var(--muted)}.brand-suffix{margin-left:8px;color:var(--muted);font:600 9px/1 var(--sans);letter-spacing:.2em;text-transform:uppercase}
+
+/* The lockup outranks the legacy .brand span sizing above. */
+.brand .brand-word span { display: inline; margin: 0; font: inherit; letter-spacing: inherit; text-transform: none; color: var(--ink); }
+.brand .brand-word .brand-logix { color: transparent; background: linear-gradient(112deg,#7a5423 0%,#b98232 16%,#e3c98b 36%,#c49a4e 50%,#ecd9a0 60%,#a8752e 80%,#d3b26c 92%,#7d5825 100%); -webkit-background-clip: text; background-clip: text; }
+.brand .brand-word .brand-tm { font: 600 9px/1 var(--sans); color: var(--muted); margin-left: 1px; align-self: flex-start; }
+.brand .brand-word .brand-suffix { font: 600 9px/1 var(--sans); color: var(--muted); letter-spacing: .2em; text-transform: uppercase; margin-left: 8px; }

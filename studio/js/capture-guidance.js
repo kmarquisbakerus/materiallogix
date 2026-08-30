@@ -86,3 +86,42 @@ export function retryAdvice(kind, coverage = {}) {
   for (const flag of coverage.flags || []) notes.push(flag);
   return notes;
 }
+
+// --- age and guardianship gate -------------------------------------------
+// References capture a real person's face, body, or voice. That is for
+// adults; 13-17 only with a parent or guardian consenting and present;
+// under 13 never. The acknowledgment is stored locally with its timestamp
+// and the capture flows refuse to start without it.
+export const GUARDIAN_ACK_KEY = 'mlx:capture-age-ack';
+export const GUARDIAN_ACK_TEXT = 'I confirm I am 18 or older — or I am 13–17 and my parent or legal guardian consents to this capture and is present. References of anyone under 13 are not permitted.';
+
+export function guardianAckGiven() {
+  try { return Boolean(localStorage.getItem(GUARDIAN_ACK_KEY)); } catch { return false; }
+}
+
+export function ensureGuardianAck(doc = document) {
+  if (guardianAckGiven()) return Promise.resolve(true);
+  return new Promise(resolve => {
+    const dlg = doc.createElement('dialog');
+    dlg.className = 'guardian-ack';
+    const box = doc.createElement('input'); box.type = 'checkbox'; box.id = 'guardianAckBox';
+    const label = doc.createElement('label');
+    const labelText = doc.createElement('span'); labelText.textContent = GUARDIAN_ACK_TEXT;
+    label.append(box, labelText);
+    const heading = doc.createElement('h2'); heading.textContent = 'Before you capture anyone';
+    const go = doc.createElement('button'); go.type = 'button'; go.textContent = 'Continue'; go.className = 'btn primary'; go.disabled = true;
+    const cancel = doc.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Not now'; cancel.className = 'btn';
+    box.onchange = () => { go.disabled = !box.checked; };
+    const finish = ok => { dlg.close(); dlg.remove(); resolve(ok); };
+    go.onclick = () => {
+      try { localStorage.setItem(GUARDIAN_ACK_KEY, new Date().toISOString()); } catch { /* still allowed this session */ }
+      finish(true);
+    };
+    cancel.onclick = () => finish(false);
+    dlg.oncancel = () => finish(false);
+    const foot = doc.createElement('div'); foot.className = 'foot'; foot.append(cancel, go);
+    dlg.append(heading, label, foot);
+    doc.body.append(dlg);
+    dlg.showModal();
+  });
+}

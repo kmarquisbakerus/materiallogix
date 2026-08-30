@@ -22,7 +22,7 @@ import { assessInpaintMaskedBoundary, blendInpaintMaskedCandidate,
   CPU_PRESETS, cpuJobSettings, estimateCpuSeconds, recordCpuPace, waitLabel } from './generate.js';
 import { probeDevice, deviceSummary } from './device.js';
 import { featureEnabled } from './features.js';
-import { guidanceFor } from './capture-guidance.js';
+import { guidanceFor, ensureGuardianAck } from './capture-guidance.js';
 import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pacer.js';
 import { analyzeGeometry } from './geometry.js';
 import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
@@ -2018,6 +2018,7 @@ async function playWithComments(asset) {
 }
 
 async function extractIdentityPack(asset) {
+  if (!(await ensureGuardianAck())) return;
   const nameInput = el('input', { type: 'text', placeholder: 'Approved subject name or identifier' });
   const modeSel = el('select', {});
   modeSel.append(el('option', { value: 'face' }, 'Facial reference set — verified 180°'));
