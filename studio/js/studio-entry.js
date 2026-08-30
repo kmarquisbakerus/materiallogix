@@ -22,7 +22,7 @@ const PRODUCTS = [
     number: '02',
     title: 'Video',
     kicker: 'Build the story',
-    copy: 'Cut, refine, caption, scale, and deliver with the Material Logic Motion Engine.',
+    copy: 'Cut, refine, caption, scale, and deliver with the MaterialLogix Motion Engine.',
     image: 'studio-entry-video.webp',
     position: 'center center',
     starters: [
@@ -167,6 +167,7 @@ async function createStarter(product, starter) {
 }
 
 function enterWorkspace(kind) {
+  try { sessionStorage.setItem('mlx:start-product', kind); } catch { /* unavailable */ }
   closeEntrance({ focus: false });
   history.replaceState(null, '', `${location.pathname}${location.search}#workspace`);
   if (kind === 'voice') {
@@ -174,14 +175,9 @@ function enterWorkspace(kind) {
     return;
   }
   if (kind === 'video') {
-    const input = document.querySelector('#fileInput');
-    if (input) {
-      const previous = input.accept;
-      input.accept = 'video/*';
-      input.addEventListener('cancel', () => { input.accept = previous; }, { once: true });
-      input.addEventListener('change', () => { input.accept = previous; }, { once: true });
-      input.click();
-    }
+    // Reload so the workspace greets you as Video Studio with its own
+    // import action, instead of the Photo start page behind a file dialog.
+    location.reload();
     return;
   }
   const menu = document.querySelector('#menuBtn');

@@ -79,7 +79,9 @@ a:focus, a:focus-visible, summary:focus, summary:focus-visible {
   color: var(--ink);
   text-decoration: none;
 }
-.brand img { width: 30px; height: 30px; }
+.brand img { width: auto; height: 26px; }
+/* The wordmark image carries the name; keep the text for screen readers only. */
+.brand > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .brand b { display: block; font: 400 16px/1 var(--serif); letter-spacing: .02em; }
 .brand span { display: block; margin-top: 4px; color: var(--gold-dim); font: 500 8px/1 var(--sans); letter-spacing: .28em; text-transform: uppercase; }
 .legal-nav-links { display: flex; align-items: center; gap: 8px; margin-left: auto; }

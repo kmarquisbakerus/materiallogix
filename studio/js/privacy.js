@@ -152,7 +152,7 @@ function installPrivacyDialog(initial) {
   const commercial = choiceRow(
     'privacyCommercial',
     'Allow grouped commercial insights',
-    'Material Logic may include data you chose to share in grouped, de-identified market trends that may be sold or licensed. We do not sell personal information, account-level records, or raw diagnostic events.'
+    'MaterialLogix may include data you chose to share in grouped, de-identified market trends that may be sold or licensed. We do not sell personal information, account-level records, or raw diagnostic events.'
   );
   const profileControls = PROFILE_FIELDS.map(args => profileControl(...args));
   const profile = make('div', { className: 'privacy-profile' },
@@ -267,7 +267,7 @@ function installPrivacyDialog(initial) {
   };
   const deletionButton = dialog.querySelector('#privacyDelete');
   if (deletionButton) deletionButton.onclick = async () => {
-    const confirmed = window.confirm('Request deletion of your Material Logic account? Optional diagnostics and profile data will be removed now. Billing, licensing, fraud-prevention, and security records may be retained when legally required.');
+    const confirmed = window.confirm('Request deletion of your MaterialLogix account? Optional diagnostics and profile data will be removed now. Billing, licensing, fraud-prevention, and security records may be retained when legally required.');
     if (!confirmed) return;
     status.textContent = 'Submitting your deletion request…';
     deletionButton.disabled = true;

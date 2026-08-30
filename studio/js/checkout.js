@@ -80,20 +80,38 @@ async function beginCheckout(button) {
   const operationId = crypto.randomUUID();
   button.disabled = true;
   document.querySelector('#checkoutStatus').textContent = 'Opening secure Stripe checkout…';
+  const promoField = document.querySelector('#promoCode');
+  const promotionCode = promoField?.value.trim().toUpperCase() || '';
   try {
     const response = await fetch(apiUrl('/api/checkout/session'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operationId },
-      body: JSON.stringify({ sku: `${planId}_${termId}`, attribution: attribution() })
+      body: JSON.stringify({
+        sku: `${planId}_${termId}`,
+        attribution: attribution(),
+        ...(promotionCode ? { promotionCode } : {})
+      })
     });
     const result = await response.json();
     if (!response.ok || !result.url) throw new Error(result.error || 'checkout_unavailable');
     location.assign(result.url);
-  } catch {
+  } catch (error) {
     button.disabled = false;
-    document.querySelector('#checkoutStatus').textContent = 'Checkout is temporarily unavailable. No payment was taken. Please try again.';
+    const status = document.querySelector('#checkoutStatus');
+    if (error?.message === 'invalid_promo_code') {
+      status.textContent = 'That promo code is not valid or has expired. Remove it or try another — no payment was taken.';
+      promoField?.focus();
+    } else if (error?.message === 'promo_code_already_used') {
+      status.textContent = 'That promo code was already used on this account. Remove it to continue — no payment was taken.';
+      promoField?.focus();
+    } else {
+      status.textContent = 'Checkout is temporarily unavailable. No payment was taken. Please try again.';
+    }
   }
 }
+
+const promoRow = document.querySelector('#promoRow');
+if (promoRow && document.querySelector('[data-checkout-plan]')) promoRow.hidden = false;
 
 const selector = document.querySelector('#billingTerm');
 if (selector) {

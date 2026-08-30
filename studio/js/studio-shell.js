@@ -44,7 +44,7 @@ function openBrandAssetDialog() {
     make('p', {},
       'Add existing logos, wordmarks, symbols, icons, seals, packaging marks, or other visual brand references.'),
     make('p', { className: 'hint' },
-      'PNG, JPG, WebP, and SVG are accepted. Material Logic preserves the artwork you supply. It does not generate, redraw, or redesign logos.'),
+      'PNG, JPG, WebP, and SVG are accepted. MaterialLogix preserves the artwork you supply. It does not generate, redraw, or redesign logos.'),
     make('p', { className: 'hint' },
       'Imported files are stored in this project as reference-only Logo / mark assets and remain on this device.')
   );
@@ -109,7 +109,7 @@ async function importBrandAssets(fileList) {
       asset.source = 'brand-import';
       asset.labels.lane = 'brand-assets';
       asset.notes = 'Imported brand asset. Use the supplied artwork as-is.';
-      asset.provenance = 'Original brand artwork supplied by the project owner. Material Logic imported this file and did not generate, redraw, or redesign it.';
+      asset.provenance = 'Original brand artwork supplied by the project owner. MaterialLogix imported this file and did not generate, redraw, or redesign it.';
       Object.assign(asset, await imageDimensions(file));
       log(asset, 'imported as supplied brand artwork (no logo generation)', reviewer);
       await store.addAsset(asset, file);
@@ -149,7 +149,7 @@ function applyStudioServices() {
       return button;
     })(),
     make('p', { className: 'hint', style: 'margin:10px 0 0' },
-      'Import only: existing logos, marks, and visual brand references. Material Logic does not generate or redesign logos.')
+      'Import only: existing logos, marks, and visual brand references. MaterialLogix does not generate or redesign logos.')
   );
   const services = make('details', { className: 'panel' },
     make('summary', {}, 'Studio services'), body);
@@ -183,7 +183,7 @@ function applyPositioningCopy() {
   const empty = directionHeading?.parentElement;
   if (empty && !empty.querySelector('[data-brand-import-note]')) {
     const note = make('p', { className: 'note' },
-      'Use Brand assets above to import existing logos and marks exactly as supplied. Material Logic does not generate or redesign logos.');
+      'Use Brand assets above to import existing logos and marks exactly as supplied. MaterialLogix does not generate or redesign logos.');
     note.dataset.brandImportNote = 'true';
     empty.append(note);
   }

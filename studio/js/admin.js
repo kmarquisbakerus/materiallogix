@@ -287,6 +287,151 @@ document.querySelector('#exportCsv').addEventListener('click', () => {
   const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
   link.download = `materiallogix-operations-${snapshot.period}.csv`; link.click(); URL.revokeObjectURL(link.href);
 });
+const promoStatus = document.querySelector('#promoStatus');
+const promoTable = document.querySelector('#promoTable');
+const promoForm = document.querySelector('#promoForm');
+const flagsStatus = document.querySelector('#flagsStatus');
+const flagsTable = document.querySelector('#flagsTable');
+let promoCodes = [];
+
+function promoDiscountLabel(item) {
+  const base = item.percentOff !== null ? `${item.percentOff}% off` : `$${(item.amountOffCents / 100).toFixed(2)} off`;
+  const span = item.duration === 'repeating' ? ` for ${item.durationInMonths} mo` : item.duration === 'forever' ? ' every payment' : ' first payment';
+  return base + span;
+}
+
+function renderPromoCodes() {
+  promoTable.innerHTML = renderTable(
+    ['Code', 'Discount', 'Redeemed', 'Per-code limit', 'Per-customer', 'Expires', 'Status', ''],
+    promoCodes.map(item => `<tr data-promo-id="${safe(item.id)}"><td>${safe(item.code)}</td><td>${safe(promoDiscountLabel(item))}</td><td>${safe(item.timesRedeemed)}</td><td>${safe(item.maxRedemptions ?? 'none')}</td><td>${item.firstTimeOnly ? 'new customers only' : item.oncePerCustomer ? 'once each' : 'unlimited'}</td><td>${item.expiresAt ? safe(new Date(item.expiresAt * 1000).toISOString().slice(0, 10)) : 'never'}</td><td>${item.active ? 'active' : 'off'}</td><td>${item.active ? '<button class="btn" type="button" data-promo-deactivate>Deactivate</button>' : ''}</td></tr>`)
+  );
+}
+
+async function loadPromoCodes() {
+  try {
+    promoStatus.textContent = 'Loading promo codes…';
+    const response = await fetch(apiUrl('/api/admin/promo-codes'), {
+      credentials: 'include', headers: { Accept: 'application/json' }
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'promo_codes_unavailable');
+    promoCodes = data.promoCodes || [];
+    promoStatus.textContent = `${promoCodes.length} promo code(s); ${promoCodes.filter(item => item.active).length} active.`;
+    renderPromoCodes();
+  } catch (error) {
+    promoCodes = [];
+    renderPromoCodes();
+    promoStatus.textContent = `Promo codes unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+  }
+}
+
+promoForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = new FormData(promoForm);
+  const type = form.get('discountType');
+  const value = Number(form.get('value'));
+  const duration = form.get('duration');
+  const expires = form.get('expires');
+  const payload = {
+    code: String(form.get('code') || '').trim().toUpperCase(),
+    ...(type === 'percent' ? { percentOff: value } : { amountOffCents: value * 100 }),
+    duration,
+    ...(duration === 'repeating' ? { durationInMonths: Number(form.get('durationInMonths')) } : {}),
+    maxRedemptions: Number(form.get('maxRedemptions')),
+    ...(expires ? { expiresAt: Math.floor(new Date(`${expires}T23:59:59`).getTime() / 1000) } : {}),
+    oncePerCustomer: form.get('oncePerCustomer') === 'on',
+    firstTimeOnly: form.get('firstTimeOnly') === 'on'
+  };
+  const button = promoForm.querySelector('button[type="submit"]');
+  button.disabled = true;
+  promoStatus.textContent = 'Creating promo code…';
+  try {
+    const response = await fetch(apiUrl('/api/admin/promo-codes'), {
+      method: 'POST', credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify(payload)
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'promo_create_failed');
+    promoForm.reset();
+    promoForm.elements.oncePerCustomer.checked = true;
+    await loadPromoCodes();
+  } catch (error) {
+    promoStatus.textContent = `Promo code not created: ${error.message}.`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+promoTable.addEventListener('click', async event => {
+  const target = event.target instanceof Element ? event.target : null;
+  const button = target?.closest('[data-promo-deactivate]');
+  const row = button?.closest('[data-promo-id]');
+  if (!button || !row) return;
+  const item = promoCodes.find(candidate => candidate.id === row.dataset.promoId);
+  if (!item || !window.confirm(`Deactivate ${item.code}? Existing discounts on active subscriptions keep running; no new redemptions.`)) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(apiUrl('/api/admin/promo-codes/deactivate'), {
+      method: 'POST', credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ promotionCodeId: item.id })
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'promo_deactivate_failed');
+    await loadPromoCodes();
+  } catch (error) {
+    promoStatus.textContent = `Deactivation failed: ${error.message}.`;
+    button.disabled = false;
+  }
+});
+
+async function loadFeatureFlags() {
+  try {
+    flagsStatus.textContent = 'Loading feature flags…';
+    const response = await fetch(apiUrl('/api/admin/feature-flags'), {
+      credentials: 'include', headers: { Accept: 'application/json' }
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'feature_flags_unavailable');
+    const flags = data.flags || [];
+    flagsStatus.textContent = `${flags.length} flag(s); ${flags.filter(item => item.enabled).length} enabled.`;
+    flagsTable.innerHTML = renderTable(
+      ['Flag', 'Audience', 'Note', 'State', ''],
+      flags.map(item => `<tr data-flag-key="${safe(item.key)}" data-flag-enabled="${item.enabled ? 1 : 0}"><td>${safe(item.key)}</td><td>${safe(item.audience)}</td><td>${safe(item.note || '')}</td><td>${item.enabled ? 'ON' : 'off'}</td><td><button class="btn" type="button" data-flag-toggle>${item.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)
+    );
+  } catch (error) {
+    flagsTable.innerHTML = '';
+    flagsStatus.textContent = `Feature flags unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+  }
+}
+
+flagsTable.addEventListener('click', async event => {
+  const target = event.target instanceof Element ? event.target : null;
+  const button = target?.closest('[data-flag-toggle]');
+  const row = button?.closest('[data-flag-key]');
+  if (!button || !row) return;
+  const key = row.dataset.flagKey;
+  const nextEnabled = row.dataset.flagEnabled !== '1';
+  if (!window.confirm(`${nextEnabled ? 'Enable' : 'Disable'} ${key}?`)) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(apiUrl('/api/admin/feature-flags'), {
+      method: 'POST', credentials: 'include',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+      body: JSON.stringify({ key, enabled: nextEnabled, reason: 'admin console toggle' })
+    });
+    const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
+    if (!response.ok) throw new Error(data.error || 'feature_flag_update_failed');
+    await loadFeatureFlags();
+  } catch (error) {
+    flagsStatus.textContent = `Flag update failed: ${error.message}.`;
+    button.disabled = false;
+  }
+});
+
 load();
 loadPrivacyQueue();
 renderCustomerCare();
+loadPromoCodes();
+loadFeatureFlags();

@@ -1,5 +1,5 @@
 export const VOICE_ACCEPTANCE_SCRIPT = Object.freeze([
-  'Material Logic turns careful direction into a finished performance.',
+  'MaterialLogix turns careful direction into a finished performance.',
   'Can we make the pacing feel confident, human, and precise?',
   'Numbers matter: twenty-seven products, three regions, and one clear deadline.',
   'Pause here—then land the final phrase without sounding mechanical.'

@@ -473,7 +473,7 @@ function generatePanel() {
       baseInput.onchange = () => localStorage.setItem('cros:comfyBase', baseInput.value.trim() || 'http://127.0.0.1:8188');
       const phoneConnection = el('details', { className: 'connection-details' },
         el('summary', {}, 'Phone connection'),
-        el('p', { className: 'hint' }, 'Enter the Wi-Fi address shown by Material Logic to control Studio from your phone and run guided face, hand, and body scans.'),
+        el('p', { className: 'hint' }, 'Enter the Wi-Fi address shown by MaterialLogix to control Studio from your phone and run guided face, hand, and body scans.'),
         el('label', { className: 'field' }, el('span', {}, 'Wi-Fi address'), baseInput));
       const routes = el('div', {});
       local.replaceChildren(
@@ -488,7 +488,7 @@ function generatePanel() {
         baseInput.value = bridge.base;
         localStorage.setItem('cros:comfyBase', bridge.base);
         routes.replaceChildren(
-          el('p', { className: 'hint' }, 'Material Logic is running on another computer here. That one is fastest.'),
+          el('p', { className: 'hint' }, 'MaterialLogix is running on another computer here. That one is fastest.'),
           btn('Use that computer', 'btn primary sm', () => renderLocal(true)));
         return;
       }
@@ -497,7 +497,7 @@ function generatePanel() {
         routes.replaceChildren(macEngineSetup(() => renderLocal(true)));
         return;
       }
-      const lines = ['Install Material Logic for Windows to create photos on this computer.'];
+      const lines = ['Install MaterialLogix for Windows to create photos on this computer.'];
       if (device && device.verdict === 'draft-capable') {
         lines.push('Your graphics card works here. Renders come back in seconds.');
       } else if (device) {
@@ -601,7 +601,7 @@ function generatePanel() {
             const file = new File([blob], `gen_${seed}_${i + 1}.png`, { type: 'image/png' });
             const asset = newAsset(state.project.id, file);
             asset.source = 'generated-local';
-            asset.provenance = `Created in Material Logic (seed ${seed}; ${styleSel.value} style intent; ${plan.width}\u00d7${plan.height} on ${comfyStatus.cpuOnly ? 'the processor' : comfyStatus.device}). Prompt: ${promptBox.value.slice(0, 300)}`;
+            asset.provenance = `Created in MaterialLogix (seed ${seed}; ${styleSel.value} style intent; ${plan.width}\u00d7${plan.height} on ${comfyStatus.cpuOnly ? 'the processor' : comfyStatus.device}). Prompt: ${promptBox.value.slice(0, 300)}`;
             await store.addAsset(asset, file);
             const url = await store.objectUrl(asset.id);
             Object.assign(asset, await probe(file, url));
@@ -679,7 +679,7 @@ function macEngineSetup(onConnected) {
         el('p', { className: 'hint' }, 'Chrome for now. Safari can block the connection.')));
   }
   return el('div', {},
-    el('p', { className: 'hint' }, 'Download Material Logic for Mac.'),
+    el('p', { className: 'hint' }, 'Download MaterialLogix for Mac.'),
     el('div', { className: 'setup-choice' },
       el('a', { className: 'btn primary sm', href: MAC_PACKET_URL }, 'With the engine'),
       el('a', { className: 'btn sm', href: MAC_PACKET_LITE_URL || MAC_PACKET_URL }, 'Without it')),
@@ -707,7 +707,7 @@ function localToolsPanel() {
     const bridge = await detectBridge();
     if (!bridge.ok) {
       status.replaceChildren(
-        el('p', { className: 'hint' }, 'Open Material Logic Studio on your computer to manage creative tools.'));
+        el('p', { className: 'hint' }, 'Open MaterialLogix Studio on your computer to manage creative tools.'));
       return;
     }
     const video = bridge.video || {};
@@ -944,7 +944,7 @@ function renderSidebar() {
           box.append(el('p', { className: 'hint' },
             'Open this address on your phone while both devices use the same Wi-Fi.'));
         } else {
-          line.textContent = 'Open Material Logic Studio on your computer to show its Wi-Fi address.';
+          line.textContent = 'Open MaterialLogix Studio on your computer to show its Wi-Fi address.';
         }
       });
       return box;
@@ -1039,7 +1039,7 @@ async function restoreProject(file) {
     if (!raw) throw new Error('project.json is missing.');
     const backup = JSON.parse(new TextDecoder().decode(raw));
     if (backup.schema !== 'materiallogix/recovery@2' || !backup.project || !Array.isArray(backup.assets)) {
-      throw new Error('This is not a Material Logic recovery file.');
+      throw new Error('This is not a MaterialLogix recovery file.');
     }
     const projectId = crypto.randomUUID();
     const idMap = new Map(backup.assets.map(a => [a.id, crypto.randomUUID()]));
@@ -2294,7 +2294,7 @@ function rejectionDialog(asset, targetStatus) {
     el('p', { className: 'hint' }, 'Choose every reason that applies. This feedback becomes project memory and travels with the audit record.'),
     el('div', { className: 'reason-grid' }, ...reasonInputs),
     el('label', { className: 'field', style: 'margin-top:14px' }, el('span', {}, 'Optional note'), note),
-    el('label', { className: 'checkline' }, share, el('span', {}, 'Allow anonymized ratings and reason codes to improve Material Logic. Media is never included without a separate upload confirmation.')));
+    el('label', { className: 'checkline' }, share, el('span', {}, 'Allow anonymized ratings and reason codes to improve MaterialLogix. Media is never included without a separate upload confirmation.')));
   dialog('Why are you declining this result?', body, [
     btn('Cancel', 'btn', closeDialog),
     btn('Save rejection', 'btn primary', () => {
@@ -2540,7 +2540,7 @@ async function generativeFillDialog(asset) {
         created.inpaintJob = jobSpec;
         created.inpaintBoundaryQuality = boundaryQuality;
         if (boundaryQuality.status !== 'pass') created.labels = { ...created.labels, boundary_review: 'required' };
-        created.provenance = `Material Logic Generative Fill Beta (${mode.value}; seed ${result.seed}; ${styleIntent.value} style intent; ${shape.kind} selection; coverage ${coverage.toFixed(6)}; bounds ${JSON.stringify({ x:shape.x, y:shape.y, width:shape.width, height:shape.height })}). Source asset ${asset.id}. Prompt: ${requested.slice(0, 300)}`;
+        created.provenance = `MaterialLogix Generative Fill Beta (${mode.value}; seed ${result.seed}; ${styleIntent.value} style intent; ${shape.kind} selection; coverage ${coverage.toFixed(6)}; bounds ${JSON.stringify({ x:shape.x, y:shape.y, width:shape.width, height:shape.height })}). Source asset ${asset.id}. Prompt: ${requested.slice(0, 300)}`;
         await store.addAsset(created, file);
         const url = await store.objectUrl(created.id);
         Object.assign(created, await probe(file, url));
@@ -2989,7 +2989,7 @@ async function upscaleAsset(asset) {
   dialog('Enhance photo',
     el('div', {},
       el('p', { className: 'hint' },
-        'Choose the final size; Material Logic will add a linked copy and check it automatically.'),
+        'Choose the final size; MaterialLogix will add a linked copy and check it automatically.'),
       !covers(lic, 'photo') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
         'Preview supports 2×; licensed Photo plans unlock 4×.') : null,
       el('label', { className: 'field' }, el('span', {}, 'Quality'), pick)),
@@ -3087,7 +3087,35 @@ function renderReview() {
   const main = $('#main');
   const assets = visibleAssets();
 
+  // The start page carries no workspace chrome: Export, Jobs, Create, and
+  // More only mean something once a photo exists.
+  document.body.classList.toggle('start-page', !state.assets.length);
   if (!state.assets.length) {
+    // The entry stamps which Studio was chosen; the start page honors it so
+    // Video never greets you as Photo.
+    let startProduct = 'photo';
+    try { if (sessionStorage.getItem('mlx:start-product') === 'video') startProduct = 'video'; } catch { /* unavailable */ }
+    if (startProduct === 'video') {
+      main.replaceChildren(el('div', { className: 'empty photo-start-view' },
+        el('span', { className: 'eyebrow' }, 'Video Studio'),
+        el('h2', {}, 'Bring in a video'),
+        el('p', {}, 'Import footage, then Studio checks the frames before you cut, refine, and deliver.'),
+        el('div', { className: 'photo-start-actions' },
+          btn('Import video', 'btn primary', () => {
+            const input = $('#fileInput');
+            const previous = input.accept;
+            input.accept = 'video/*';
+            input.addEventListener('cancel', () => { input.accept = previous; }, { once: true });
+            input.addEventListener('change', () => { input.accept = previous; }, { once: true });
+            input.click();
+          }),
+          btn('Switch to Photo', 'btn', () => {
+            try { sessionStorage.setItem('mlx:start-product', 'photo'); } catch { /* unavailable */ }
+            renderReview();
+          })),
+        photoWorkflowSteps(1)));
+      return;
+    }
     main.replaceChildren(el('div', { className: 'empty photo-start-view' },
       el('span', { className: 'eyebrow' }, 'Photo Studio'),
       el('h2', {}, 'Create or open a photo'),
@@ -3104,6 +3132,16 @@ function renderReview() {
       el('p', {}, 'Open the board to change them.'),
       btn('Open board', 'btn', () => { state.mode = 'board'; render(); })));
     return;
+  }
+
+  // Past the Create-or-open page the workspace sidebar presents itself once,
+  // so its tools are discoverable without hunting for the Create button.
+  if (!state.sidebarShown) {
+    state.sidebarShown = true;
+    const bar = $('#sidebar');
+    bar.classList.remove('closed');
+    bar.classList.add('open');
+    $('#menuBtn').setAttribute('aria-expanded', 'true');
   }
 
   state.index = Math.min(state.index, assets.length - 1);
@@ -3340,7 +3378,7 @@ async function openPrintDelivery() {
   };
 
   const body = el('div', {},
-    el('p', { className: 'hint' }, 'Choose the finished size; Material Logic preserves the photo proportions.'),
+    el('p', { className: 'hint' }, 'Choose the finished size; MaterialLogix preserves the photo proportions.'),
     el('label', { className: 'field' }, el('span', {}, 'Print size'), preset),
     el('label', { className: 'field' }, el('span', {}, 'Orientation'), orientation),
     el('label', { className: 'field' }, el('span', {}, 'Framing'), fit),
@@ -3358,7 +3396,7 @@ async function doExport(exportOpts = {}) {
   if (!covers(lic, product)) {
     return dialog('A matching license is required to download',
       el('div', {},
-        el('p', {}, 'Free preview lets you edit, compare, and review inside Material Logic. It does not create downloadable files.'),
+        el('p', {}, 'Free preview lets you edit, compare, and review inside MaterialLogix. It does not create downloadable files.'),
         el('p', { className: 'hint', style: 'margin-top:10px' },
           `Activate a ${product === 'video' ? 'Video' : 'Photo'} Single Studio or Full Studio license in Deliver, then reconnect for usage confirmation.`)),
       [btn('Close', 'btn primary', closeDialog)]);

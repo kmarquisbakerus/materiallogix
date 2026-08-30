@@ -138,4 +138,4 @@ document.querySelector('#autoDisable').onclick = async () => {
   } catch (error) { walletStatus.textContent = `Could not disable automatic top-up: ${error.message}`; }
 };
 
-load().catch(error => { status.textContent = `Usage is unavailable: ${error.message}. Sign in through the Material Logic account gateway.`; });
+load().catch(error => { status.textContent = `Usage is unavailable: ${error.message}. Sign in through the MaterialLogix account gateway.`; });

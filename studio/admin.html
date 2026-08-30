@@ -98,6 +98,34 @@
       </div>
     </section>
 
+    <section class="ops-data-section customer-care" aria-labelledby="promo-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Growth</p><h2 id="promo-heading">Promo codes</h2></div>
+      <p class="note">Codes apply to catalog purchases only — never wallet refills. Every code is limited per code (max redemptions) and, by default, once per customer.</p>
+      <p class="ops-status" id="promoStatus" role="status" aria-live="polite">Loading promo codes…</p>
+      <div id="promoTable" class="ops-table-wrap" tabindex="0" aria-label="Promo code table"></div>
+      <div class="customer-care-actions">
+        <form id="promoForm" class="care-form">
+          <h3>Create a promo code</h3>
+          <label><span>Code</span><input name="code" maxlength="32" autocomplete="off" spellcheck="false" placeholder="LAUNCH20" pattern="[A-Za-z0-9_-]{4,32}" style="text-transform:uppercase" required></label>
+          <label><span>Discount type</span><select name="discountType"><option value="percent">Percent off</option><option value="amount">Dollars off</option></select></label>
+          <label><span>Value (percent 1–100, or whole dollars 1–180)</span><input name="value" type="number" min="1" max="180" inputmode="numeric" required></label>
+          <label><span>Applies</span><select name="duration"><option value="once">First payment only</option><option value="repeating">For a number of months</option><option value="forever">Every payment</option></select></label>
+          <label><span>Months (repeating only)</span><input name="durationInMonths" type="number" min="1" max="12" inputmode="numeric" placeholder="3"></label>
+          <label><span>Per-code limit (total redemptions)</span><input name="maxRedemptions" type="number" min="1" max="100000" inputmode="numeric" placeholder="100" required></label>
+          <label><span>Expires</span><input name="expires" type="date"></label>
+          <label class="care-confirm"><input name="oncePerCustomer" type="checkbox" checked><span>Limit to once per customer</span></label>
+          <label class="care-confirm"><input name="firstTimeOnly" type="checkbox"><span>New customers only (first purchase)</span></label>
+          <button class="btn primary" type="submit">Create code</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="ops-data-section" aria-labelledby="flags-heading">
+      <div class="ops-section-heading"><p class="eyebrow">Activation control</p><h2 id="flags-heading">Feature flags</h2></div>
+      <p class="ops-status" id="flagsStatus" role="status" aria-live="polite">Loading feature flags…</p>
+      <div id="flagsTable" class="ops-table-wrap" tabindex="0" aria-label="Feature flag table"></div>
+    </section>
+
     <section class="ops-data-section privacy-support" aria-labelledby="privacy-support-heading">
       <div class="ops-section-heading"><p class="eyebrow">Customer rights</p><h2 id="privacy-support-heading">Privacy request support</h2></div>
       <p class="note">Review pseudonymous requests with structured actions only. Ticket references are hashed before storage; do not enter names, email addresses, or case details.</p>
