@@ -23,6 +23,7 @@ import { assessInpaintMaskedBoundary, blendInpaintMaskedCandidate,
 import { probeDevice, deviceSummary } from './device.js';
 import { featureEnabled } from './features.js';
 import { guidanceFor, ensureGuardianAck } from './capture-guidance.js';
+import { screenPrompt } from './prompt-guard.js';
 import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pacer.js';
 import { analyzeGeometry } from './geometry.js';
 import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
@@ -575,6 +576,10 @@ function generatePanel() {
 
     const go = btn('Generate photos', 'btn primary', async () => {
       const count = Number(countSel.value);
+      // Every prompt is screened before any GPU time is spent on it.
+      const screen = screenPrompt(promptBox.value, { recent: state.recentPrompts || [] });
+      if (!screen.ok) { status.textContent = screen.reason; toast(screen.reason, true); return; }
+      state.recentPrompts = [...(state.recentPrompts || []), screen.normalized].slice(-20);
       go.disabled = true;
       let ticker = null;
       try {
@@ -3142,16 +3147,6 @@ function renderReview() {
       el('p', {}, 'Open the board to change them.'),
       btn('Open board', 'btn', () => { state.mode = 'board'; render(); })));
     return;
-  }
-
-  // Past the Create-or-open page the workspace sidebar presents itself once,
-  // so its tools are discoverable without hunting for the Create button.
-  if (!state.sidebarShown) {
-    state.sidebarShown = true;
-    const bar = $('#sidebar');
-    bar.classList.remove('closed');
-    bar.classList.add('open');
-    $('#menuBtn').setAttribute('aria-expanded', 'true');
   }
 
   state.index = Math.min(state.index, assets.length - 1);
