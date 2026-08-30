@@ -166,3 +166,5 @@ th { color: var(--muted); font: 500 10px/1.2 var(--sans); letter-spacing: .16em;
   p, li, .updated, td, th { color: #222; }
   a { color: #111; text-decoration: underline; }
 }
+
+.brand-word{display:inline-flex;align-items:baseline;font:400 18px/1.15 var(--serif);letter-spacing:-.02em}.brand-material{color:var(--ink)}.brand-logix{color:transparent;background:linear-gradient(112deg,#6d481c 0%,#b98232 14%,#f6e4ad 34%,#c99b4d 48%,#fff0bd 58%,#ad772d 78%,#e1c277 91%,#76501f 100%);-webkit-background-clip:text;background-clip:text}.brand-tm{margin-left:1px;align-self:flex-start;font:600 9px/1 var(--sans);color:var(--muted)}.brand-suffix{margin-left:8px;color:var(--muted);font:600 9px/1 var(--sans);letter-spacing:.2em;text-transform:uppercase}

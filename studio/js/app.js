@@ -419,7 +419,7 @@ function briefField(key, label, multiline = false) {
 
 function photoWorkflowSteps(active = 1) {
   return el('ol', { className: 'photo-flow', ariaLabel: 'Photo workflow' },
-    ...['Create or open', 'Review people', 'Edit', 'Quality check', 'Export'].map((label, index) =>
+    ...['Create or open', 'Review', 'Edit', 'Quality check', 'Export'].map((label, index) =>
       el('li', { className: index + 1 === active ? 'active' : index + 1 < active ? 'complete' : '' },
         el('span', {}, String(index + 1)), label)));
 }
@@ -839,7 +839,7 @@ function renderSidebar() {
     el('p', { className: 'hint photo-flow-note' }, 'Every new photo is checked for faces, hands, and bodies before editing.')
   ];
   if (activeAsset) {
-    startBody.push(btn(reviewStatus?.status === 'complete' ? 'Review people again' : 'Review people',
+    startBody.push(btn(reviewStatus?.status === 'complete' ? 'Review again' : 'Review',
       'btn sm', () => reviewPeople(activeAsset)));
   }
   startBody.push(generation);
