@@ -92,6 +92,17 @@ export function planDuration(plan) {
   return +(speech + pauses + breaths).toFixed(1);
 }
 
+/**
+ * The inverse of planDuration: how many words fit a video of this length,
+ * spoken at a profile's pace (1.0 = the 150 wpm base). Reserves a breath of
+ * lead-in and lead-out so reads never slam the cut points.
+ */
+export function wordBudgetForSeconds(seconds, pace = 1.0) {
+  const usable = Math.max(0, seconds - 1.2);
+  const words = Math.floor(usable * (150 / 60) * pace);
+  return Math.max(0, words);
+}
+
 // --- 2. the human post-chain (browser; Web Audio) ---------------------------
 
 /** A synthesized breath: band-passed noise with a soft swell. Reads as human. */

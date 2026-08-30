@@ -24,6 +24,7 @@ import { probeDevice, deviceSummary } from './device.js';
 import { featureEnabled } from './features.js';
 import { guidanceFor, ensureGuardianAck } from './capture-guidance.js';
 import { screenPrompt } from './prompt-guard.js';
+import { wordBudgetForSeconds } from './voice.js';
 import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pacer.js';
 import { analyzeGeometry } from './geometry.js';
 import { ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
@@ -1752,6 +1753,12 @@ function videoBlock(asset) {
     }
   }
 
+  if (asset.duration) {
+    // Scripts written to fit beat scripts trimmed after: the same cadence
+    // model that renders the voice sizes the copy for this exact cut.
+    wrap.append(el('p', { className: 'hint' },
+      `Voiceover fit: about ${wordBudgetForSeconds(asset.duration)} words fill these ${asset.duration.toFixed(0)} seconds at house pace.`));
+  }
   wrap.append(el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap' },
     btn('Review with timecoded notes', 'btn sm', () => playWithComments(asset)),
     btn('Create identity reference set', 'btn sm', () => extractIdentityPack(asset)),
