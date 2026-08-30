@@ -342,7 +342,9 @@ async function analyse(buffer) {
   const row = (ok, text) => {
     const d = document.createElement('div');
     d.className = 'tellrow' + (ok ? ' okrow' : '');
-    d.innerHTML = `<span class="dot"></span><span>${text}</span>`;
+    const dot = document.createElement('span'); dot.className = 'dot';
+    const label = document.createElement('span'); label.textContent = text;
+    d.append(dot, label);
     return d;
   };
   rows.push(row(t.silenceFloorDb > -90, `Room tone floor: ${t.silenceFloorDb} dB ${t.silenceFloorDb > -90 ? '(natural residual ambience)' : '(digital-zero silence)'}`));
