@@ -303,7 +303,7 @@ function promoDiscountLabel(item) {
 function renderPromoCodes() {
   promoTable.innerHTML = renderTable(
     ['Code', 'Discount', 'Redeemed', 'Per-code limit', 'Per-customer', 'Expires', 'Status', ''],
-    promoCodes.map(item => `<tr data-promo-id="${safe(item.id)}"><td>${safe(item.code)}</td><td>${safe(promoDiscountLabel(item))}</td><td>${safe(item.timesRedeemed)}</td><td>${safe(item.maxRedemptions ?? 'none')}</td><td>${item.firstTimeOnly ? 'new customers only' : item.oncePerCustomer ? 'once each' : 'unlimited'}</td><td>${item.expiresAt ? safe(new Date(item.expiresAt * 1000).toISOString().slice(0, 10)) : 'never'}</td><td>${item.active ? 'active' : 'off'}</td><td>${item.active ? '<button class="btn" type="button" data-promo-deactivate>Deactivate</button>' : ''}</td></tr>`)
+    promoCodes.map(item => `<tr data-promo-id="${safe(item.id)}"><td>${safe(item.code)}</td><td>${safe(promoDiscountLabel(item))}</td><td>${safe(item.timesRedeemed)}</td><td>${safe(item.maxRedemptions ?? 'none')}</td><td>${item.firstTimeOnly ? 'new customers only' : item.oncePerCustomer ? 'once each' : 'unlimited'}${item.cloudLocked ? ' · no free cloud' : ''}</td><td>${item.expiresAt ? safe(new Date(item.expiresAt * 1000).toISOString().slice(0, 10)) : 'never'}</td><td>${item.active ? 'active' : 'off'}</td><td>${item.active ? '<button class="btn" type="button" data-promo-deactivate>Deactivate</button>' : ''}</td></tr>`)
   );
 }
 
@@ -340,7 +340,8 @@ promoForm.addEventListener('submit', async event => {
     maxRedemptions: Number(form.get('maxRedemptions')),
     ...(expires ? { expiresAt: Math.floor(new Date(`${expires}T23:59:59`).getTime() / 1000) } : {}),
     oncePerCustomer: form.get('oncePerCustomer') === 'on',
-    firstTimeOnly: form.get('firstTimeOnly') === 'on'
+    firstTimeOnly: form.get('firstTimeOnly') === 'on',
+    cloudLocked: form.get('cloudLocked') === 'on'
   };
   const button = promoForm.querySelector('button[type="submit"]');
   button.disabled = true;
