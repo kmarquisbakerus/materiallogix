@@ -1,3 +1,4 @@
+// MaterialLogix host routing and Pages-compatible homepage bootstrap.
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
