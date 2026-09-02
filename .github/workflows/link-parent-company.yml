@@ -1,0 +1,82 @@
+name: Link Libra Side Technologies
+
+on:
+  push:
+    branches:
+      - company/link-parent-site
+    paths:
+      - '.github/workflows/link-parent-company.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: company/link-parent-site
+          fetch-depth: 0
+
+      - name: Link visible company references
+        shell: python
+        run: |
+          from pathlib import Path
+
+          parent = 'https://librasidetechnologies.com/'
+          footnote_old = '<span class="footnote">© 2026 LibraSide Technologies LLC</span>'
+          footnote_new = f'<span class="footnote">© 2026 <a href="{parent}">Libra Side Technologies LLC</a></span>'
+          changed = []
+
+          for path in (Path('index.html'), Path('contact.html')):
+              text = path.read_text(encoding='utf-8')
+              count = text.count(footnote_old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one company footnote, found {count}')
+              text = text.replace(footnote_old, footnote_new)
+              if path.name == 'contact.html':
+                  marker = '<div class="footlinks"><a href="legal/index.html">Legal</a>'
+                  replacement = f'<div class="footlinks"><a href="{parent}">Company</a><a href="legal/index.html">Legal</a>'
+                  if text.count(marker) != 1:
+                      raise SystemExit('contact.html: expected one footer-links marker')
+                  text = text.replace(marker, replacement)
+              path.write_text(text, encoding='utf-8')
+              changed.append(path.as_posix())
+
+          legal_old = '<span>MaterialLogix Studio™ · LibraSide Technologies, LLC</span>'
+          legal_new = f'<span>MaterialLogix Studio™ · <a href="{parent}">Libra Side Technologies, LLC</a></span>'
+          legal_changed = []
+          for path in sorted(Path('legal').glob('*.html')):
+              text = path.read_text(encoding='utf-8')
+              if legal_old not in text:
+                  continue
+              if text.count(legal_old) != 1:
+                  raise SystemExit(f'{path}: company footer is not unique')
+              path.write_text(text.replace(legal_old, legal_new), encoding='utf-8')
+              legal_changed.append(path.as_posix())
+
+          if len(legal_changed) < 8:
+              raise SystemExit(f'Expected at least eight legal footers, changed {len(legal_changed)}')
+          changed.extend(legal_changed)
+          print('\n'.join(changed))
+
+      - name: Verify link scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test "$(git diff --name-only | grep -Ec '^(index\.html|contact\.html|legal/[^/]+\.html)$')" -eq "$(git diff --name-only | wc -l)"
+          grep -F 'href="https://librasidetechnologies.com/">Libra Side Technologies LLC</a>' index.html
+          grep -F 'href="https://librasidetechnologies.com/">Company</a>' contact.html
+          grep -R -F 'href="https://librasidetechnologies.com/">Libra Side Technologies, LLC</a>' legal/*.html >/dev/null
+
+      - name: Commit parent-company links
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html contact.html legal/*.html
+          git commit -m 'Link MaterialLogix to Libra Side Technologies'
+          git push origin HEAD:company/link-parent-site
