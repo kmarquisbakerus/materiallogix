@@ -1,0 +1,70 @@
+name: Deploy Libra Side Technologies
+
+on:
+  push:
+    branches:
+      - company/libraside-technologies
+    paths:
+      - 'company-site/**'
+      - '.github/workflows/deploy-libraside.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: libraside-technologies-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT_NAME: libraside-technologies
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require Cloudflare credentials
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is not available to this repository.'; exit 1; }
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo '::error::CLOUDFLARE_ACCOUNT_ID is not available to this repository.'; exit 1; }
+      - name: Create Pages project if needed
+        shell: bash
+        run: npx -y wrangler@4 pages project create "$PROJECT_NAME" --production-branch company/libraside-technologies || true
+      - name: Deploy company site
+        shell: bash
+        run: npx -y wrangler@4 pages deploy company-site --project-name "$PROJECT_NAME" --branch company/libraside-technologies
+      - name: Attach company domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT_NAME/domains"
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          current="$(curl --fail --silent --show-error "${auth[@]}" "$api")"
+          for domain in librasidetechnologies.com www.librasidetechnologies.com; do
+            if jq -e --arg d "$domain" '.result[]? | select(.name == $d)' <<<"$current" >/dev/null; then
+              echo "$domain already attached"
+            else
+              curl --fail --silent --show-error "${auth[@]}" -X POST "$api" --data "{\"name\":\"$domain\"}" | jq -e '.success == true' >/dev/null
+              echo "Attached $domain"
+            fi
+          done
+      - name: Verify public site
+        shell: bash
+        run: |
+          for i in {1..12}; do
+            if page="$(curl --fail --silent --show-error https://librasidetechnologies.com/)" && grep -F 'Libra Side Technologies' <<<"$page" >/dev/null; then
+              grep -F 'Better,' <<<"$page" >/dev/null
+              echo 'Company site is public.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo '::error::The custom domain did not become publicly verifiable during this run.'
+          exit 1
