@@ -31,6 +31,16 @@ export default {
       return new Response(response.body, { status: response.status, headers });
     }
 
-    return env.ASSETS.fetch(request);
+    const response = await env.ASSETS.fetch(request);
+    if ((path === '/' || path === '/index.html') && response.headers.get('content-type')?.includes('text/html')) {
+      return new HTMLRewriter()
+        .on('body', {
+          element(element) {
+            element.append('<script type="module" src="/checkout-site.js?v=20260902"></script>', { html: true });
+          }
+        })
+        .transform(response);
+    }
+    return response;
   }
 };
