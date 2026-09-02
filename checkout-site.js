@@ -14,6 +14,8 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     .commerce-toolbar select,.commerce-promo input{min-height:44px;border:1px solid var(--hair);border-radius:10px;background:var(--card);color:var(--ink);padding:0 12px;font:inherit}
     .commerce-toolbar p{margin:0;max-width:50ch;color:var(--muted);font-size:12px}
     .checkout-cta{width:100%;margin-top:16px;white-space:normal;text-align:center}
+    .single-checkout{display:none}
+    #sp-photo:checked~.single-checkout-photo,#sp-video:checked~.single-checkout-video,#sp-voice:checked~.single-checkout-voice{display:flex}
     .commerce-purchase{display:grid;gap:12px;margin:18px 0 0;padding:18px;border:1px solid var(--hair);border-radius:14px;background:rgba(255,255,255,.48)}
     .commerce-promo{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;max-width:420px;font-size:12px;font-weight:700;color:var(--ink-2)}
     .commerce-consent{display:flex;align-items:flex-start;gap:10px;color:var(--ink-2);font-size:12px;line-height:1.5}
@@ -48,17 +50,20 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
 
   const single = card('Single Studio');
   if (single) {
+    const picker = single.querySelector('.picker');
     const panelPlans = [
-      ['.p-photo', 'single_photo', 'Choose Single Studio — Photo'],
-      ['.p-video', 'single_video', 'Choose Single Studio — Video'],
-      ['.p-voice', 'single_voice', 'Choose Single Studio — Voice']
+      ['photo', 'single_photo', 'Choose Single Studio — Photo'],
+      ['video', 'single_video', 'Choose Single Studio — Video'],
+      ['voice', 'single_voice', 'Choose Single Studio — Voice']
     ];
     let attached = 0;
-    for (const [selector, plan, label] of panelPlans) {
-      const panel = single.querySelector(selector);
-      if (panel) {
-        addButton(panel, { checkoutPlan: plan }, label);
-        attached += 1;
+    if (picker) {
+      for (const [kind, plan, label] of panelPlans) {
+        const button = addButton(picker, { checkoutPlan: plan }, label);
+        if (button) {
+          button.classList.add('single-checkout', `single-checkout-${kind}`);
+          attached += 1;
+        }
       }
     }
     if (!attached) {
