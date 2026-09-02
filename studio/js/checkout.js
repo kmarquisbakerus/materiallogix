@@ -39,6 +39,11 @@ function sendAnalytics(event) {
   }).catch(() => {});
 }
 
+function setStatus(message) {
+  const node = document.querySelector('#checkoutStatus');
+  if (node) node.textContent = message;
+}
+
 function selectedTerm() {
   return document.querySelector('#billingTerm')?.value || 'monthly';
 }
@@ -49,7 +54,7 @@ function updatePricing(termId) {
     const planId = button.dataset.checkoutPlan;
     const product = PRODUCTS.find(item => item.id === planId);
     const amount = price(planId, term.id);
-    const card = button.closest('.tier');
+    const card = button.closest('.tier, .plan');
     if (!product || !card) continue;
     if (!amount) {
       button.disabled = true;
@@ -68,18 +73,21 @@ async function beginCheckout(button) {
   const consent = document.querySelector('#purchaseConsent');
   if (!consent?.checked) {
     consent?.focus();
-    document.querySelector('#checkoutStatus').textContent = 'Review and accept the purchase terms before continuing.';
+    setStatus('Review and accept the purchase terms before continuing.');
     return;
   }
+
   const termId = selectedTerm();
-  const planId = button.dataset.checkoutPlan;
-  if (!price(planId, termId)) {
-    document.querySelector('#checkoutStatus').textContent = 'That plan is not available for the selected term.';
+  const planId = button.dataset.checkoutPlan || '';
+  const directSku = button.dataset.checkoutSku || '';
+  if (!directSku && !price(planId, termId)) {
+    setStatus('That plan is not available for the selected term.');
     return;
   }
+
   const operationId = crypto.randomUUID();
   button.disabled = true;
-  document.querySelector('#checkoutStatus').textContent = 'Opening secure Stripe checkout…';
+  setStatus('Opening secure Stripe checkout…');
   const promoField = document.querySelector('#promoCode');
   const promotionCode = promoField?.value.trim().toUpperCase() || '';
   try {
@@ -87,7 +95,7 @@ async function beginCheckout(button) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': operationId },
       body: JSON.stringify({
-        sku: `${planId}_${termId}`,
+        sku: directSku || `${planId}_${termId}`,
         attribution: attribution(),
         ...(promotionCode ? { promotionCode } : {})
       })
@@ -97,21 +105,21 @@ async function beginCheckout(button) {
     location.assign(result.url);
   } catch (error) {
     button.disabled = false;
-    const status = document.querySelector('#checkoutStatus');
     if (error?.message === 'invalid_promo_code') {
-      status.textContent = 'That promo code is not valid or has expired. Remove it or try another — no payment was taken.';
+      setStatus('That promo code is not valid or has expired. Remove it or try another — no payment was taken.');
       promoField?.focus();
     } else if (error?.message === 'promo_code_already_used') {
-      status.textContent = 'That promo code was already used on this account. Remove it to continue — no payment was taken.';
+      setStatus('That promo code was already used on this account. Remove it to continue — no payment was taken.');
       promoField?.focus();
     } else {
-      status.textContent = 'Checkout is temporarily unavailable. No payment was taken. Please try again.';
+      setStatus('Checkout is temporarily unavailable. No payment was taken. Please try again.');
     }
   }
 }
 
+const checkoutSelector = '[data-checkout-plan], [data-checkout-sku]';
 const promoRow = document.querySelector('#promoRow');
-if (promoRow && document.querySelector('[data-checkout-plan]')) promoRow.hidden = false;
+if (promoRow && document.querySelector(checkoutSelector)) promoRow.hidden = false;
 
 const selector = document.querySelector('#billingTerm');
 if (selector) {
@@ -132,6 +140,6 @@ if (pricing && 'IntersectionObserver' in globalThis) {
   }, { threshold: 0.2 });
   observer.observe(pricing);
 }
-for (const button of document.querySelectorAll('[data-checkout-plan]')) {
+for (const button of document.querySelectorAll(checkoutSelector)) {
   button.addEventListener('click', () => beginCheckout(button));
 }
