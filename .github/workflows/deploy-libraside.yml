@@ -29,7 +29,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      PRIMARY_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      FALLBACK_CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_R2_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
@@ -41,11 +42,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$CLOUDFLARE_API_TOKEN" || {
-            echo '::error::CLOUDFLARE_API_TOKEN is not available to this repository.'
+          token="${PRIMARY_CLOUDFLARE_API_TOKEN:-${FALLBACK_CLOUDFLARE_API_TOKEN:-}}"
+          test -n "$token" || {
+            echo '::error::Neither CLOUDFLARE_API_TOKEN nor CLOUDFLARE_R2_API_TOKEN is available to this repository.'
             exit 1
           }
-          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+          echo "::add-mask::$token"
+          echo "CLOUDFLARE_API_TOKEN=$token" >> "$GITHUB_ENV"
+          auth=(-H "Authorization: Bearer $token" -H 'Content-Type: application/json')
           verification="$(curl --fail --silent --show-error "${auth[@]}" https://api.cloudflare.com/client/v4/user/tokens/verify)"
           jq -e '.success == true' <<<"$verification" >/dev/null
 
