@@ -1,4 +1,5 @@
 import { apiUrl } from './api-root.js';
+import { readableServiceError } from './service-error.js';
 
 const status = document.querySelector('#opsStatus');
 const cards = document.querySelector('#opsCards');
@@ -83,7 +84,7 @@ async function load() {
     status.textContent = `${data.period} · identifiers are pseudonymous; no media, prompts, filenames, keys, or raw emails are collected here.`;
     render();
   } catch (error) {
-    status.textContent = `Operations access unavailable: ${error.message}. This view requires the team Access policy and admin allowlist.`;
+    status.textContent = `Operations access unavailable: ${readableServiceError(error)}. This view requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -130,7 +131,7 @@ async function loadPrivacyQueue() {
   } catch (error) {
     privacyQueue = [];
     renderPrivacyQueue();
-    privacySupportStatus.textContent = `Privacy support unavailable: ${error.message}. This queue requires the team Access policy and admin allowlist.`;
+    privacySupportStatus.textContent = `Privacy support unavailable: ${readableServiceError(error)}. This queue requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -184,7 +185,7 @@ async function loadCustomerCare() {
   } catch (error) {
     customerCareSnapshot = null;
     renderCustomerCare();
-    customerCareStatus.textContent = `Customer care unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+    customerCareStatus.textContent = `Customer care unavailable: ${readableServiceError(error)}. This requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -205,7 +206,7 @@ async function submitCareForm(form, path, buildPayload, successLabel) {
     form.elements.confirm.checked = false;
     await loadCustomerCare();
   } catch (error) {
-    customerCareStatus.textContent = `${successLabel} failed: ${error.message}. Nothing is assumed; check the record before retrying.`;
+    customerCareStatus.textContent = `${successLabel} failed: ${readableServiceError(error)}. Nothing is assumed; check the record before retrying.`;
   } finally {
     button.disabled = false;
   }
@@ -244,7 +245,7 @@ privacyRequestTable.addEventListener('click', async event => {
     privacyTicketReference.value = '';
     await loadPrivacyQueue();
   } catch (error) {
-    privacySupportStatus.textContent = `Privacy support action failed: ${error.message}. No completion is assumed; refresh before retrying.`;
+    privacySupportStatus.textContent = `Privacy support action failed: ${readableServiceError(error)}. No completion is assumed; refresh before retrying.`;
     button.disabled = false;
   }
 });
@@ -321,7 +322,7 @@ async function loadPromoCodes() {
   } catch (error) {
     promoCodes = [];
     renderPromoCodes();
-    promoStatus.textContent = `Promo codes unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+    promoStatus.textContent = `Promo codes unavailable: ${readableServiceError(error)}. This requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -358,7 +359,7 @@ promoForm.addEventListener('submit', async event => {
     promoForm.elements.oncePerCustomer.checked = true;
     await loadPromoCodes();
   } catch (error) {
-    promoStatus.textContent = `Promo code not created: ${error.message}.`;
+    promoStatus.textContent = `Promo code not created: ${readableServiceError(error)}.`;
   } finally {
     button.disabled = false;
   }
@@ -382,7 +383,7 @@ promoTable.addEventListener('click', async event => {
     if (!response.ok) throw new Error(data.error || 'promo_deactivate_failed');
     await loadPromoCodes();
   } catch (error) {
-    promoStatus.textContent = `Deactivation failed: ${error.message}.`;
+    promoStatus.textContent = `Deactivation failed: ${readableServiceError(error)}.`;
     button.disabled = false;
   }
 });
@@ -403,7 +404,7 @@ async function loadFeatureFlags() {
     );
   } catch (error) {
     flagsTable.innerHTML = '';
-    flagsStatus.textContent = `Feature flags unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+    flagsStatus.textContent = `Feature flags unavailable: ${readableServiceError(error)}. This requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -426,7 +427,7 @@ flagsTable.addEventListener('click', async event => {
     if (!response.ok) throw new Error(data.error || 'feature_flag_update_failed');
     await loadFeatureFlags();
   } catch (error) {
-    flagsStatus.textContent = `Flag update failed: ${error.message}.`;
+    flagsStatus.textContent = `Flag update failed: ${readableServiceError(error)}.`;
     button.disabled = false;
   }
 });

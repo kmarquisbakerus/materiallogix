@@ -308,8 +308,9 @@ $('#fitSeconds').addEventListener('input', () => paintPlan());
 
 function paintPlan() {
   const plan = performancePlan(activeScriptText());
+  const count = (value, noun) => `${value} ${noun}${value === 1 ? '' : 's'}`;
   $('#planSummary').textContent =
-    `${plan.segments.length} segment(s), ${plan.totalWords} words, ~${planDuration(plan)}s read.`;
+    `${count(plan.segments.length, 'segment')}, ${count(plan.totalWords, 'word')}, ~${planDuration(plan)}s read.`;
   const target = fitSecondsValue();
   const fitStatus = $('#fitStatus');
   if (target > 0) {

@@ -1,6 +1,7 @@
 import { cloudVideoSecondsForCents, CLOUD_PRICING } from './pricing.js';
 import { pendingUsageReleases } from './billing-client.js';
 import { apiUrl } from './api-root.js';
+import { readableServiceError } from './service-error.js';
 
 const status = document.querySelector('#usageStatus');
 const cards = document.querySelector('#usageCards');
@@ -109,7 +110,7 @@ document.querySelector('#walletRefill').onclick = async () => {
   try {
     const result = await api('/api/wallet/checkout', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ amountCents }) });
     location.assign(result.url);
-  } catch (error) { walletStatus.textContent = `Refill unavailable: ${error.message}`; }
+  } catch (error) { walletStatus.textContent = `Refill unavailable: ${readableServiceError(error)}.`; }
 };
 
 document.querySelector('#autoSetup').onclick = async () => {
@@ -117,7 +118,7 @@ document.querySelector('#autoSetup').onclick = async () => {
   try {
     const result = await api('/api/wallet/auto-topup/setup', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } });
     location.assign(result.url);
-  } catch (error) { walletStatus.textContent = `Payment-method setup unavailable: ${error.message}`; }
+  } catch (error) { walletStatus.textContent = `Payment-method setup unavailable: ${readableServiceError(error)}.`; }
 };
 
 document.querySelector('#autoEnable').onclick = async () => {
@@ -128,14 +129,14 @@ document.querySelector('#autoEnable').onclick = async () => {
     await api('/api/wallet/auto-topup', { method: 'POST', body: JSON.stringify({ enabled: true, confirm: true,
       thresholdCents: cents(autoThreshold), refillCents: cents(autoRefill), monthlyCapCents: cents(autoCap) }) });
     walletStatus.textContent = 'Automatic top-up is enabled with the rule shown above.';
-  } catch (error) { walletStatus.textContent = `Automatic top-up was not enabled: ${error.message}`; }
+  } catch (error) { walletStatus.textContent = `Automatic top-up was not enabled: ${readableServiceError(error)}.`; }
 };
 
 document.querySelector('#autoDisable').onclick = async () => {
   try {
     await api('/api/wallet/auto-topup', { method: 'POST', body: JSON.stringify({ enabled: false }) });
     walletStatus.textContent = 'Automatic top-up is disabled immediately. Manual refills remain available.';
-  } catch (error) { walletStatus.textContent = `Could not disable automatic top-up: ${error.message}`; }
+  } catch (error) { walletStatus.textContent = `Could not disable automatic top-up: ${readableServiceError(error)}.`; }
 };
 
-load().catch(error => { status.textContent = `Usage is unavailable: ${error.message}. Sign in through the MaterialLogix account gateway.`; });
+load().catch(error => { status.textContent = `Usage is unavailable: ${readableServiceError(error)}. Sign in through the MaterialLogix account gateway.`; });
