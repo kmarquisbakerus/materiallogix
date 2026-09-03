@@ -5,7 +5,7 @@
 // your own provider key) and tier 3 (managed, billed) are Phase 2.
 
 // Direct ComfyUI media traffic is loopback-only. Phone-over-Wi-Fi uses the
-// Material Logic bridge, which requires the access token shown by engine.py.
+// MaterialLogix bridge, which requires the access token shown by engine.py.
 const isLoopbackHost = h => h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
 // A private address must be a literal dotted quad: a DNS name that merely
 // starts with a private prefix (10.attacker.example) must never pass.
@@ -79,7 +79,7 @@ const avoidRules = [
 
 /**
  * Compile customer direction without replacing it. Explicit creative choices
- * win; Material Logic adds only the photographic details the customer did not
+ * win; MaterialLogix adds only the photographic details the customer did not
  * specify. The returned rules are safe provenance, not provider instructions.
  */
 export function compilePhotoPrompt(prompt, negative = '', styleIntent = 'natural') {
@@ -251,7 +251,7 @@ export async function listCheckpoints(base = DEFAULT_BASE) {
 
 /**
  * Validate the standard ComfyUI nodes and typed sockets required by the
- * Material Logic separate-source/separate-mask inpainting graph.
+ * MaterialLogix separate-source/separate-mask inpainting graph.
  */
 export function validateInpaintObjectInfo(info = {}) {
   const missing = [];

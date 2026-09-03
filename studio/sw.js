@@ -48,7 +48,7 @@ async function networkFirst(request, event, cacheName = CACHE) {
     return response;
   } catch {
     return (await caches.open(cacheName).then(cache => cache.match(request, { ignoreSearch: true }))) || new Response(
-      '<!doctype html><title>Material Logic Studio offline</title><h1>Offline shell unavailable</h1><p>Reconnect once to repair the application shell. Your project data has not been deleted.</p>',
+      '<!doctype html><title>MaterialLogix Studio offline</title><h1>Offline shell unavailable</h1><p>Reconnect once to repair the application shell. Your project data has not been deleted.</p>',
       { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } }
     );
   } finally {
