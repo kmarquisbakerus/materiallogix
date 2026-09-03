@@ -1,0 +1,73 @@
+name: Apply LibraSide collaboration hero
+
+on:
+  push:
+    branches:
+      - company/libraside-technologies
+    paths:
+      - .github/workflows/apply-collaboration-hero.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: company/libraside-technologies
+
+      - name: Build the collaboration hero from the approved source image
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --quiet pillow
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageEnhance, ImageOps
+
+          source = Path('media/photo-matrix-diverse-group-natural-collaboration.jpg')
+          destination = Path('company-site/media/collaboration-hero.webp')
+          if not source.is_file():
+              raise SystemExit(f'Missing approved collaboration image: {source}')
+
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          with Image.open(source) as image:
+              image = ImageOps.exif_transpose(image).convert('RGB')
+              image = ImageOps.fit(
+                  image,
+                  (1800, 1100),
+                  method=Image.Resampling.LANCZOS,
+                  centering=(0.52, 0.48),
+              )
+              image = ImageEnhance.Color(image).enhance(0.94)
+              image = ImageEnhance.Contrast(image).enhance(1.02)
+              image.save(destination, 'WEBP', quality=86, method=6)
+          PY
+
+      - name: Validate the final site package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s company-site/media/collaboration-hero.webp
+          test "$(stat -c%s company-site/media/collaboration-hero.webp)" -lt 650000
+          grep -Fq 'LibraSide Technologies' company-site/index.html
+          grep -Fq './media/collaboration-hero.webp' company-site/index.html
+          grep -Fq './media/studio-photo.webp' company-site/index.html
+          ! grep -Fq 'Libra Side' company-site/index.html
+          ! grep -Eq 'console-index|console-row|portfolio-console|item-number|statement-number|wordmark-mark|founder-monogram|>0[1-9]<' company-site/index.html
+          ! grep -Eq 'font-style:[[:space:]]*italic' company-site/styles.css
+
+      - name: Remove this one-time workflow and commit the finished hero
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-collaboration-hero.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add company-site .github/workflows/apply-collaboration-hero.yml
+          git commit -m 'Use the collaborative LibraSide hero'
+          git push origin HEAD:company/libraside-technologies
