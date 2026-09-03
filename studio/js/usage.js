@@ -1,4 +1,10 @@
 import { cloudVideoSecondsForCents, CLOUD_PRICING } from './pricing.js';
+
+// The wallet range is declared once in pricing.js. Reading it here keeps the
+// input bounds, the guard, and the message that explains them from drifting
+// apart the next time the range changes.
+const REFILL_MIN_CENTS = Math.round(CLOUD_PRICING.minimumRefill * 100);
+const REFILL_MAX_CENTS = Math.round(CLOUD_PRICING.maximumRefill * 100);
 import { pendingUsageReleases } from './billing-client.js';
 import { apiUrl } from './api-root.js';
 import { readableServiceError } from './service-error.js';
@@ -104,7 +110,10 @@ async function load() {
 
 document.querySelector('#walletRefill').onclick = async () => {
   const amountCents = cents(walletAmount);
-  if (!Number.isInteger(amountCents) || amountCents < 500 || amountCents > 50000) { walletStatus.textContent = 'Choose a refill from $5.00 through $500.00.'; return; }
+  if (!Number.isInteger(amountCents) || amountCents < REFILL_MIN_CENTS || amountCents > REFILL_MAX_CENTS) {
+    walletStatus.textContent = `Choose a refill from ${money(REFILL_MIN_CENTS)} through ${money(REFILL_MAX_CENTS)}.`;
+    return;
+  }
   if (!confirm(`Continue to Stripe to add exactly ${money(amountCents)} to your prepaid cloud wallet? This is a one-time refill and does not enable automatic top-up.`)) return;
   walletStatus.textContent = 'Creating secure Stripe Checkout…';
   try {
@@ -131,6 +140,13 @@ document.querySelector('#autoEnable').onclick = async () => {
     walletStatus.textContent = 'Automatic top-up is enabled with the rule shown above.';
   } catch (error) { walletStatus.textContent = `Automatic top-up was not enabled: ${readableServiceError(error)}.`; }
 };
+
+// The markup carries starting bounds so the control is usable before scripts
+// run; align them with the declared range once they have.
+for (const input of [walletAmount, autoRefill]) {
+  input.min = String(CLOUD_PRICING.minimumRefill);
+  input.max = String(CLOUD_PRICING.maximumRefill);
+}
 
 document.querySelector('#autoDisable').onclick = async () => {
   try {
