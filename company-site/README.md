@@ -34,7 +34,25 @@ how the company is governed.
   captioned as such. No mockups, no rendered stand-ins, no stock screens.
 - Products without a shippable interface get a typographic panel, not a
   screenshot of an unfinished build.
+- Photography is produced in MaterialLogix Studio and centres Black subjects.
+  `hero-collaboration`, `studio-portrait` and `fashion-maker` all come from the
+  Studio photo matrix.
 - Photography avoids third-party hardware branding in the frame.
+- SideOf consumer campaign photography does not appear here. The parent site
+  shows the SideOf product, not its lifestyle marketing.
+
+### Outstanding: the MaterialLogix Fashion card
+
+The Fashion card should carry a rendered evening gown on a brown dress form.
+That render has to be produced in MaterialLogix Studio, which generates through
+a local ComfyUI engine on the founder's own GPU, so it cannot be produced in
+CI or by a hosted agent. Until it exists the card carries `fashion-maker.webp`.
+
+To swap it in: export at 1440x900 or wider, save as
+`media/fashion-gown.webp`, point the Fashion card's `<img>` at it, and add the
+filename to `scripts/copy-libraside-site.cjs` and the `COMPANY_FILES` map in
+`workers/hostname-router.js` in the `sideof` repository. A suggested Studio
+prompt is kept in `docs/fashion-gown-render.md`.
 
 ## Boundaries
 
