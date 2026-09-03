@@ -98,9 +98,13 @@ export function planDuration(plan) {
  * lead-in and lead-out so reads never slam the cut points.
  */
 export function wordBudgetForSeconds(seconds, pace = 1.0) {
-  const usable = Math.max(0, seconds - 1.2);
-  const words = Math.floor(usable * (150 / 60) * pace);
-  return Math.max(0, words);
+  // An empty or half-typed fit target arrives as NaN, and Math.max(0, NaN) is
+  // NaN - which would put "NaN words" in front of a customer.
+  const target = Number(seconds);
+  const rate = Number(pace);
+  if (!Number.isFinite(target) || !Number.isFinite(rate) || rate <= 0) return 0;
+  const usable = Math.max(0, target - 1.2);
+  return Math.max(0, Math.floor(usable * (150 / 60) * rate));
 }
 
 // --- 2. the human post-chain (browser; Web Audio) ---------------------------
