@@ -32,6 +32,7 @@ import { CURVE_IDENTITY, buildLuminanceLut, ensureEditState, pixelGridReview, pi
 import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
 import { readableServiceError } from './service-error.js';
 import { count } from './plural.js';
+import { DEFAULT_VIDEO_SPEC, deliveryFrame, resolveVideoTrim } from './video-plan.js';
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
@@ -1892,39 +1893,20 @@ function videoBlock(asset) {
   return wrap;
 }
 
-function parseVideoTime(value) {
-  if (value === '' || value == null) return null;
-  if (typeof value === 'number') return value;
-  const parts = String(value).trim().split(':').map(Number);
-  if (parts.some(Number.isNaN)) return null;
-  return parts.reduce((total, part) => total * 60 + part, 0);
-}
 
 function videoRenderPlan(asset) {
   const v = asset.video;
-  const trimStart = parseVideoTime(v.trimStart);
-  const trimEnd = parseVideoTime(v.trimEnd);
-  if (v.trimStart && trimStart == null) throw new Error('Enter the in point as seconds or timecode, for example 0:03.5.');
-  if (v.trimEnd && trimEnd == null) throw new Error('Enter the out point as seconds or timecode, for example 0:12.');
-  if (trimEnd != null && trimEnd <= (trimStart || 0)) throw new Error('The out point must be later than the in point.');
-  const deliveryFrames = {
-    vertical: { w: 1080, h: 1920 }, portrait: { w: 1080, h: 1350 },
-    square: { w: 1080, h: 1080 }, wide: { w: 1920, h: 1080 }
-  };
-  const frame = deliveryFrames[v.spec] || deliveryFrames.vertical;
+  const trim = resolveVideoTrim({ trimStart: v.trimStart, trimEnd: v.trimEnd, duration: asset.duration, speed: v.speed || 1 });
+  const frame = deliveryFrame(v.spec);
   const activePlacement = state.activeSurface ? ensurePlacement(asset, state.activeSurface) : null;
   const crop = snapToRatio(
     activePlacement?.crop || defaultCrop(asset.width, asset.height, frame),
     asset.width, asset.height, frame
   );
-  const speed = v.speed || 1;
-  const sourceEnd = trimEnd ?? asset.duration;
-  const outputSeconds = Math.max(0, (sourceEnd - (trimStart || 0)) / speed);
-  if (!Number.isFinite(outputSeconds) || outputSeconds <= 0) throw new Error('The selected video range has no renderable duration.');
   return {
-    outputSeconds,
+    outputSeconds: trim.outputSeconds,
     opts: {
-      trimStart: trimStart || 0, trimEnd, spec: v.spec || 'vertical', speed,
+      trimStart: trim.start, trimEnd: trim.end, spec: v.spec || DEFAULT_VIDEO_SPEC, speed: trim.speed,
       fadeIn: v.fadeIn || 0, fadeOut: v.fadeOut || 0, rotate: v.rotate || 0,
       volumeDb: v.volumeDb || 0, denoise: !!v.denoise, audioEq: v.audioEq || 'flat',
       burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments
