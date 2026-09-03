@@ -26,7 +26,8 @@ jobs:
 
           root = Path('.')
           output = root / 'materiallogix-cloudflare-upload.zip'
-          excluded_roots = {'.git', '.github'}
+          # scripts/ is repository tooling, not deployable site content.
+          excluded_roots = {'.git', '.github', 'scripts'}
           excluded_names = {output.name}
 
           with ZipFile(output, 'w', ZIP_DEFLATED) as archive:

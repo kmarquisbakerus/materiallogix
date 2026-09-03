@@ -37,7 +37,7 @@ export default {
       return new HTMLRewriter()
         .on('body', {
           element(element) {
-            element.append('<script type="module" src="/checkout-site.js?v=20260902"></script>', { html: true });
+            element.append('<script type="module" src="/checkout-site.js?v=20260903"></script>', { html: true });
           }
         })
         .transform(response);
