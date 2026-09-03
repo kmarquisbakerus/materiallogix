@@ -1,0 +1,187 @@
+name: Publish approved LibraSide site through Git integration
+
+on:
+  push:
+    branches:
+      - company/libraside-technologies
+    paths:
+      - '.github/workflows/publish-libraside-via-git-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: libraside-git-integration-publish
+  cancel-in-progress: false
+
+jobs:
+  publish-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the approved corporate-site branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate the approved static website
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f company-site/index.html
+          test -f company-site/styles.css
+          test -f company-site/site.js
+          test -f company-site/media/black-led-collaboration.webp
+          grep -Fq 'Better tools.' company-site/index.html
+          grep -Fq 'Power should not require surrender.' company-site/index.html
+          grep -Fq 'black-led-collaboration.webp' company-site/index.html
+          grep -Fq 'Actual MaterialLogix Studio Photo editing workspace' company-site/index.html
+          grep -Fq 'Actual SideOf Social Discover screen' company-site/index.html
+          if grep -Eiq 'beforeinstallprompt|serviceWorker|manifest\.json|add to home screen' company-site/index.html company-site/site.js; then
+            echo '::error::Web-app installation behavior is not permitted on this corporate website.'
+            exit 1
+          fi
+
+      - name: Identify the Git branch currently feeding the live company site
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+          live=/tmp/libraside-live.html
+          curl --fail --silent --show-error --location --max-time 30 \
+            -H 'Cache-Control: no-cache' \
+            "https://librasidetechnologies.com/?source_probe=${GITHUB_RUN_ID}" > "$live"
+
+          current='company/libraside-technologies'
+          target=''
+          reason=''
+
+          while IFS= read -r ref; do
+            branch="${ref#origin/}"
+            case "$branch" in
+              HEAD|backup/*|dependabot/*) continue ;;
+            esac
+            if git show "$ref:company-site/index.html" > /tmp/candidate.html 2>/dev/null && cmp -s /tmp/candidate.html "$live"; then
+              target="$branch"
+              reason='exact-company-site-match'
+              break
+            fi
+          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin | sort)
+
+          if [ -z "$target" ]; then
+            while IFS= read -r ref; do
+              branch="${ref#origin/}"
+              case "$branch" in
+                HEAD|backup/*|dependabot/*|main) continue ;;
+              esac
+              if git show "$ref:company-site/index.html" > /tmp/candidate.html 2>/dev/null \
+                && grep -Fq 'LibraSide Technologies' /tmp/candidate.html \
+                && grep -Fq 'Better tools.' /tmp/candidate.html; then
+                target="$branch"
+                reason='company-site-marker-match'
+                break
+              fi
+            done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin | sort)
+          fi
+
+          if [ -z "$target" ]; then
+            target="$current"
+            reason='approved-branch-fallback'
+          fi
+
+          printf 'target=%s\nreason=%s\n' "$target" "$reason" | tee /tmp/source-selection.txt
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Put the approved site on the branch serving Cloudflare
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ steps.source.outputs.target }}
+        run: |
+          set -euo pipefail
+          approved=/tmp/approved-company-site
+          cp -a company-site "$approved"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          if [ "$TARGET_BRANCH" = 'company/libraside-technologies' ]; then
+            printf '%s\n' "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" > company-site/.cloudflare-rebuild
+            git add company-site/.cloudflare-rebuild
+            git commit -m 'Trigger Cloudflare rebuild for the approved LibraSide site'
+            git push origin HEAD:company/libraside-technologies
+          else
+            git worktree add /tmp/live-source "origin/$TARGET_BRANCH"
+            rm -rf /tmp/live-source/company-site
+            cp -a "$approved" /tmp/live-source/company-site
+            printf '%s\n' "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" > /tmp/live-source/company-site/.cloudflare-rebuild
+            cd /tmp/live-source
+            git add -A company-site
+            if git diff --cached --quiet; then
+              git commit --allow-empty -m 'Trigger Cloudflare rebuild for the approved LibraSide site'
+            else
+              git commit -m 'Publish the approved LibraSide corporate website'
+            fi
+            git push origin "HEAD:$TARGET_BRANCH"
+          fi
+
+      - name: Verify the public root and www domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify() {
+            local url="$1"
+            local body=/tmp/verify.html
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent --show-error --location --max-time 30 \
+                -H 'Cache-Control: no-cache' \
+                "${url}?publish_verify=${GITHUB_RUN_ID}-${attempt}" > "$body" 2>/tmp/curl-error.txt \
+                && grep -Fq 'Better tools.' "$body" \
+                && grep -Fq 'Real solutions.' "$body" \
+                && grep -Fq 'Power should not require surrender.' "$body" \
+                && grep -Fq 'black-led-collaboration.webp' "$body" \
+                && grep -Fq 'Actual SideOf Social Discover screen' "$body"; then
+                echo "$url serves the approved LibraSide corporate website."
+                return 0
+              fi
+              sleep 10
+            done
+            echo "::error::$url did not serve the approved website during the verification window."
+            sed -n '1,20p' /tmp/curl-error.txt || true
+            return 1
+          }
+          verify 'https://librasidetechnologies.com/'
+          verify 'https://www.librasidetechnologies.com/'
+
+      - name: Record successful publication
+        if: success()
+        shell: bash
+        run: |
+          cat > publication-result.json <<JSON
+          {
+            "status": "published-and-verified",
+            "sourceCommit": "${GITHUB_SHA}",
+            "servingBranch": "${{ steps.source.outputs.target }}",
+            "selectionReason": "${{ steps.source.outputs.reason }}",
+            "root": "https://librasidetechnologies.com/",
+            "www": "https://www.librasidetechnologies.com/",
+            "verifiedAt": "$(date -u +%FT%TZ)"
+          }
+          JSON
+          cat publication-result.json
+
+      - name: Upload publication evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: libraside-publication-evidence
+          path: |
+            publication-result.json
+            /tmp/source-selection.txt
+            /tmp/verify.html
+            /tmp/curl-error.txt
+          if-no-files-found: warn
+          retention-days: 7
