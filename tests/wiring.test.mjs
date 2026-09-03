@@ -16,9 +16,26 @@ const htmlFiles = find(['-name', '*.html', ...SKIP]);
 const cssFiles = find(['-name', '*.css', ...SKIP]);
 const read = file => readFileSync(resolve(ROOT, file), 'utf8');
 
-/** Pages carry inline modules too, and those wire up real controls. */
-const inlineScripts = source => [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(match => match[1]).join('\n');
+/**
+ * Pages carry inline modules too, and those wire up real controls.
+ *
+ * The end tag has to be matched the way a parser ends one - on whitespace or a
+ * solidus as well as on `>`. Matching only `</script>` reads `</script >` as
+ * script body and silently swallows the rest of the page, so every control the
+ * next script wires up would go unchecked.
+ */
+const inlineScripts = source => [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[\s/]*>/gi)].map(match => match[1]).join('\n');
 const allScriptSource = [...jsFiles.map(read), ...htmlFiles.map(file => inlineScripts(read(file)))].join('\n');
+
+test('inline scripts are found however their end tag is written', () => {
+  // A parser ends a script tag on whitespace or a solidus too. A scanner that
+  // only knows `</script>` swallows the rest of the page from the first
+  // `</script >` on, and every check built on it quietly stops looking.
+  const page = ['<script>ONE</script>', '<script>TWO</script >', '<script>THREE</script\n>',
+    '<script type="module">FOUR</script/>', '<script>FIVE</SCRIPT>'].join('\n');
+  const found = inlineScripts(page).split('\n').filter(Boolean);
+  assert.deepEqual(found, ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE']);
+});
 
 test('every shipped script parses', () => {
   for (const file of jsFiles) {
