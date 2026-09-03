@@ -1,0 +1,74 @@
+// The session a journey runs in: a licensed Studio with a stubbed billing
+// service and a stubbed local engine.
+//
+// The licence is minted here, in memory, against a keypair generated for this
+// run. The shipped public key is swapped at the network edge so the minted
+// licence verifies - no product code is modified, and no real key is involved.
+import { webcrypto } from 'node:crypto';
+
+const b64u = bytes => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+export async function mintLicence(plan = 'full') {
+  const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const jwk = await webcrypto.subtle.exportKey('jwk', pair.publicKey);
+  const payload = { v: 1, net: 1, plan, lid: 'lic_journeyRun0001', email: 'journey@materiallogix.test', iss: 'journey' };
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  const signature = await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, bytes);
+  return { key: `ML1.${b64u(bytes)}.${b64u(new Uint8Array(signature))}`, jwk: { kty: jwk.kty, x: jwk.x, y: jwk.y, crv: jwk.crv } };
+}
+
+/** A browser context with billing stubbed and, optionally, a licence installed. */
+export async function studioContext(browser, { licence = null, features = {}, authenticated = true } = {}) {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 1100 }, acceptDownloads: true });
+  const api = [], downloads = [], errors = [];
+
+  await context.route('https://materiallogix.com/api/**', route => {
+    const path = route.request().url().replace('https://materiallogix.com/api/', '').split('?')[0];
+    api.push(path);
+    const json = body => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (path.startsWith('license/check')) return json({ ok: true, entitlements: { plan: licence ? 'full' : 'free' } });
+    if (path.startsWith('session')) return json({ authenticated, features });
+    if (path.startsWith('outbound/authorize')) return json({ ok: true, authorization: { id: 'auth-journey-000001', status: 'authorized' } });
+    if (path.startsWith('outbound/settle')) return json({ ok: true, authorization: { id: 'auth-journey-000001', status: 'settled' } });
+    if (path.startsWith('outbound/void')) return json({ ok: true, authorization: { id: 'auth-journey-000001', status: 'voided' } });
+    if (path.startsWith('usage')) return json({ period: '2026-09', breakdown: [], recent: [], wallet: { balanceCents: 2500 } });
+    if (path.startsWith('admin/usage')) return json({ period: '2026-09', totals: { operations: 5, billable_units: 5 },
+      products: [{ product: 'photo', artifact_kind: 'clean_export', status: 'settled', operations: 5, artifacts: 5, billable_units: 5 }], failures: [] });
+    if (path.startsWith('admin/feature-flags')) return json({ flags: [
+      { key: 'google_sign_in', audience: 'all', note: 'Waiting on the Google developer account', enabled: features.google_sign_in === true },
+      { key: 'apple_sign_in', audience: 'all', note: 'Waiting on the Apple developer account', enabled: features.apple_sign_in === true }] });
+    return json({ ok: true });
+  });
+
+  if (licence) {
+    await context.route('**/studio/js/license-key.js', route => route.fulfill({ status: 200, contentType: 'text/javascript',
+      body: `export const LICENSE_PUBLIC_JWK = ${JSON.stringify(licence.jwk)};` }));
+    await context.addInitScript(key => { try { localStorage.setItem('cros:license', key); } catch { /* private mode */ } }, licence.key);
+  }
+
+  const page = await context.newPage();
+  page.on('pageerror', error => errors.push(`PAGEERROR: ${error.message.split('\n')[0]}`));
+  page.on('console', message => {
+    const text = message.text();
+    if (message.type() === 'error' && !/ERR_CONNECTION|ERR_TUNNEL|Failed to load resource/.test(text)) errors.push(`CONSOLE: ${text.slice(0, 150)}`);
+  });
+  page.on('download', download => downloads.push(download.suggestedFilename()));
+  return { context, page, api, downloads, errors };
+}
+
+/** A synthetic photograph: a gradient, a subject, and enough texture to analyse. */
+export const photoScript = (width, height, name) => `
+  const c = document.createElement('canvas'); c.width = ${width}; c.height = ${height};
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, ${width}, ${height});
+  g.addColorStop(0, '#334d6e'); g.addColorStop(.6, '#cfa877'); g.addColorStop(1, '#1b2530');
+  x.fillStyle = g; x.fillRect(0, 0, ${width}, ${height});
+  x.fillStyle = '#f7f1e6';
+  x.beginPath(); x.arc(${Math.round(width * 0.42)}, ${Math.round(height * 0.42)}, ${Math.round(Math.min(width, height) * 0.16)}, 0, Math.PI * 2); x.fill();
+  for (let i = 0; i < 900; i++) {
+    x.fillStyle = 'rgba(' + (i * 31) % 255 + ',' + (i * 71) % 255 + ',' + (i * 101) % 255 + ',.28)';
+    x.fillRect((i * 233) % ${width}, (i * 331) % ${height}, 20, 20);
+  }
+  const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+  await window.__cros.importFiles([new File([blob], '${name}', { type: 'image/png' })]);
+`;
