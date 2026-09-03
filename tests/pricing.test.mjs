@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
-  CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining
+  CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
+  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice
 } from '../studio/js/pricing.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,18 +60,48 @@ test('a quote is never negative or NaN, whatever it is handed', () => {
 });
 
 test('wallet cents convert only into time the customer can actually spend', () => {
-  const blockCents = Math.round(CLOUD_PRICING.videoUpscale.price * 100 * CLOUD_BILLING_INCREMENT_SECONDS / 60);
-  assert.equal(cloudVideoSecondsForCents(blockCents - 1), 0, 'a partial block is never promised');
-  assert.equal(cloudVideoSecondsForCents(blockCents), CLOUD_BILLING_INCREMENT_SECONDS);
-  assert.equal(cloudVideoSecondsForCents(blockCents * 4), CLOUD_BILLING_INCREMENT_SECONDS * 4);
+  // A block costs the rate for its share of a minute. Rounding that to whole
+  // cents before dividing lost the customer a block on any rate that is not an
+  // exact number of cents per block - $6.99 is one.
+  const blockCents = CLOUD_PRICING.videoUpscale.price * 100 * CLOUD_BILLING_INCREMENT_SECONDS / 60;
+  assert.equal(cloudVideoSecondsForCents(Math.floor(blockCents) - 1), 0, 'a partial block is never promised');
+  assert.equal(cloudVideoSecondsForCents(Math.ceil(blockCents)), CLOUD_BILLING_INCREMENT_SECONDS);
+  assert.equal(cloudVideoSecondsForCents(Math.ceil(blockCents * 4)), CLOUD_BILLING_INCREMENT_SECONDS * 4);
+  const minuteCents = Math.round(CLOUD_PRICING.videoUpscale.price * 100);
+  assert.equal(cloudVideoSecondsForCents(minuteCents), 60, 'a minute of money buys a minute of video');
   for (const bad of [-100, NaN, null, undefined, 'x']) assert.equal(cloudVideoSecondsForCents(bad), 0, String(bad));
 });
 
 test('the cloud price of a job always covers its estimated cost', () => {
-  assert.ok(CLOUD_PRICING.imageUpscale.price > CLOUD_PRICING.imageUpscale.estimatedCost);
-  assert.ok(CLOUD_PRICING.voiceRender.price > CLOUD_PRICING.voiceRender.estimatedCost);
-  assert.ok(CLOUD_PRICING.videoUpscale.price > CLOUD_PRICING.videoUpscale.estimatedCostHigh);
+  for (const key of ['imageUpscale', 'voiceRender', 'videoUpscale']) {
+    const rate = CLOUD_PRICING[key];
+    assert.ok(Number.isFinite(rate.estimatedCost), `${key} has no cost to price against`);
+    assert.ok(rate.price > rate.estimatedCost, `${key} is sold below its estimated cost`);
+  }
   assert.equal(CLOUD_PRICING.prepaidOnly, true, 'cloud work must never be able to run up a bill');
+});
+
+test('the video rate is priced against the one measurement that exists', () => {
+  // The cost is the only measured figure in the model, and it is measured from
+  // a single ten-second run. Price and cost must be stated together, and the
+  // lane must stay disabled until a production-length job confirms the cost.
+  assert.equal(CLOUD_PRICING.videoUpscale.price, CLOUD_VIDEO.pricePerMinute,
+    'the wallet rate and the cloud-video rate must be the same number');
+  assert.equal(Math.round(CLOUD_PRICING.videoUpscale.estimatedCost * 100), MEASURED_VIDEO_COST.centsPerOutputMinute);
+  const margin = 1 - MEASURED_VIDEO_COST.centsPerOutputMinute / (CLOUD_PRICING.videoUpscale.price * 100);
+  assert.ok(margin > 0.5, `a cloud minute leaves only ${(margin * 100).toFixed(1)}% after GPU`);
+  assert.equal(MEASURED_VIDEO_COST.productionLengthConfirmed, false,
+    'if the checkpoint has been run, say so here and re-price against the real number');
+  assert.equal(CLOUD_VIDEO.productionEnabled, false,
+    'the lane cannot open on a cost measured from ten seconds');
+});
+
+test('a cloud minute costs more than one finished on the customer own machine', () => {
+  // Local renders cost nothing to serve; cloud renders cost GPU time. Selling
+  // the cloud minute at or below the local price gives the dearer product away.
+  const local = exportPrice('export_video').total;
+  assert.ok(CLOUD_PRICING.videoUpscale.price > local,
+    `cloud is $${CLOUD_PRICING.videoUpscale.price}/min but a local minute sells for $${local}`);
 });
 
 test('the wallet range is declared once and enforced from that declaration', () => {

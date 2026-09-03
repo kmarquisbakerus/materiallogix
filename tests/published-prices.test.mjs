@@ -154,20 +154,27 @@ test('a photo, a minute of audio and a minute of video are each buyable', () => 
   for (const item of EXPORT_PRODUCTS) {
     assert.ok(item.label && item.per && item.product, `${item.id} is incomplete`);
     assert.ok(item.units >= 1, `${item.id} must cost at least one unit`);
+    assert.ok(item.price > 0, `${item.id} has no price`);
   }
 });
 
-test('each export costs what the unit policy says it costs', () => {
-  // A minute of finished video is four units; a photo and a minute of voice are
-  // one. The prices have to follow from that, not from a second opinion.
-  assert.equal(exportPrice('export_image').total, UNIT_PRICE);
-  assert.equal(exportPrice('export_audio').total, UNIT_PRICE);
-  assert.equal(exportPrice('export_video').total, +(4 * UNIT_PRICE).toFixed(2));
-  assert.equal(exportPrice('export_video', 3).units, 12);
-  assert.equal(exportPrice('export_video', 3).total, +(12 * UNIT_PRICE).toFixed(2));
+test('an export spends units by the work, and is priced on its own', () => {
+  // Units are the plan's currency: a minute of finished video is four units
+  // because it is four times the work. Price is a separate decision - a single
+  // video minute sells for $4.99, not four photos' worth of list - so the two
+  // must be able to move apart without one silently dragging the other.
+  assert.equal(exportPrice('export_image').units, 1);
+  assert.equal(exportPrice('export_audio').units, 1);
+  assert.equal(exportPrice('export_video').units, 4);
+  assert.equal(exportPrice('export_image').total, 2.99);
+  assert.equal(exportPrice('export_audio').total, 2.99);
+  assert.equal(exportPrice('export_video').total, 4.99);
+  assert.equal(exportPrice('export_video', 3).units, 12, 'three minutes still spend twelve units');
+  assert.equal(exportPrice('export_video', 3).total, 14.97, 'and cost three times the minute price');
   assert.equal(exportPrice('export_image', 0).quantity, 1, 'buying nothing is buying one');
   assert.equal(exportPrice('export_image', 2.4).quantity, 3, 'a part minute bills a whole one');
   assert.equal(exportPrice('not_a_product'), null);
+  assert.equal(UNIT_PRICE, 2.99, 'a unit is still one clean image');
 });
 
 test('the cheapest export is the price the site quotes as its floor', () => {

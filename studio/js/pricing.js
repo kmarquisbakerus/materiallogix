@@ -83,19 +83,23 @@ export function price(productId, termId) {
 
 export const MONTHLY_UNITS = { voice_starter: 30, single: 500, single_pro: 500, full: 1000, pro: 1000 };
 
-// One unit is one clean image, and every other export is priced by the same
-// unit policy that meters it: a minute of finished voice is one unit, a minute
-// of finished video is four. "Exports from $2.99" is the floor, not the only
-// price - a photo, a minute of audio, and a minute of video are three different
-// things to buy.
+// One unit is one clean image. Units are the plan's currency - what an export
+// spends out of a monthly allowance - and a minute of finished video spends
+// four because it is four times the work.
 export const UNIT_PRICE = 2.99;
 
+// Price is a separate decision from metering. A one-off video minute is sold at
+// $4.99, not at four units of list, because a customer buying a single minute
+// without a plan is not buying four photos. Rendering it in the cloud is the
+// dearer product and carries its own rate; this is the price of a minute
+// finished on the customer's own machine, which costs nothing to serve.
+//
 // These ids are the checkout SKUs. The billing service must accept all three;
 // a SKU it does not know is a checkout that fails after the customer clicked.
 export const EXPORT_PRODUCTS = Object.freeze([
-  Object.freeze({ id: 'export_image', product: 'photo', units: 1, per: 'image', label: 'One clean photo export' }),
-  Object.freeze({ id: 'export_audio', product: 'voice', units: 1, per: 'minute', label: 'One clean minute of audio' }),
-  Object.freeze({ id: 'export_video', product: 'video', units: 4, per: 'minute', label: 'One clean minute of video' })
+  Object.freeze({ id: 'export_image', product: 'photo', units: 1, price: 2.99, per: 'image', label: 'One clean photo export' }),
+  Object.freeze({ id: 'export_audio', product: 'voice', units: 1, price: 2.99, per: 'minute', label: 'One clean minute of audio' }),
+  Object.freeze({ id: 'export_video', product: 'video', units: 4, price: 4.99, per: 'minute', label: 'One clean minute of video' })
 ]);
 
 export const EXPORT_PRODUCT_BY_ID = Object.fromEntries(EXPORT_PRODUCTS.map(item => [item.id, item]));
@@ -133,17 +137,20 @@ export function exportPrice(id, quantity = 1) {
   const item = EXPORT_PRODUCT_BY_ID[id];
   if (!item) return null;
   const count = Math.max(1, Math.ceil(Number(quantity) || 1));
-  const units = item.units * count;
   return {
     id, product: item.product, per: item.per, label: item.label,
-    quantity: count, units,
-    total: +(units * UNIT_PRICE).toFixed(2),
-    unitPrice: UNIT_PRICE
+    quantity: count,
+    units: item.units * count,
+    total: +(item.price * count).toFixed(2),
+    unitPrice: item.price
   };
 }
 
 /** The cheapest single export, which is what "exports from" quotes. */
-export const PAY_PER_EXPORT = Object.freeze({ units: 1, price: UNIT_PRICE });
+export const PAY_PER_EXPORT = Object.freeze({
+  units: 1,
+  price: Math.min(...EXPORT_PRODUCTS.map(item => item.price))
+});
 
 // Premium natural voice, sold with the Pro tiers and billed by the hour beyond
 // the included minutes.
@@ -159,7 +166,11 @@ export const PREMIUM_VOICE = Object.freeze({
 export const CLOUD_PRICING = {
   imageUpscale: { price: 0.10, unit: 'image', estimatedCost: 0.01 },
   voiceRender: { price: 0.25, unit: 'minute', estimatedCost: 0.10 },
-  videoUpscale: { price: 3.00, unit: 'output minute', estimatedCostLow: 0.40, estimatedCostHigh: 0.80 },
+  // A cloud minute is the dear one: it runs on our GPUs, where a minute
+  // finished on the customer's own machine costs us nothing. Measured at
+  // $1.31 per output minute for native 4K on a community RTX 4090 pool at
+  // $0.34/hr - see MEASURED_VIDEO_COST for what that measurement is worth.
+  videoUpscale: { price: 6.99, unit: 'output minute', estimatedCost: 1.31 },
   minimumRefill: 10,
   maximumRefill: 500,
   prepaidOnly: true,
@@ -172,8 +183,10 @@ export const CLOUD_BILLING_INCREMENT_SECONDS = 10;
  * partial block the customer cannot spend. */
 export function cloudVideoSecondsForCents(amountCents) {
   const cents = Number.isFinite(Number(amountCents)) ? Math.max(0, Math.floor(Number(amountCents))) : 0;
-  const blockCents = Math.round(CLOUD_PRICING.videoUpscale.price * 100 * CLOUD_BILLING_INCREMENT_SECONDS / 60);
-  return Math.floor(cents / blockCents) * CLOUD_BILLING_INCREMENT_SECONDS;
+  // Rate first, blocks second. Rounding the block price before dividing lost a
+  // block on any rate that is not a whole number of cents per block.
+  const seconds = (cents / (CLOUD_PRICING.videoUpscale.price * 100)) * 60;
+  return Math.floor(seconds / CLOUD_BILLING_INCREMENT_SECONDS) * CLOUD_BILLING_INCREMENT_SECONDS;
 }
 
 /** Quote one compiled cloud package. Duration is rounded once at job level,
@@ -194,15 +207,30 @@ export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
   };
 }
 
-// Cloud video processing is one batched provider job per video. The earlier
-// $0.40-$0.80/output-minute cost range is an unverified engineering estimate,
-// not a customer or margin claim. Provider fixtures must prove the full $10
-// benefit costs <=$5 (target <=$3) before this disabled lane can activate.
+/**
+ * What the one cost measurement actually covers, recorded so nobody quotes a
+ * margin it does not support. Every figure extrapolates from a single
+ * ten-second run; the sixty-second checkpoint has never been run. Because
+ * roughly a fifth of the cost is fixed pod lifecycle, longer jobs should come
+ * in cheaper per minute, so this is the pessimistic case rather than a floor.
+ * The lane stays disabled until a production-length fixture confirms it.
+ */
+export const MEASURED_VIDEO_COST = Object.freeze({
+  centsPerOutputMinute: 131,
+  resolution: '4K',
+  gpuPool: 'community RTX 4090',
+  gpuHourly: 0.34,
+  measuredFromSeconds: 10,
+  fixedLifecycleShare: 0.2,
+  productionLengthConfirmed: false
+});
+
+// Cloud video processing is one batched provider job per video.
 export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
   includedEquivalentSeconds: 200,
-  pricePerMinute: 3,
+  pricePerMinute: 6.99,
   productionEnabled: false
 };
 

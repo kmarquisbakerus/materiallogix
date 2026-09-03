@@ -48,6 +48,33 @@ matches it exactly, and a test fails the build if the two ever disagree again -
 on a plan, a term price, the pay-per-export price, the wallet range, the Voice
 Starter allowance, or the premium voice rate.
 
+### A video minute has two prices, because it has two costs
+
+A minute finished on the customer's own machine costs us nothing to serve, and
+sells for **$4.99** with no plan. A minute rendered in the cloud runs on our
+GPUs and sells for **$6.99**. The cloud minute must always be the dearer of the
+two; a test fails the build if it is not.
+
+Price and metering are now separate. A video minute still spends **four units**
+of a plan's monthly allowance, because it is four times the work of an image -
+but it is priced on its own rather than at four units of list, which is where
+the previous $11.96 came from.
+
+The only measured cost in the model is `MEASURED_VIDEO_COST`: **$1.31 per
+output minute** for native 4K on a community RTX 4090 pool at $0.34/hr, which
+leaves 81% at $6.99. That figure is extrapolated from **a single ten-second
+run** and the sixty-second checkpoint has never been run. Roughly a fifth of the
+cost is fixed pod lifecycle, so longer jobs should come in cheaper per minute
+and this is the pessimistic case. `productionEnabled` stays `false` until a
+production-length fixture confirms it, and a test fails the build if that flag
+is opened while `productionLengthConfirmed` is still false.
+
+**Consequence to decide before launch:** the included $20 cloud credit bought
+6m 40s of video at the old $3.00/min. At $6.99 it buys **2m 50s**. The site
+promises "$20 of cloud credit each paid period" and that is still exactly what
+it grants - but if the intent was a number of *minutes* rather than a number of
+*dollars*, the credit has to rise with the rate.
+
 Two of the six advertised plans, Single Studio Pro and Pro Studio, sell the Pro
 Motion Engine, five personal voice clones, and premium voice minutes. Those
 capabilities are declared and entitled - a Pro licence resolves to the Pro lane
