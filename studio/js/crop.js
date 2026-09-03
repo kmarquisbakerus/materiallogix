@@ -16,11 +16,15 @@ export function defaultCrop(srcW, srcH, surface) {
 }
 
 export function clampCrop(crop) {
-  const w = Math.min(1, Math.max(0.02, crop.w));
-  const h = Math.min(1, Math.max(0.02, crop.h));
+  // Math.max(0, NaN) is NaN, so a single bad number used to survive clamping
+  // and reach the renderer as a crop with no position. Restored projects and
+  // degenerate pointer maths can both produce one.
+  const finite = (value, fallback) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
+  const w = Math.min(1, Math.max(0.02, finite(crop?.w, 1)));
+  const h = Math.min(1, Math.max(0.02, finite(crop?.h, 1)));
   return {
-    x: Math.min(1 - w, Math.max(0, crop.x)),
-    y: Math.min(1 - h, Math.max(0, crop.y)),
+    x: Math.min(1 - w, Math.max(0, finite(crop?.x, 0))),
+    y: Math.min(1 - h, Math.max(0, finite(crop?.y, 0))),
     w,
     h
   };
