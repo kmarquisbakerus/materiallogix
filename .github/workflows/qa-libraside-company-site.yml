@@ -1,0 +1,108 @@
+name: QA LibraSide company site
+
+on:
+  push:
+    branches:
+      - company/libraside-technologies
+    paths:
+      - 'company-site/**'
+      - '.github/workflows/qa-libraside-company-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  visual-qa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: company/libraside-technologies
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install browser
+        shell: bash
+        run: |
+          npm install --no-save --no-package-lock playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Serve and inspect desktop and mobile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m http.server 4173 --directory company-site > /tmp/libraside-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill $server_pid || true' EXIT
+          for attempt in {1..20}; do
+            curl --fail --silent http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+          mkdir -p qa-output
+          node <<'JS'
+          const { chromium } = require('playwright');
+          const fs = require('fs');
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const cases = [
+              { name: 'desktop', viewport: { width: 1440, height: 1000 }, scale: 1 },
+              { name: 'mobile', viewport: { width: 390, height: 844 }, scale: 1 },
+            ];
+            const report = {};
+            for (const item of cases) {
+              const page = await browser.newPage({ viewport: item.viewport, deviceScaleFactor: item.scale });
+              const consoleErrors = [];
+              page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+              page.on('pageerror', error => consoleErrors.push(error.message));
+              await page.goto('http://127.0.0.1:4173/', { waitUntil: 'networkidle' });
+              await page.evaluate(async () => {
+                for (let y = 0; y < document.body.scrollHeight; y += Math.max(300, window.innerHeight * .7)) {
+                  window.scrollTo(0, y);
+                  await new Promise(resolve => setTimeout(resolve, 70));
+                }
+                window.scrollTo(0, 0);
+              });
+              await page.waitForTimeout(350);
+              const findings = await page.evaluate(() => {
+                const images = [...document.images].map(img => ({ src: img.getAttribute('src'), loaded: img.complete && img.naturalWidth > 0, width: img.naturalWidth, height: img.naturalHeight }));
+                const overflow = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth;
+                const hero = document.querySelector('#hero-title');
+                const studio = document.querySelector('img[alt="Actual MaterialLogix Studio Photo editing workspace"]');
+                const sideof = document.querySelector('img[alt="Actual SideOf Social Discover screen"]');
+                return {
+                  images,
+                  overflow,
+                  heroText: hero?.textContent?.trim() || '',
+                  studioLoaded: Boolean(studio?.complete && studio.naturalWidth > 0),
+                  sideofLoaded: Boolean(sideof?.complete && sideof.naturalWidth > 0),
+                  italicElements: [...document.querySelectorAll('*')].filter(el => getComputedStyle(el).fontStyle === 'italic').length,
+                  appleReferences: (document.documentElement.innerHTML.match(/apple/gi) || []).length,
+                };
+              });
+              if (!findings.heroText.includes('Better tools.') || !findings.heroText.includes('Fewer barriers.')) throw new Error(`${item.name}: hero copy missing`);
+              if (findings.images.some(image => !image.loaded)) throw new Error(`${item.name}: broken image ${JSON.stringify(findings.images)}`);
+              if (!findings.studioLoaded || !findings.sideofLoaded) throw new Error(`${item.name}: authentic product screen missing`);
+              if (findings.overflow > 2) throw new Error(`${item.name}: horizontal overflow ${findings.overflow}px`);
+              if (findings.italicElements !== 0) throw new Error(`${item.name}: ${findings.italicElements} italic elements remain`);
+              if (findings.appleReferences !== 0) throw new Error(`${item.name}: Apple reference remains`);
+              if (consoleErrors.length) throw new Error(`${item.name}: console errors ${consoleErrors.join(' | ')}`);
+              report[item.name] = findings;
+              await page.screenshot({ path: `qa-output/${item.name}.png`, fullPage: true });
+              await page.close();
+            }
+            fs.writeFileSync('qa-output/report.json', JSON.stringify(report, null, 2));
+            await browser.close();
+          })().catch(error => { console.error(error); process.exit(1); });
+          JS
+
+      - name: Upload browser QA
+        uses: actions/upload-artifact@v4
+        with:
+          name: libraside-company-site-browser-qa
+          path: qa-output
+          if-no-files-found: error
+          retention-days: 7
