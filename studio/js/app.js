@@ -23,6 +23,7 @@ import { assessInpaintMaskedBoundary, blendInpaintMaskedCandidate,
   CPU_PRESETS, cpuJobSettings, estimateCpuSeconds, recordCpuPace, waitLabel } from './generate.js';
 import { probeDevice, deviceSummary } from './device.js';
 import { featureEnabled } from './features.js';
+import { enabledAccountProviders, providerStartUrl } from './account-providers.js';
 import { guidanceFor, ensureGuardianAck } from './capture-guidance.js';
 import { screenPrompt } from './prompt-guard.js';
 import { wordBudgetForSeconds } from './voice.js';
@@ -955,6 +956,15 @@ function renderSidebar() {
           }
         }), msg);
     }
+    // Google and Apple stay hidden until the server enables their flag, so an
+    // unapproved provider never shows a button that cannot complete.
+    enabledAccountProviders().then(providers => {
+      if (!providers.length) return;
+      licBox.append(
+        el('p', { className: 'hint', style: 'margin:12px 0 6px' }, 'Or sign in to your MaterialLogix account'),
+        el('div', { className: 'account-providers' }, ...providers.map(provider =>
+          btn(provider.label, 'btn sm', () => { location.assign(providerStartUrl(provider.id)); }))));
+    });
   });
 
   const deliver = panel('Deliver', false,
@@ -2052,6 +2062,7 @@ async function renderEditedVideo(asset) {
       await settleOutbound(authorization.authorization.id, await blobEvidenceHash(blob));
       const file = new File([blob], asset.filename.replace(/\.[^.]+$/, '') + '-edited.mp4', { type: 'video/mp4' });
       const rendered = newAsset(state.project.id, file);
+      rendered.source = 'rendered-local';
       rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings.`;
       await store.addAsset(rendered, file);
       const url = await store.objectUrl(rendered.id);
@@ -3294,6 +3305,7 @@ async function upscaleAsset(asset) {
            await settleOutbound(authorization.authorization.id, await blobEvidenceHash(out.blob));
            const file = new File([out.blob], asset.filename.replace(/(\.[a-z0-9]+)?$/i, '_up$1'), { type: out.blob.type || 'image/png' });
            const up = newAsset(state.project.id, file);
+           up.source = 'enhanced-local';
            up.labels = { ...asset.labels };
            up.altText = asset.altText;
            up.provenance = `Upscaled from ${asset.filename} with ${model} on ${completedEngine}. ` + (asset.provenance || '');

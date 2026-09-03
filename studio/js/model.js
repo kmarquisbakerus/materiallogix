@@ -183,15 +183,20 @@ export const SURFACE_PRESETS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Generation providers. Placeholders only: nothing is called in this build.
+// How an asset came to exist. Every asset carries one of these, and the
+// delivery package reports which were used - the record someone has to be able
+// to defend later.
 
-export const PROVIDERS = [
-  { id: 'image-renderer', label: 'Image renderer', kind: 'Images', env: 'IMAGE_RENDERER_KEY' },
-  { id: 'image-refiner', label: 'Image refiner', kind: 'Images', env: 'IMAGE_REFINER_KEY' },
-  { id: 'motion-renderer', label: 'Motion renderer', kind: 'Video', env: 'MOTION_RENDERER_KEY' },
-  { id: 'motion-refiner', label: 'Motion refiner', kind: 'Video', env: 'MOTION_REFINER_KEY' },
-  { id: 'copy-review', label: 'Copy review', kind: 'Brief and QA text', env: 'COPY_REVIEW_KEY' }
-];
+export const ASSET_SOURCES = Object.freeze({
+  upload: { label: 'Imported file', where: 'this computer' },
+  'camera-raw-import': { label: 'Camera raw import', where: 'this computer' },
+  'generated-local': { label: 'Generated image', where: 'this computer' },
+  'generated-fill-local': { label: 'Generative Fill', where: 'this computer' },
+  'enhanced-local': { label: 'Enhanced image', where: 'this computer' },
+  'rendered-local': { label: 'Rendered video', where: 'this computer' }
+});
+
+export const DEFAULT_ASSET_SOURCE = 'upload';
 
 // ---------------------------------------------------------------------------
 

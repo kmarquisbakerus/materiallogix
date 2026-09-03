@@ -988,3 +988,7 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
 .pace-dial { flex: 0 0 auto; min-width: 160px; min-height: 160px; }
 .pace-dial svg { display: block; }
 @media (max-width: 560px) { .pace-row { justify-content: center; text-align: center; } }
+
+/* Sign-in providers appear only when the server enables them. */
+.account-providers { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-providers .btn { flex: 1 1 auto; justify-content: center; }

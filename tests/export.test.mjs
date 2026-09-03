@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   slug, approvedPairs, decisionsJson, decisionsMarkdown, filenameMapCsv,
   altTextMarkdown, retouchListMarkdown, rejectedRecord, teamNotes, cropsJson, videoNotes
+  , executionSummary
 } from '../studio/js/export.js';
+import { ASSET_SOURCES } from '../studio/js/model.js';
 import { makeZip } from '../studio/js/zip.js';
 import { planPrint, printColorDecision, setJpegDensity, readJpegDensity, PRINT_PPI } from '../studio/js/print.js';
 import { colorExportDecision } from '../studio/js/color-management.js';
@@ -53,13 +55,37 @@ test('the decisions record is valid JSON and carries the audit fields', () => {
   assert.equal(parsed.assets[0].filename, 'Shot One.PNG');
 });
 
-test('the decisions record never carries a provider key', () => {
+test('the decisions record never carries a stored credential', () => {
   const withKey = { ...project, providers: { 'image-renderer': { enabled: true, key: 'sk-should-never-ship' } } };
   const text = decisionsJson(withKey, [approvedImage()]);
   assert.ok(!text.includes('sk-should-never-ship'), 'a stored key must never reach the package');
-  assert.match(text, /no key stored/, 'an enabled provider is reported without its key');
-  const unknown = decisionsJson({ ...project, providers: { rogue: { enabled: true, key: 'sk-rogue' } } }, []);
-  assert.ok(!unknown.includes('sk-rogue'), 'an unrecognised provider is dropped rather than echoed');
+  assert.ok(!/"key"\s*:/.test(text), 'the record has no place to put a credential at all');
+});
+
+test('the package reports where the work actually ran', () => {
+  const record = JSON.parse(decisionsJson(project, [
+    { ...approvedImage(), source: 'upload' },
+    { ...approvedImage(), id: 'a2', source: 'generated-fill-local' },
+    { ...approvedImage(), id: 'a3', source: 'generated-local' }
+  ]));
+  const execution = record.project.execution;
+  assert.equal(execution.ranEntirelyOnThisComputer, true);
+  assert.deepEqual(execution.offDevice, []);
+  assert.deepEqual(execution.sources.map(entry => entry.id).sort(),
+    ['generated-fill-local', 'generated-local', 'upload']);
+  for (const entry of execution.sources) {
+    assert.ok(entry.label && entry.ranOn, 'every source is named and placed');
+    assert.ok(entry.assets > 0);
+  }
+});
+
+test('the execution record counts every asset and never invents a source', () => {
+  const summary = executionSummary([{ source: 'generated-local' }, {}, { source: 'not-a-real-source' }]);
+  const total = summary.sources.reduce((sum, entry) => sum + entry.assets, 0);
+  assert.equal(total, 3, 'an unknown or missing source still counts, as an import');
+  assert.ok(summary.sources.every(entry => Object.hasOwn(ASSET_SOURCES, entry.id)));
+  assert.deepEqual(executionSummary([]).sources, []);
+  assert.equal(executionSummary(undefined).ranEntirelyOnThisComputer, true);
 });
 
 test('the filename map is well-formed CSV with a header and one row per placement', () => {

@@ -64,7 +64,8 @@ export function createInpaintBenchmark(spec, clock = () => performance.now()) {
 
 /** Accepts only an authenticated server quote; never guesses GPU cost or spends local units. */
 export function planCloudInpaintReservation({ quoteId, quotedCents, purchasedWalletCents, enabled = false }) {
-  if (enabled) throw new Error('Cloud inpainting activation is not implemented.');
+  // Enabling is a server decision, never a caller's argument.
+  if (enabled) throw new Error('Cloud inpainting is enabled by the server, not by the client.');
   if (!/^[A-Za-z0-9._:-]{8,120}$/.test(String(quoteId || ''))) throw new Error('A server quote is required.');
   const reserveCents = finiteInt(quotedCents, 'Quoted cost', 1, 50000);
   const availableCents = finiteInt(purchasedWalletCents, 'Purchased wallet balance', 0, 100000000);
