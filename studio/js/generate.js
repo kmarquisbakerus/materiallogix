@@ -732,7 +732,7 @@ export async function runGraph(graph, onStatus = () => {}, base = DEFAULT_BASE, 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt: graph, client_id: 'creative-review-os' })
   });
-  if (!res.ok) throw new Error(`ComfyUI rejected the job (${res.status}): ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw new Error(`The local engine rejected the job (${res.status}): ${(await res.text()).slice(0, 200)}`);
   const { prompt_id } = await res.json();
 
   // Poll history until the job lands. Local jobs run seconds to minutes.
@@ -749,7 +749,7 @@ export async function runGraph(graph, onStatus = () => {}, base = DEFAULT_BASE, 
     unreachable = 0;
     const entry = hist[prompt_id];
     if (entry?.status?.status_str === 'error') {
-      throw new Error('Generation failed inside ComfyUI — check its console.');
+      throw new Error('The local engine could not finish the job. Check its window for the reason.');
     }
     const img = entry && Object.values(entry.outputs || {}).flatMap(o => o.images || [])[0];
     if (img) {

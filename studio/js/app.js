@@ -30,6 +30,7 @@ import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pac
 import { analyzeGeometry } from './geometry.js';
 import { CURVE_IDENTITY, buildLuminanceLut, ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
 import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
+import { readableServiceError } from './service-error.js';
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
@@ -117,6 +118,12 @@ const btn = (label, cls = 'btn', onclick) => {
 };
 /** Names a control whose visible label is a glyph. */
 const aria = (node, label) => { node.setAttribute('aria-label', label); node.title = label; return node; };
+
+/** Close a fragment so two messages read as two sentences, never a run-on. */
+const sentence = text => {
+  const trimmed = String(text ?? '').trim();
+  return !trimmed || /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+};
 
 const svgEl = (tag, attrs = {}, ...kids) => {
   const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -2626,6 +2633,8 @@ async function generativeFillDialog(asset) {
   const status = el('p', { className: 'hint', role: 'status' }, 'The result will be added as a new candidate.');
   const body = el('div', {},
     el('p', { className: 'hint', style: 'color:var(--warn)' }, 'Beta: review edges, anatomy, fabric, skin, and lighting at 100% before approval.'),
+    !covers(lic, 'photo') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
+      'Generative Fill runs on this computer and draws no cloud balance, but it is a licensed Photo capability. Activate a Photo Single Studio or Full Studio licence in Deliver.') : null,
     el('p', { className: 'hint' }, 'Draw around the area, then describe the change; your original stays unchanged.'),
     preview,
     el('h4', { className: 'editor-group-title' }, 'Selection'), selectionActions, selectionStatus,
@@ -2644,6 +2653,15 @@ async function generativeFillDialog(asset) {
     if (!requested) return toast('Describe the intended result first.', true);
     run.disabled = true;
     let fillBoundaryQuality = null;
+    // Generative Fill is a local production job, metered exactly like Photo
+    // enhancement: the licence is confirmed online and the operation is
+    // recorded in Usage. Local work never draws from the cloud balance.
+    const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
+    if (!authorization.ok) {
+      run.disabled = false;
+      status.textContent = `Generative Fill authorization failed: ${readableServiceError(authorization.reason || 'authorization_required')}.`;
+      return;
+    }
     try {
       await busy(async () => {
         const source = document.createElement('canvas'); source.width = decoded.w; source.height = decoded.h;
@@ -2674,6 +2692,7 @@ async function generativeFillDialog(asset) {
         const blended = await blendInpaintMaskedCandidate(source, result.blob, selectionMask, 16);
         const boundaryQuality = await assessInpaintMaskedBoundary(source, blended, selectionMask);
         fillBoundaryQuality = boundaryQuality;
+        await settleOutbound(authorization.authorization.id, await blobEvidenceHash(blended));
         const file = new File([blended], `fill_${mode.value}_${result.seed}.png`, { type: 'image/png' });
         const created = newAsset(state.project.id, file);
         created.source = 'generated-fill-local';
@@ -2696,7 +2715,10 @@ async function generativeFillDialog(asset) {
       closeDialog(); render(); toast(fillBoundaryQuality?.status === 'pass'
         ? 'Generative Fill Beta candidate created — automated boundary continuity passed; complete human review.'
         : 'Generative Fill Beta candidate created and flagged for boundary review.', fillBoundaryQuality?.status !== 'pass');
-    } catch (err) { status.textContent = `Failed: ${err.message}`; }
+    } catch (err) {
+      const release = await releaseUsage(authorization.authorization.id, 'render_failed');
+      status.textContent = `Failed: ${sentence(err.message)} ${release.message}`;
+    }
     finally { run.disabled = false; }
   });
   dialog('Generative Fill Beta', body, [btn('Cancel', 'btn', closeDialog), run]);
@@ -3305,7 +3327,7 @@ async function upscaleAsset(asset) {
          toast('Enhanced photo added to Library.');
        } catch (err) {
          const release = await releaseUsage(authorization.authorization.id, 'render_failed');
-         toast(`Upscale failed: ${err.message}. ${release.message}`, true);
+         toast(`Upscale failed: ${sentence(err.message)} ${release.message}`, true);
        }
      })]);
 }
