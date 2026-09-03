@@ -146,6 +146,7 @@ Create with freedom. Finish with *confidence*.</textarea>
 <script type="module" src="js/studio-nav.js"></script>
 <script type="module" src="js/activity.js?v=9"></script>
 <script type="module">
+import { count } from './js/plural.js';
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
 import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-client.js';
@@ -308,7 +309,6 @@ $('#fitSeconds').addEventListener('input', () => paintPlan());
 
 function paintPlan() {
   const plan = performancePlan(activeScriptText());
-  const count = (value, noun) => `${value} ${noun}${value === 1 ? '' : 's'}`;
   $('#planSummary').textContent =
     `${count(plan.segments.length, 'segment')}, ${count(plan.totalWords, 'word')}, ~${planDuration(plan)}s read.`;
   const target = fitSecondsValue();

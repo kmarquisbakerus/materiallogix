@@ -31,6 +31,7 @@ import { analyzeGeometry } from './geometry.js';
 import { CURVE_IDENTITY, buildLuminanceLut, ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
 import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
 import { readableServiceError } from './service-error.js';
+import { count } from './plural.js';
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
@@ -315,7 +316,7 @@ async function analyzeAll() {
   const pending = state.assets.filter(a => !a.auto);
   if (!pending.length) return toast('Every asset has already been analysed.');
   const bar = el('i');
-  const status = el('p', {}, `Analysing ${pending.length} asset(s)…`);
+  const status = el('p', {}, `Analysing ${count(pending.length, 'asset')}…`);
   dialog('Automated checks', el('div', {}, status, el('div', { className: 'progress' }, bar)),
     [btn('Close', 'btn', closeDialog)]);
   try {
@@ -333,7 +334,7 @@ async function analyzeAll() {
     toast(error?.message || 'Analysis stopped early. Already-analysed assets kept their results.', true);
     return;
   }
-  status.textContent = `Done. ${pending.length} asset(s) analysed.`;
+  status.textContent = `Done. ${count(pending.length, 'asset')} analysed.`;
   render();
 }
 
@@ -360,7 +361,7 @@ async function importFiles(fileList) {
   if (!files.length) return toast('No supported photo or video files in that drop.', true);
 
   const bar = el('i');
-  const status = el('p', {}, `Importing ${files.length} file(s)…`);
+  const status = el('p', {}, `Importing ${count(files.length, 'file')}…`);
   dialog('Import', el('div', {}, status, el('div', { className: 'progress' }, bar)), [btn('Close', 'btn', closeDialog)]);
 
   let imported = 0, blocked = 0;
@@ -418,7 +419,7 @@ async function importFiles(fileList) {
   state.assets = await store.listAssets(state.project.id);
   closeDialog();
   render();
-  toast(`Imported and analysed ${imported} file(s).${blocked ? ` ${blocked} file(s) were blocked.` : ''}`);
+  toast(`Imported and analysed ${count(imported, 'file')}.${blocked ? ` ${count(blocked, 'file')} ${blocked === 1 ? 'was' : 'were'} blocked.` : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -883,7 +884,7 @@ function renderSidebar() {
     el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap' }, addBtn, analyzeBtn, demoBtn),
     el('div', { className: 'dropzone' }, 'or drop images and video anywhere'),
     el('p', { className: 'hint', style: 'margin-top:12px;margin-bottom:0' },
-      `${state.assets.length} asset(s) · ${state.assets.filter(a => a.auto).length} analysed`),
+      `${count(state.assets.length, 'asset')} · ${state.assets.filter(a => a.auto).length} analysed`),
     storageLine
   );
 
@@ -1027,7 +1028,7 @@ function renameProject() {
 
 function deleteProjectFlow() {
   dialog('Delete project',
-    el('p', {}, `Delete "${state.project.name}" and its ${state.assets.length} asset(s)? Back up first — this cannot be undone.`),
+    el('p', {}, `Delete "${state.project.name}" and its ${count(state.assets.length, 'asset')}? Back up first — this cannot be undone.`),
     [btn('Cancel', 'btn', closeDialog),
      btn('Delete', 'btn primary', async () => {
        await store.deleteProject(state.project.id);
@@ -1056,7 +1057,7 @@ async function backupProject() {
       }
     });
     downloadBlob(makeZip(entries), `${slug(state.project.name)}-recovery.zip`);
-    toast(`Recovery file saved with ${entries.length - 1} media file(s).`);
+    toast(`Recovery file saved with ${count(entries.length - 1, 'media file')}.`);
   } catch (error) {
     toast(error?.message || 'The recovery file could not be created. Nothing was saved.', true);
   }
@@ -1086,7 +1087,7 @@ async function restoreProject(file) {
       }
     });
     await boot(projectId);
-    toast(`Recovered ${backup.assets.length} media file(s) and all project decisions.`);
+    toast(`Recovered ${count(backup.assets.length, 'media file')} and all project decisions.`);
   } catch (error) {
     toast(`Recovery failed: ${error.message}`, true);
   }
@@ -3378,7 +3379,7 @@ function fixBlock(asset) {
   }
   if (asset.fixes.length) {
     wrap.append(el('p', { className: 'hint', style: 'margin:10px 0 0' },
-      `${asset.fixes.length} fix(es) \u2014 saved with the asset and exported as a precise RETOUCH_LIST.md work order. Appearance changes remain previews until the pictured person approves them.`));
+      `${count(asset.fixes.length, 'fix', 'fixes')} \u2014 saved with the asset and exported as a precise RETOUCH_LIST.md work order. Appearance changes remain previews until the pictured person approves them.`));
   }
   return wrap;
 }
@@ -3567,8 +3568,8 @@ function preflightDialog(onProceed) {
   const body = el('div', {});
   body.append(el('p', { className: 'hint' },
     result.blocks
-      ? `${result.blocks} blocking issue(s) and ${result.warns} warning(s). Blocking issues are the ones that get an ad rejected or a client angry.`
-      : `No blocking issues. ${result.warns} warning(s) to look at.`));
+      ? `${count(result.blocks, 'blocking issue')} and ${count(result.warns, 'warning')}. Blocking issues are the ones that get an ad rejected or a client angry.`
+      : `No blocking issues. ${count(result.warns, 'warning')} to look at.`));
   body.append(issueList(result.items.slice(0, 60), 'Everything checks out.'));
   if (result.items.length > 60) body.append(el('p', { className: 'hint' }, `…and ${result.items.length - 60} more, all listed in the package.`));
 
@@ -3626,7 +3627,13 @@ async function openPrintDelivery() {
       !color.allowed ? el('p', { style: 'color:var(--bad);margin-top:6px' },
         'This photo needs an accepted sRGB conversion before print delivery.') : null);
     download.disabled = !currentPlan.canExport || !color.allowed;
-    status.textContent = download.disabled ? 'Choose a smaller print size or prepare the color first.' : '';
+    // Name the blocker that actually applies; the summary above already says
+    // which one it is, and two different explanations read as a fault.
+    status.textContent = !color.allowed
+      ? 'Prepare an accepted sRGB conversion before this photo can be printed.'
+      : !currentPlan.canExport
+        ? 'This photo does not have the detail for that print size. Choose a smaller size.'
+        : '';
   };
 
   for (const control of [preset, orientation, fit, bleed]) control.onchange = update;
@@ -3695,7 +3702,7 @@ async function doExport(exportOpts = {}) {
     const pairs = approvedPairs(state.assets);
     let authorizationId = null;
     const bar = el('i');
-    const status = el('p', {}, `Rendering ${pairs.length} placement(s)…`);
+    const status = el('p', {}, `Rendering ${count(pairs.length, 'placement')}…`);
     dialog(exportOpts.proof ? 'Export proof package — watermarked, 960px' : 'Export campaign package',
       el('div', {}, status, el('div', { className: 'progress' }, bar),
         exportOpts.proof ? el('p', { className: 'hint' }, 'Proofs carry a full-frame watermark and capped resolution — safe to send before payment clears. The licensed export renders clean.') : null),
@@ -3721,9 +3728,9 @@ async function doExport(exportOpts = {}) {
       authorizationId = authorization.authorization.id;
       await settleOutboundBeforeDelivery(authorizationId, evidenceHash, () => downloadBlob(blob, filename));
       if (!exportOpts.proof) recordExport(pairs.length);
-      status.textContent = `Done — ${stats.placements} placement(s), ${stats.files} files, ${(blob.size / 1048576).toFixed(1)} MB.`;
+      status.textContent = `Done — ${count(stats.placements, 'placement')}, ${count(stats.files, 'file')}, ${(blob.size / 1048576).toFixed(1)} MB.`;
       if (stats.failures.length) {
-        status.after(el('p', { style: 'color:var(--warn)' }, `${stats.failures.length} render(s) failed. See EXPORT_WARNINGS.txt inside the zip.`));
+        status.after(el('p', { style: 'color:var(--warn)' }, `${count(stats.failures.length, 'render')} failed. See EXPORT_WARNINGS.txt inside the zip.`));
       }
     } catch (err) {
       const release = authorizationId ? await releaseUsage(authorizationId, 'export_failed') : null;
@@ -3764,7 +3771,7 @@ async function exportClientPage() {
     if (!authorization.ok) throw new Error(authorization.reason || 'online_authorization_required');
     await settleOutboundBeforeDelivery(authorization.authorization.id, evidenceHash,
       () => downloadBlob(blob, `${slug(state.project.name)}-client-review.html`));
-    status.textContent = `Done — ${(blob.size / 1048576).toFixed(1)} MB, ${pairs.length} placement(s).`;
+    status.textContent = `Done — ${(blob.size / 1048576).toFixed(1)} MB, ${count(pairs.length, 'placement')}.`;
   } catch (err) {
     const release = authorization?.ok ? await releaseUsage(authorization.authorization.id, 'export_failed') : null;
     status.textContent = `Not downloaded: ${err.message}.${release ? ` ${release.message}` : ''}`;
@@ -3778,7 +3785,7 @@ async function importVerdict(file) {
     const { applied, missing, changed } = applyClientVerdict(json, state.assets);
     for (const a of changed) { log(a, `client decisions imported`, 'client'); await store.saveAsset(a); }
     render();
-    toast(`Applied ${applied} client decision(s)${missing ? `, ${missing} skipped (asset not in this project)` : ''}.`);
+    toast(`Applied ${count(applied, 'client decision')}${missing ? `, ${missing} skipped (asset not in this project)` : ''}.`);
   } catch (err) {
     toast('Could not read that file: ' + err.message, true);
   }

@@ -8,6 +8,7 @@
 
 import { SURFACE_BY_ID } from './model.js';
 import { inspectColorMetadata } from './color-management.js';
+import { count } from './plural.js';
 
 const SAMPLE_W = 256;   // analysis resolution: comparable scores across assets
 const GRID = 32;        // energy map resolution
@@ -325,8 +326,8 @@ export function captureCoverage(frames) {
     const yaw = estimateYawDeg(faces[0].keypoints);
     if (yaw != null) yaws.push({ frame: i, yaw });
   });
-  if (missing) flags.push(`${missing} frame(s) have no detectable face — too fast, too dark, or turned past profile.`);
-  if (crowded) flags.push(`${crowded} frame(s) contain more than one face — capture one person at a time.`);
+  if (missing) flags.push(`${count(missing, 'frame')} ${missing === 1 ? 'has' : 'have'} no detectable face — too fast, too dark, or turned past profile.`);
+  if (crowded) flags.push(`${count(crowded, 'frame')} ${crowded === 1 ? 'contains' : 'contain'} more than one face — capture one person at a time.`);
 
   // Coverage in 30° buckets across -90..90.
   const buckets = new Set(yaws.map(y => Math.max(-3, Math.min(2, Math.floor(y.yaw / 30)))));
@@ -345,7 +346,7 @@ export function captureCoverage(frames) {
     const gap = Math.max(1, yaws[i].frame - yaws[i - 1].frame);
     if (Math.abs(yaws[i].yaw - yaws[i - 1].yaw) / gap > 40) fastTurns++;
   }
-  if (fastTurns) flags.push(`${fastTurns} jump(s) over 40° between frames — turn about half as fast.`);
+  if (fastTurns) flags.push(`${count(fastTurns, 'jump')} over 40° between frames — turn about half as fast.`);
 
   return {
     frames: frames.length,
@@ -397,7 +398,7 @@ export function captureCoverageBody(frames) {
     if (yaw == null) { missing++; return; }
     yaws.push({ frame: i, yaw });
   });
-  if (missing) flags.push(`${missing} frame(s) with no trackable body - too close, cropped, or too dark.`);
+  if (missing) flags.push(`${count(missing, 'frame')} with no trackable body - too close, cropped, or too dark.`);
 
   const buckets = new Set(yaws.map(y => Math.floor(((y.yaw % 360) + 360) % 360 / 45)));
   const gaps = [];
@@ -411,7 +412,7 @@ export function captureCoverageBody(frames) {
     const gap = Math.max(1, yaws[i].frame - yaws[i - 1].frame);
     if (d / gap > 60) fastTurns++;
   }
-  if (fastTurns) flags.push(`${fastTurns} jump(s) over 60° between frames - spin about half as fast.`);
+  if (fastTurns) flags.push(`${count(fastTurns, 'jump')} over 60° between frames - spin about half as fast.`);
 
   return {
     frames: frames.length,
@@ -719,7 +720,7 @@ export function assetIssues(asset, allAssets, project) {
   if (asset.geometry) {
     const hands = asset.geometry.hands || [];
     if (hands.length) {
-      out.push(issue('info', 'hands-present', `${hands.length} hand(s) detected. The landmark model cannot count fingers on a bad hand, so loupe each one before approving.`));
+      out.push(issue('info', 'hands-present', `${count(hands.length, 'hand')} detected. The landmark model cannot count fingers on a bad hand, so loupe each one before approving.`));
     }
     if (!asset.geometry.faces?.length && asset.role === 'candidate') {
       out.push(issue('info', 'no-face', 'No face detected. Fine for product shots; a miss worth checking on people shots.'));

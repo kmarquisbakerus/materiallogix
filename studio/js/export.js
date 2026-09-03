@@ -6,6 +6,7 @@ import { renderCrop, canvasToBytes, loadImage, grabVideoFrame, defaultCrop, yiel
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { objectUrl, getBlob } from './store.js';
 import { makeZip } from './zip.js';
+import { count } from './plural.js';
 
 export const slug = s => (s || '')
   .toLowerCase()
@@ -243,9 +244,9 @@ export function teamNotes(project, assets) {
   L.push('');
 
   L.push('## Before launch', '');
-  if (missingAlt) L.push(`- ⚠️ ${missingAlt} approved placement(s) have no alt text.`);
+  if (missingAlt) L.push(`- ⚠️ ${count(missingAlt, 'approved placement')} ${missingAlt === 1 ? 'has' : 'have'} no alt text.`);
   if (videos.length) {
-    L.push(`- ${videos.length} video placement(s) ship as source file plus crop and trim notes.`,
+    L.push(`- ${count(videos.length, 'video placement')} ship as source file plus crop and trim notes.`,
       '  This build does not re-encode video — hand `video/VIDEO_NOTES.md` to the editor.');
   }
   L.push('- Re-check platform policy against live ad rules before spending.',

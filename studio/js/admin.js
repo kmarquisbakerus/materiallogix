@@ -1,5 +1,6 @@
 import { apiUrl } from './api-root.js';
 import { readableServiceError } from './service-error.js';
+import { count } from './plural.js';
 
 const status = document.querySelector('#opsStatus');
 const cards = document.querySelector('#opsCards');
@@ -180,7 +181,7 @@ async function loadCustomerCare() {
       if (!refundForm.elements.purchaseSourceId.value) refundForm.elements.purchaseSourceId.value = firstPurchase.source_id || '';
       if (!refundForm.elements.stripePaymentIntentId.value) refundForm.elements.stripePaymentIntentId.value = firstPurchase.stripe_payment_intent_id || '';
     }
-    customerCareStatus.textContent = `${(data.licenses || []).length} license record(s), ${(data.purchases || []).length} purchase record(s), ${(data.actions || []).length} prior action(s).`;
+    customerCareStatus.textContent = `${count((data.licenses || []).length, 'license record')}, ${count((data.purchases || []).length, 'purchase record')}, ${count((data.actions || []).length, 'prior action')}.`;
     renderCustomerCare();
   } catch (error) {
     customerCareSnapshot = null;
@@ -317,7 +318,7 @@ async function loadPromoCodes() {
     const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
     if (!response.ok) throw new Error(data.error || 'promo_codes_unavailable');
     promoCodes = data.promoCodes || [];
-    promoStatus.textContent = `${promoCodes.length} promo code(s); ${promoCodes.filter(item => item.active).length} active.`;
+    promoStatus.textContent = `${count(promoCodes.length, 'promo code')}; ${promoCodes.filter(item => item.active).length} active.`;
     renderPromoCodes();
   } catch (error) {
     promoCodes = [];
@@ -397,7 +398,7 @@ async function loadFeatureFlags() {
     const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
     if (!response.ok) throw new Error(data.error || 'feature_flags_unavailable');
     const flags = data.flags || [];
-    flagsStatus.textContent = `${flags.length} flag(s); ${flags.filter(item => item.enabled).length} enabled.`;
+    flagsStatus.textContent = `${count(flags.length, 'flag')}; ${flags.filter(item => item.enabled).length} enabled.`;
     flagsTable.innerHTML = renderTable(
       ['Flag', 'Audience', 'Note', 'State', ''],
       flags.map(item => `<tr data-flag-key="${safe(item.key)}" data-flag-enabled="${item.enabled ? 1 : 0}"><td>${safe(item.key)}</td><td>${safe(item.audience)}</td><td>${safe(item.note || '')}</td><td>${item.enabled ? 'ON' : 'off'}</td><td><button class="btn" type="button" data-flag-toggle>${item.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)
