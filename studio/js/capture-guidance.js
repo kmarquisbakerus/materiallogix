@@ -75,15 +75,18 @@ export function guidanceFor(kind, plan) {
 
 /** Plain follow-up when a capture scores badly. */
 export function retryAdvice(kind, coverage = {}) {
+  // A default only covers undefined; a capture that produced no report at all
+  // hands over null, and advice is exactly what that case needs.
+  const report = coverage || {};
   const notes = [];
   if (kind === 'face') {
-    if ((coverage.yawSpreadDeg || 0) < 120) notes.push('Turn further — all the way to each profile.');
-    if ((coverage.gaps || []).length > 1) notes.push('Turn slower through the middle.');
+    if ((report.yawSpreadDeg || 0) < 120) notes.push('Turn further — all the way to each profile.');
+    if ((report.gaps || []).length > 1) notes.push('Turn slower through the middle.');
   }
   if (kind === 'body') {
-    if ((coverage.coveredBuckets || 0) < 7) notes.push('Complete the full circle without stopping.');
+    if ((report.coveredBuckets || 0) < 7) notes.push('Complete the full circle without stopping.');
   }
-  for (const flag of coverage.flags || []) notes.push(flag);
+  for (const flag of report.flags || []) notes.push(flag);
   return notes;
 }
 
