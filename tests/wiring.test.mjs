@@ -19,12 +19,15 @@ const read = file => readFileSync(resolve(ROOT, file), 'utf8');
 /**
  * Pages carry inline modules too, and those wire up real controls.
  *
- * The end tag has to be matched the way a parser ends one - on whitespace or a
- * solidus as well as on `>`. Matching only `</script>` reads `</script >` as
- * script body and silently swallows the rest of the page, so every control the
- * next script wires up would go unchecked.
+ * The end tag has to be matched the way a parser ends one. After `</script`,
+ * whitespace or a solidus moves the tokenizer into attribute parsing, and
+ * everything up to the `>` is read and discarded - so `</script >`,
+ * `</script/>` and even `</script\t\n bar>` all close the element, while
+ * `</scriptfoo>` does not. Matching only `</script>` reads the rest as script
+ * body and silently swallows the page, leaving every control the following
+ * scripts wire up unchecked.
  */
-const inlineScripts = source => [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script[\s/]*>/gi)].map(match => match[1]).join('\n');
+const inlineScripts = source => [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script(?:[\s/][^>]*)?>/gi)].map(match => match[1]).join('\n');
 const allScriptSource = [...jsFiles.map(read), ...htmlFiles.map(file => inlineScripts(read(file)))].join('\n');
 
 test('inline scripts are found however their end tag is written', () => {
@@ -32,9 +35,12 @@ test('inline scripts are found however their end tag is written', () => {
   // only knows `</script>` swallows the rest of the page from the first
   // `</script >` on, and every check built on it quietly stops looking.
   const page = ['<script>ONE</script>', '<script>TWO</script >', '<script>THREE</script\n>',
-    '<script type="module">FOUR</script/>', '<script>FIVE</SCRIPT>'].join('\n');
+    '<script type="module">FOUR</script/>', '<script>FIVE</SCRIPT>', '<script>SIX</script\t\n bar>'].join('\n');
   const found = inlineScripts(page).split('\n').filter(Boolean);
-  assert.deepEqual(found, ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE']);
+  assert.deepEqual(found, ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX']);
+  // A name that only starts with "script" is not an end tag, so the element
+  // stays open and the scanner must not treat it as one.
+  assert.deepEqual(inlineScripts('<script>KEPT</scriptfoo>').split('\n').filter(Boolean), []);
 });
 
 test('every shipped script parses', () => {
