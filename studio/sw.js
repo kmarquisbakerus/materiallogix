@@ -5,7 +5,7 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v19';
+const CACHE = 'materiallogix-shell-v20';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 const SHELL = [
   './', 'index.html', 'voice.html', 'usage.html', 'admin.html', 'manifest.webmanifest', 'icon.svg',
@@ -19,9 +19,15 @@ const SHELL = [
   'js/pricing.js', 'js/pricing-catalog.js', 'js/license.js', 'js/license-key.js'
   ,'js/billing-client.js', 'js/usage.js', 'js/admin.js',
   'assets/raw/worker.js',
-  'site/media/studio-entry-photo.webp', 'site/media/studio-entry-video.webp', 'site/media/studio-entry-voice.webp'
+  '../media/studio-entry-photo.webp', '../media/studio-entry-video.webp', '../media/studio-entry-voice.webp'
 ];
-const SHELL_PATHS = new Set(SHELL.map(path => new URL(path, self.location.origin).pathname));
+// Every shell entry is relative to this worker's own URL (/studio/sw.js), not to
+// the origin. Resolving against the origin produced /index.html and /js/app.js,
+// which are not paths this app is ever served from, so the fetch handler below
+// matched nothing and the cache was never read. One resolver, used by both the
+// precache and the fetch matcher, keeps them from drifting apart again.
+const resolveShell = path => new URL(path, self.location.href);
+const SHELL_PATHS = new Set(SHELL.map(path => resolveShell(path).pathname));
 // Proof-only candidate assets are warmed only when the explicit parity suite
 // runs. Keeping 14 MiB out of the mandatory shell protects normal installs.
 const PEOPLE_ASSETS = [
@@ -33,7 +39,7 @@ const PEOPLE_ASSETS = [
   'assets/human/models/movenet-lightning.json', 'assets/human/models/movenet-lightning.bin',
   'assets/human/models/blazepose-full.json', 'assets/human/models/blazepose-full.bin'
 ];
-const PEOPLE_PATHS = new Set(PEOPLE_ASSETS.map(path => new URL(path, self.location.origin).pathname));
+const PEOPLE_PATHS = new Set(PEOPLE_ASSETS.map(path => resolveShell(path).pathname));
 const NETWORK_TIMEOUT_MS = 1200;
 
 async function networkFirst(request, event, cacheName = CACHE) {
@@ -56,8 +62,30 @@ async function networkFirst(request, event, cacheName = CACHE) {
   }
 }
 
+// cache.addAll() is all-or-nothing: one 404 in the shell list rejects the whole
+// install, and the worker never activates at all. The shell is a resilience
+// fallback, so warm it entry by entry and let a single missing asset cost only
+// that asset. shellPrecacheFailures() surfaces what did not warm so a stale
+// path is a visible defect instead of a silently uninstallable app.
+const precacheFailures = [];
+
+async function warmShell(cache) {
+  precacheFailures.length = 0;
+  await Promise.all(SHELL.map(async path => {
+    try {
+      const request = new Request(resolveShell(path), { cache: 'reload' });
+      const response = await fetch(request);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      await cache.put(request, response);
+    } catch (error) {
+      precacheFailures.push(`${path}: ${error?.message || 'unavailable'}`);
+    }
+  }));
+  if (precacheFailures.length) console.warn('[sw] shell assets that did not precache', precacheFailures);
+}
+
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(caches.open(CACHE).then(cache => warmShell(cache)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', event => {
