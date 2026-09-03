@@ -81,3 +81,20 @@ test('the shell cache name changes when the shell does', () => {
   assert.ok(match, 'sw.js must name its cache');
   assert.match(match[1], /-v\d+$/, 'the cache name must carry a version suffix that can be stepped');
 });
+
+test('a file handed to the browser outlives the click that starts it', () => {
+  // Revoking an object URL on the next line can cancel the download before the
+  // browser has read the blob, and the anchor has to be in the document for the
+  // click to count. One helper does both; nothing may hand-roll it again.
+  const download = readFileSync(resolve(STUDIO, 'js/download.js'), 'utf8');
+  assert.match(download, /document\.body\.appendChild/);
+  assert.match(download, /setTimeout\(\(\) => URL\.revokeObjectURL/);
+
+  const offenders = [];
+  for (const file of ['js/admin.js', 'js/privacy.js', 'js/app.js', 'js/usage.js', 'js/zip.js', 'js/clientpage.js']) {
+    read(file).split('\n').forEach((line, index) => {
+      if (/\.click\(\)/.test(line) && /revokeObjectURL/.test(line)) offenders.push(`${file}:${index + 1}`);
+    });
+  }
+  assert.deepEqual(offenders, [], `these revoke an object URL in the same statement as the click: ${offenders.join(', ')}`);
+});

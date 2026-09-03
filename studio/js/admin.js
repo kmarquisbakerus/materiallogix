@@ -1,6 +1,7 @@
 import { apiUrl } from './api-root.js';
 import { readableServiceError } from './service-error.js';
 import { count } from './plural.js';
+import { downloadBlob } from './download.js';
 
 const status = document.querySelector('#opsStatus');
 const cards = document.querySelector('#opsCards');
@@ -286,8 +287,7 @@ document.querySelector('#exportCsv').addEventListener('click', () => {
   const rows = [['period','product','activity','status','operations','artifacts','billable_units'],
     ...filteredProducts.map(item => [snapshot.period,item.product,item.artifact_kind,item.status,item.operations,item.artifacts,item.billable_units])];
   const blob = new Blob([rows.map(row => row.map(quote).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
-  link.download = `materiallogix-operations-${snapshot.period}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  downloadBlob(blob, `materiallogix-operations-${snapshot.period}.csv`);
 });
 const promoStatus = document.querySelector('#promoStatus');
 const promoTable = document.querySelector('#promoTable');
