@@ -1,4 +1,4 @@
-import { PAY_PER_EXPORT } from './studio/js/pricing.js';
+import { EXPORT_PRODUCTS, exportPrice } from './studio/js/pricing.js';
 
 const money = amount => `$${Number(amount).toFixed(2)}`;
 
@@ -18,6 +18,7 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     .commerce-toolbar select,.commerce-promo input{min-height:44px;border:1px solid var(--hair);border-radius:10px;background:var(--card);color:var(--ink);padding:0 12px;font:inherit}
     .commerce-toolbar p{margin:0;max-width:50ch;color:var(--muted);font-size:12px}
     .checkout-cta{width:100%;margin-top:16px;white-space:normal;text-align:center}
+    .checkout-cta+.checkout-cta{margin-top:8px}
     .single-checkout{display:none}
     #sp-photo:checked~.single-checkout-photo,#sp-video:checked~.single-checkout-video,#sp-voice:checked~.single-checkout-voice{display:flex}
     .commerce-purchase{display:grid;gap:12px;margin:18px 0 0;padding:18px;border:1px solid var(--hair);border-radius:14px;background:rgba(255,255,255,.48)}
@@ -32,7 +33,7 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
 
   const plans = [...pricing.querySelectorAll('.plan')];
   const card = title => plans.find(item => item.querySelector('h3')?.textContent.trim().toLowerCase() === title.toLowerCase());
-  const addButton = (target, attributes, label) => {
+  const addButton = (target, attributes, label, variant = 'primary') => {
     if (!target) return null;
     const selector = attributes.checkoutPlan
       ? `[data-checkout-plan="${attributes.checkoutPlan}"]`
@@ -41,7 +42,7 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     if (button) return button;
     button = document.createElement('button');
     button.type = 'button';
-    button.className = 'btn primary checkout-cta';
+    button.className = `btn${variant === 'primary' ? ' primary' : ''} checkout-cta`;
     if (attributes.checkoutPlan) button.dataset.checkoutPlan = attributes.checkoutPlan;
     if (attributes.checkoutSku) button.dataset.checkoutSku = attributes.checkoutSku;
     button.textContent = label;
@@ -49,7 +50,13 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     return button;
   };
 
-  addButton(card('Free Preview'), { checkoutSku: 'export_one' }, `Buy one clean export — ${money(PAY_PER_EXPORT.price)}`);
+  // A photo, a minute of audio and a minute of video are three different
+  // things to buy, so the free card offers all three rather than one "export".
+  const preview = card('Free Preview');
+  for (const item of EXPORT_PRODUCTS) {
+    const quote = exportPrice(item.id);
+    addButton(preview, { checkoutSku: item.id }, `${item.label} — ${money(quote.total)}`, 'secondary');
+  }
   addButton(card('Voice Starter'), { checkoutPlan: 'voice_starter' }, 'Choose Voice Starter');
 
   const single = card('Single Studio');

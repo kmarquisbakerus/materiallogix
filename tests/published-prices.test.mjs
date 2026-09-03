@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
-import { PRODUCTS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor } from '../studio/js/pricing.js';
+import {
+  PRODUCTS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor,
+  EXPORT_PRODUCTS, exportPrice, UNIT_PRICE, CLOUD_CREDIT, includedCloudCents, applyCloudCredit,
+  walletTopUpCents, quoteCloudJob, planLabel
+} from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,7 +59,7 @@ test('every published price matches what the code would charge', () => {
 });
 
 test('the pay-per-export price on the site is the price in the code', () => {
-  const advertised = /Clean exports from \$([0-9.]+)/.exec(site)?.[1];
+  const advertised = /Exports from \$([0-9.]+)\./.exec(site)?.[1];
   assert.ok(advertised, 'the site no longer advertises a pay-per-export price');
   assert.equal(PAY_PER_EXPORT.price, Number(advertised));
 });
@@ -134,9 +138,179 @@ test('every plan id a checkout button offers is a real product', () => {
   for (const plan of offered) assert.ok(known.has(plan), `checkout offers "${plan}", which pricing.js does not sell`);
 });
 
-test('the export price is never written out by hand', () => {
+test('no export price is ever written out by hand', () => {
   const checkout = readFileSync(resolve(ROOT, 'checkout-site.js'), 'utf8');
-  assert.match(checkout, /PAY_PER_EXPORT/, 'the checkout button must read the declared price');
+  assert.match(checkout, /exportPrice\(/, 'the checkout buttons must read the declared prices');
   const hardCoded = checkout.match(/\$\d+\.\d{2}/g) || [];
   assert.deepEqual(hardCoded, [], `checkout-site.js still hard-codes a price: ${hardCoded.join(', ')}`);
+});
+
+// ── exports and cloud credit ────────────────────────────────────────────────
+
+test('a photo, a minute of audio and a minute of video are each buyable', () => {
+  const checkout = readFileSync(resolve(ROOT, 'checkout-site.js'), 'utf8');
+  assert.match(checkout, /EXPORT_PRODUCTS/, 'the free card must offer every export it sells');
+  assert.deepEqual(EXPORT_PRODUCTS.map(item => item.id), ['export_image', 'export_audio', 'export_video']);
+  for (const item of EXPORT_PRODUCTS) {
+    assert.ok(item.label && item.per && item.product, `${item.id} is incomplete`);
+    assert.ok(item.units >= 1, `${item.id} must cost at least one unit`);
+  }
+});
+
+test('each export costs what the unit policy says it costs', () => {
+  // A minute of finished video is four units; a photo and a minute of voice are
+  // one. The prices have to follow from that, not from a second opinion.
+  assert.equal(exportPrice('export_image').total, UNIT_PRICE);
+  assert.equal(exportPrice('export_audio').total, UNIT_PRICE);
+  assert.equal(exportPrice('export_video').total, +(4 * UNIT_PRICE).toFixed(2));
+  assert.equal(exportPrice('export_video', 3).units, 12);
+  assert.equal(exportPrice('export_video', 3).total, +(12 * UNIT_PRICE).toFixed(2));
+  assert.equal(exportPrice('export_image', 0).quantity, 1, 'buying nothing is buying one');
+  assert.equal(exportPrice('export_image', 2.4).quantity, 3, 'a part minute bills a whole one');
+  assert.equal(exportPrice('not_a_product'), null);
+});
+
+test('the cheapest export is the price the site quotes as its floor', () => {
+  const floor = Math.min(...EXPORT_PRODUCTS.map(item => exportPrice(item.id).total));
+  const advertised = Number(/Clean exports without a plan[^<]*?from \$([0-9.]+)/.exec(site)?.[1]);
+  assert.equal(floor, advertised, 'the site quotes a floor the code does not offer');
+  assert.equal(PAY_PER_EXPORT.price, floor);
+});
+
+test('the site quotes the video export price the code charges', () => {
+  const advertised = Number(/a minute of video from \$([0-9.]+)/.exec(site)?.[1]);
+  assert.ok(advertised, 'the site no longer quotes a video export price');
+  assert.equal(exportPrice('export_video').total, advertised);
+});
+
+test('included cloud credit spends on any cloud job, not only video', () => {
+  assert.deepEqual([...CLOUD_CREDIT.spendableOn].sort(), ['image', 'video', 'voice']);
+  const advertised = Number(/\$(\d+) of cloud credit each paid period/.exec(site)?.[1]);
+  assert.ok(advertised, 'the site no longer states an included cloud credit');
+  for (const plan of ['single', 'single_pro', 'full', 'pro']) {
+    assert.equal(includedCloudCents({ plan }), advertised * 100, `${plan} credit`);
+  }
+  assert.equal(includedCloudCents({ plan: 'voice_starter' }), 0, 'a voice-only plan has no cloud lane to spend it on');
+  assert.equal(includedCloudCents({ plan: 'suspended:pro' }), 0, 'a suspended licence has no credit');
+  assert.equal(includedCloudCents(null), 0);
+});
+
+test('credit is spent before the wallet, and a job never runs on account', () => {
+  const quote = quoteCloudJob({ kind: 'video', durationSeconds: 120 }).amountCents;
+  const covered = applyCloudCredit(quote, { creditCents: 2000, walletCents: 0 });
+  assert.equal(covered.fromCreditCents, quote);
+  assert.equal(covered.fromWalletCents, 0);
+  assert.equal(covered.executable, true);
+
+  const split = applyCloudCredit(quote, { creditCents: 100, walletCents: 10000 });
+  assert.equal(split.fromCreditCents, 100, 'credit is always spent first');
+  assert.equal(split.fromWalletCents, quote - 100);
+  assert.equal(split.executable, true);
+
+  const short = applyCloudCredit(quote, { creditCents: 100, walletCents: 100 });
+  assert.equal(short.executable, false, 'prepaid means prepaid');
+  assert.equal(short.shortfallCents, quote - 200);
+});
+
+test('splitting a cloud job never invents or loses money', () => {
+  for (const [owed, credit, wallet] of [[0, 0, 0], [500, 0, 0], [500, 5000, 5000], [1, 0, 1],
+                                        [-100, 100, 100], [NaN, 100, 100], [750, 300, 200]]) {
+    const split = applyCloudCredit(owed, { creditCents: credit, walletCents: wallet });
+    assert.equal(split.fromCreditCents + split.fromWalletCents + split.shortfallCents, split.owedCents,
+      `${owed}/${credit}/${wallet} does not add up`);
+    for (const value of Object.values(split)) {
+      if (typeof value === 'number') assert.ok(Number.isFinite(value) && value >= 0, `${owed}/${credit}/${wallet}`);
+    }
+  }
+});
+
+test('every cloud service the code prices can be paid for with credit', () => {
+  for (const kind of CLOUD_CREDIT.spendableOn) {
+    const quote = quoteCloudJob({ kind, durationSeconds: 60, imageCount: 1 });
+    assert.ok(quote.amountCents > 0, `${kind} has no price`);
+    assert.equal(applyCloudCredit(quote.amountCents, { creditCents: 100000 }).executable, true, `${kind} cannot be paid from credit`);
+  }
+});
+
+test('the Pro wallet discount the site advertises is the discount applied', () => {
+  const advertised = Number(/(\d+)% off any wallet top-up/.exec(site)?.[1]);
+  assert.ok(advertised, 'the site no longer advertises a wallet discount');
+  assert.equal(CLOUD_CREDIT.walletDiscount.pro, advertised / 100);
+  assert.equal(walletTopUpCents(5000, { plan: 'pro' }).chargedCents, 5000 * (1 - advertised / 100));
+  assert.equal(walletTopUpCents(5000, { plan: 'full' }).chargedCents, 5000, 'only the Pro tier is discounted');
+  assert.equal(walletTopUpCents(5000, { plan: 'suspended:pro' }).chargedCents, 5000, 'a suspended licence buys at list');
+  assert.equal(walletTopUpCents(5000, null).chargedCents, 5000);
+});
+
+test('the wallet page never states a range or a service it does not mean', () => {
+  // The estimate, the guard and the fallback all used to carry their own copy
+  // of the range, and all of them quoted video alone.
+  const usage = readFileSync(resolve(ROOT, 'studio/js/usage.js'), 'utf8');
+  assert.ok(!/from \$5 through \$500|\$5\.00 through \$500\.00/.test(usage), 'the wallet range must not be written out by hand');
+  assert.ok(!/Video-time estimate/.test(usage), 'the wallet buys any cloud job, not only video');
+  assert.match(usage, /REFILL_MIN_CENTS/, 'the estimate must use the declared minimum');
+  assert.match(usage, /imageUpscale|voiceRender/, 'the estimate must cover more than video');
+});
+
+test('a plan reads as the name it was sold under, never as its id', () => {
+  for (const product of PRODUCTS) {
+    const label = planLabel(product.plan);
+    assert.notEqual(label, product.plan, `${product.plan} still shows its id`);
+    assert.ok(product.name.startsWith(label), `${product.plan} reads as "${label}", but the site sells "${product.name}"`);
+  }
+  assert.equal(planLabel('suspended:full'), 'Full Studio (suspended)');
+  assert.equal(planLabel(''), 'No active plan');
+  assert.equal(planLabel(null), 'No active plan');
+  assert.equal(planLabel('something_we_never_sold'), 'No active plan', 'an unknown id must not reach the screen');
+});
+
+test('a subscriber can reach billing and see what the plan includes', () => {
+  // A subscription with no way to change a card or cancel is not shippable.
+  const markup = readFileSync(resolve(ROOT, 'studio/usage.html'), 'utf8');
+  const usage = readFileSync(resolve(ROOT, 'studio/js/usage.js'), 'utf8');
+  assert.match(markup, /id="billingPortal"/, 'Usage must offer a way into the billing portal');
+  assert.match(markup, /id="planSummary"/, 'Usage must say which plan is active');
+  assert.match(usage, /openBillingPortal/, 'the portal button must call the portal');
+  assert.match(usage, /planLabel\(/, 'the plan must be named, not printed as an id');
+  assert.ok(!/data\.license\?\.plan \|\| 'No active plan'/.test(usage), 'the raw plan id must not be shown');
+});
+
+test('the entrance recognises every plan the site sells', async () => {
+  // The entrance used to carry its own list of plan ids. Adding the two Pro
+  // tiers to the site without adding them there told a paying customer their
+  // plan was a preview.
+  const { entranceAccess } = await import('../studio/js/studio-entry.js');
+  for (const product of PRODUCTS) {
+    const license = { plan: product.plan, selected_product: product.selectedProduct };
+    const access = entranceAccess(license);
+    assert.notEqual(access.label, 'Studio Preview', `${product.id} is shown as a preview`);
+    assert.notEqual(access.label, 'Studio', `${product.id} is not named`);
+    assert.ok(product.name.startsWith(access.label.split(' — ')[0]),
+      `${product.id} is labelled "${access.label}" but sold as "${product.name}"`);
+    assert.notEqual(access.message, 'Explore every Studio. A plan unlocks clean delivery.',
+      `${product.id} is told it has no plan`);
+  }
+  assert.equal(entranceAccess(null).label, 'Studio Preview');
+  assert.equal(entranceAccess(null, 'demo').label, 'Free Preview');
+  assert.equal(entranceAccess({ plan: 'suspended:pro' }).label, 'Reconnect your account');
+});
+
+test('no customer-facing screen prints a raw plan id', () => {
+  for (const file of ['studio/js/app.js', 'studio/js/usage.js', 'studio/js/studio-entry.js']) {
+    const source = readFileSync(resolve(ROOT, file), 'utf8');
+    assert.ok(!/\$\{(?:lic|license)\??\.plan\}/.test(source), `${file} interpolates a plan id directly`);
+    assert.ok(!/String\((?:lic|license)\.plan\)\.replaceAll/.test(source), `${file} pretty-prints a plan id by hand`);
+  }
+});
+
+test('the account panels are styled by name, not by position', () => {
+  // Inserting a section used to move the tinted backgrounds onto the wrong
+  // panels, because the stylesheet counted sections instead of naming them.
+  const css = readFileSync(resolve(ROOT, 'studio/css/usage.css'), 'utf8');
+  const markup = readFileSync(resolve(ROOT, 'studio/usage.html'), 'utf8');
+  assert.ok(!/nth-of-type/.test(css), 'usage.css must not select panels by position');
+  for (const name of ['usage-panel--breakdown', 'usage-panel--wallet']) {
+    assert.ok(css.includes(`.${name}`), `${name} has no style`);
+    assert.ok(markup.includes(name), `${name} is not on any panel`);
+  }
 });

@@ -1,13 +1,14 @@
-import { cloudVideoSecondsForCents, CLOUD_PRICING } from './pricing.js';
+import { cloudVideoSecondsForCents, CLOUD_PRICING, MONTHLY_UNITS, includedCloudCents, planLabel } from './pricing.js';
+import { pendingUsageReleases, openBillingPortal } from './billing-client.js';
+import { apiUrl } from './api-root.js';
+import { readableServiceError } from './service-error.js';
+import { count } from './plural.js';
 
 // The wallet range is declared once in pricing.js. Reading it here keeps the
 // input bounds, the guard, and the message that explains them from drifting
 // apart the next time the range changes.
 const REFILL_MIN_CENTS = Math.round(CLOUD_PRICING.minimumRefill * 100);
 const REFILL_MAX_CENTS = Math.round(CLOUD_PRICING.maximumRefill * 100);
-import { pendingUsageReleases } from './billing-client.js';
-import { apiUrl } from './api-root.js';
-import { readableServiceError } from './service-error.js';
 
 const status = document.querySelector('#usageStatus');
 const cards = document.querySelector('#usageCards');
@@ -49,9 +50,13 @@ async function api(path, options = {}) {
 function renderRules() {
   const refillCents = cents(walletAmount);
   const refillSeconds = cloudVideoSecondsForCents(refillCents);
-  document.querySelector('#walletEstimate').textContent = Number.isInteger(refillCents) && refillCents >= 500 && refillCents <= 50000
-    ? `At the current ${money(CLOUD_PRICING.videoUpscale.price * 100)}/finished-minute rate, this adds about ${videoTime(refillSeconds)} of Video processing. Each completed package rounds once to 10 seconds.`
-    : 'Choose an amount from $5 through $500 to see its current Video-time estimate.';
+  // The wallet buys any cloud job, so the estimate covers all three rather
+  // than quoting video alone.
+  const photos = Math.floor(refillCents / Math.round(CLOUD_PRICING.imageUpscale.price * 100));
+  const voiceMinutes = Math.floor(refillCents / Math.round(CLOUD_PRICING.voiceRender.price * 100));
+  document.querySelector('#walletEstimate').textContent = Number.isInteger(refillCents) && refillCents >= REFILL_MIN_CENTS && refillCents <= REFILL_MAX_CENTS
+    ? `That buys about ${videoTime(refillSeconds)} of Video, or ${count(voiceMinutes, 'minute')} of Voice, or ${count(photos, 'photo')} upscaled — whichever you use it on. Each completed video package rounds once to 10 seconds.`
+    : `Choose an amount from ${money(REFILL_MIN_CENTS)} through ${money(REFILL_MAX_CENTS)} to see what it buys.`;
   document.querySelector('#autoRules').textContent = `If the verified cloud balance is at or below ${money(cents(autoThreshold))}, add exactly ${money(cents(autoRefill))}. Never spend more than ${money(cents(autoCap))} on automatic refills in a calendar month. A 15-minute cooldown, idempotency, and failure pause prevent refill loops. You can disable this immediately.`;
   document.querySelector('#walletRefill').textContent = `Review ${money(cents(walletAmount))} refill`;
 }
@@ -73,11 +78,15 @@ async function load() {
   const cloudPhotoLabel = cloudPhoto.priceReady
     ? `${money(cloudPhoto.minimumCentsPerImage)} minimum · ${money(cloudPhoto.retailCentsPerMegapixel)}/MP`
     : 'Unavailable pending benchmark and price approval';
-  status.textContent = `${data.period} · server-verified`;
+  status.textContent = data.period ? `${data.period} · server-verified` : 'Current period · server-verified';
+  // A field the service does not send must cost its own card, not the page.
+  // This is the only screen a customer has for what they were charged.
+  const whole = value => (Number.isFinite(Number(value)) ? Number(value).toLocaleString() : '—');
+  const included = data.included || {};
   cards.innerHTML = [
-    card('Plan', safe(data.license?.plan || 'No active plan')),
-    card('Included used', `${Number(data.included.used).toLocaleString()} / ${Number(data.included.limit).toLocaleString()}`),
-    card('Included remaining', Number(data.included.remaining).toLocaleString()),
+    card('Plan', safe(planLabel(data.license?.plan))),
+    card('Included used', `${whole(included.used)} / ${whole(included.limit)}`),
+    card('Included remaining', whole(included.remaining)),
     card('Pay-per-export credits', Number(data.addOns?.local_units || 0).toLocaleString()),
     card('Included video time', videoTime(includedVideoSeconds)),
     card('Purchased wallet', `${money(wallet.balanceCents)} · about ${videoTime(purchasedVideoSeconds)}`),
@@ -88,10 +97,11 @@ async function load() {
   document.querySelector('#cloudPhotoPricing').textContent = cloudPhoto.priceReady
     ? `Cloud Photo generation is quoted separately before every job: ${money(cloudPhoto.minimumCentsPerImage)} minimum per image and ${money(cloudPhoto.retailCentsPerMegapixel)} per megapixel, up to ${Number(cloudPhoto.maxVariations)} variation${Number(cloudPhoto.maxVariations) === 1 ? '' : 's'}. ${cloudPhoto.executionAvailable ? 'Execution is available.' : 'Execution remains unavailable until provider and quality acceptance pass.'} Local Photo editing and generation on this computer do not use cloud wallet funds.`
     : 'Cloud Photo generation is unavailable until its measured provider cost, customer price, rights, and output quality are accepted. Local Photo editing and generation on this computer do not use cloud wallet funds.';
-  const tx = wallet.recent.map(item => `<tr><td>${safe(item.entry_type)}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
+  const tx = (wallet.recent || []).map(item => `<tr><td>${safe(item.entry_type)}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
   document.querySelector('#walletTransactions').innerHTML = `<table class="usage-table"><thead><tr><th>Activity</th><th>Amount</th><th>Time</th></tr></thead><tbody>${tx || '<tr><td colspan="3">No wallet transactions.</td></tr>'}</tbody></table>`;
   const promoTx = (wallet.promotionalRecent || []).map(item => `<tr><td>${safe(item.entry_type)}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
   document.querySelector('#walletTransactions').insertAdjacentHTML('afterbegin', `<p class="note">Included Video time is a promotional plan benefit, not cash or a transferable wallet balance. It expires at the next paid-period boundary and is used before purchased wallet funds.</p><table class="usage-table"><thead><tr><th>Included-time activity</th><th>Value</th><th>Time</th></tr></thead><tbody>${promoTx || '<tr><td colspan="3">No included Video-time activity.</td></tr>'}</tbody></table>`);
+  renderPlan(data.license);
   const settings = auto.settings || {};
   if (auto.configured) {
     autoThreshold.value = (Number(settings.threshold_cents) / 100).toFixed(2);
@@ -139,6 +149,36 @@ document.querySelector('#autoEnable').onclick = async () => {
       thresholdCents: cents(autoThreshold), refillCents: cents(autoRefill), monthlyCapCents: cents(autoCap) }) });
     walletStatus.textContent = 'Automatic top-up is enabled with the rule shown above.';
   } catch (error) { walletStatus.textContent = `Automatic top-up was not enabled: ${readableServiceError(error)}.`; }
+};
+
+// Plan and payment. Every subscription needs a way out as well as a way in,
+// so the portal is one click from the page that shows what the plan spent.
+function renderPlan(license) {
+  const plan = license?.plan ? String(license.plan) : '';
+  const units = MONTHLY_UNITS[plan.replace(/^suspended:/, '')] || 0;
+  const creditCents = includedCloudCents(license);
+  const parts = [`Current plan: ${planLabel(plan)}.`];
+  if (units) parts.push(`${units.toLocaleString()} production units each month.`);
+  if (creditCents) parts.push(`${money(creditCents)} of cloud credit each paid period, spendable on photo, video or voice.`);
+  parts.push(plan
+    ? 'Manage billing opens the secure Stripe portal, where you can change your payment method, switch term, or cancel.'
+    : 'Activate a licence in the Studio to manage billing here.');
+  document.querySelector('#planSummary').textContent = parts.join(' ');
+  document.querySelector('#billingPortal').disabled = !plan;
+}
+
+document.querySelector('#billingPortal').onclick = async event => {
+  const button = event.currentTarget;
+  const planStatus = document.querySelector('#planStatus');
+  button.disabled = true;
+  planStatus.textContent = 'Opening the secure Stripe billing portal…';
+  try { await openBillingPortal(); }
+  catch (error) {
+    button.disabled = false;
+    planStatus.textContent = error?.message === 'license_required'
+      ? 'Activate a licence in the Studio first — billing is managed per licence.'
+      : `The billing portal is unavailable: ${readableServiceError(error)}.`;
+  }
 };
 
 // The markup carries starting bounds so the control is usable before scripts

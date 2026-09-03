@@ -31,7 +31,26 @@ export async function studioContext(browser, { licence = null, features = {}, au
     if (path.startsWith('outbound/authorize')) return json({ ok: true, authorization: { id: 'auth-journey-000001', status: 'authorized' } });
     if (path.startsWith('outbound/settle')) return json({ ok: true, authorization: { id: 'auth-journey-000001', status: 'settled' } });
     if (path.startsWith('outbound/void')) return json({ ok: true, authorization: { id: 'auth-journey-000001', status: 'voided' } });
-    if (path.startsWith('usage')) return json({ period: '2026-09', breakdown: [], recent: [], wallet: { balanceCents: 2500 } });
+    // The Usage page reads every one of these fields. A thin stub let the page
+    // throw on the first missing one and render nothing at all, which is
+    // exactly what a customer would have seen.
+    if (path.startsWith('usage')) return json({
+      period: '2026-09', license: { plan: licence ? 'full' : null, selected_product: null },
+      included: { used: 128, limit: 1000, remaining: 872 },
+      addOns: { local_units: 3 },
+      breakdown: [{ product: 'photo', artifact_kind: 'clean_export', operations: 24, included_units: 24, purchased_units: 0, status: 'settled' }],
+      recent: [{ product: 'photo', artifact_kind: 'clean_export', requested_units: 1, included_units: 1, purchased_units: 0,
+        status: 'settled', updated_at: 1772668800 }]
+    });
+    if (path.startsWith('wallet/auto-topup')) return json({ configured: false, settings: {} });
+    if (path.startsWith('wallet/checkout')) return json({ url: 'https://checkout.stripe.test/journey' });
+    if (path.startsWith('wallet')) return json({
+      balanceCents: 2500, promotionalVideoCents: 2000,
+      promotionalVideoSecondsAtCurrentRate: 400, purchasedVideoSecondsAtCurrentRate: 500,
+      cloudPhoto: { priceReady: true, executionAvailable: false, minimumCentsPerImage: 25, retailCentsPerMegapixel: 4, maxVariations: 4 },
+      recent: [{ entry_type: 'refill', amount_cents: 2500, created_at: 1772668800 }],
+      promotionalRecent: []
+    });
     if (path.startsWith('admin/usage')) return json({ period: '2026-09', totals: { operations: 5, billable_units: 5 },
       products: [{ product: 'photo', artifact_kind: 'clean_export', status: 'settled', operations: 5, artifacts: 5, billable_units: 5 }], failures: [] });
     if (path.startsWith('admin/feature-flags')) return json({ flags: [

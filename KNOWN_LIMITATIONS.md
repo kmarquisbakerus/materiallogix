@@ -54,3 +54,38 @@ capabilities are declared and entitled - a Pro licence resolves to the Pro lane
 and unlocks the Studios it paid for - but the Pro Motion Engine and the premium
 voice models are not shipped yet, so a Pro licence currently delivers the same
 renders as its standard tier. Do not sell the Pro plans until both ship.
+
+## Client contracts the billing service must honour
+
+The billing API lives outside this repository, so these names are a contract
+rather than an implementation:
+
+| Client call | What it sends | Why it matters |
+| --- | --- | --- |
+| `POST /api/checkout/session` | `sku` of `export_image`, `export_audio` or `export_video` | The Free Preview card sells all three; a SKU the service does not know is a checkout that fails after the customer clicked. |
+| `POST /api/checkout/session` | `sku` of `<plan>_<term>`, e.g. `single_pro_photo_yearly` | The two Pro tiers are now buyable from the site. |
+| `POST /api/billing/portal` | the active licence key | Usage offers **Manage billing**; a subscription needs a way out as well as a way in. |
+| `GET /api/usage` | — | `license.plan` is rendered through `planLabel()`, so the service may keep sending plan ids. |
+
+Included cloud credit is declared in `CLOUD_CREDIT.includedCents` and spends on
+any cloud job. The client never decides what remains this period - it shows what
+the plan includes and lets the server settle the actual amount.
+
+## Response headers
+
+The deployment is Cloudflare Pages advanced mode: `_worker.js` handles every
+request and serves static assets through `env.ASSETS`, so `_headers` and
+`_redirects` are never consulted. Both files have been removed - the redirect
+rules they held are in the Worker, and one of them (`/` to `/studio/`)
+contradicted the Worker and would have made pricing and every checkout button
+unreachable if it were ever honoured.
+
+Security headers are set in the Worker and covered by `tests/worker.test.mjs`:
+CSP (`object-src`, `base-uri`, `form-action`, `frame-ancestors`),
+`Referrer-Policy`, `X-Content-Type-Options`, `Permissions-Policy` and HSTS.
+
+`script-src` and `connect-src` are deliberately absent. The Studio boots from an
+inline theme script, and it talks to a local engine bridge on the customer's own
+network, whose address is not known ahead of time. Adding either directive
+without first moving the inline script to a file and routing bridge traffic
+through a known origin would break the product on the customer's machine.

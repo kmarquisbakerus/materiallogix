@@ -38,13 +38,23 @@
       <div class="usage-grid" id="usageCards"></div>
     </section>
 
-    <section class="usage-panel" aria-labelledby="breakdownHeading">
+    <section class="usage-panel" aria-labelledby="planHeading">
+      <div class="usage-section-heading"><p class="eyebrow">Your plan</p><h2 id="planHeading">Plan and payment</h2></div>
+      <p class="note" id="planSummary">Loading your plan…</p>
+      <div class="wallet-actions">
+        <button class="btn" id="billingPortal" type="button">Manage billing</button>
+        <a class="btn" href="../index.html#pricing">Compare plans</a>
+      </div>
+      <p class="wallet-status note" id="planStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="usage-panel usage-panel--breakdown" aria-labelledby="breakdownHeading">
       <div class="usage-section-heading"><p class="eyebrow">Transparent accounting</p><h2 id="breakdownHeading">Where your usage went</h2></div>
       <p class="note">Every production operation is shown as reserved, used, returned, or release pending. Plan allowance and purchased add-on units stay separate.</p>
       <div id="usageBreakdown" class="usage-table-wrap" tabindex="0" aria-label="Usage breakdown table"></div>
     </section>
 
-    <section class="usage-panel" aria-labelledby="walletHeading">
+    <section class="usage-panel usage-panel--wallet" aria-labelledby="walletHeading">
       <div class="usage-section-heading"><p class="eyebrow">Prepaid cloud capacity</p><h2 id="walletHeading">Cloud wallet</h2></div>
       <p class="wallet-balance" id="walletBalance">Loading wallet…</p>
       <p class="note" id="cloudPhotoPricing">Loading Cloud Photo pricing…</p>
@@ -59,17 +69,17 @@
           <button class="btn" type="button" data-wallet-suggestion="100">$100</button>
         </div>
         <div class="wallet-controls wallet-controls-manual">
-          <label><span>Refill amount (USD)</span><input id="walletAmount" type="number" min="5" max="500" step="0.01" value="10.00" inputmode="decimal"></label>
+          <label><span>Refill amount (USD)</span><input id="walletAmount" type="number" min="10" max="500" step="0.01" value="10.00" inputmode="decimal"></label>
           <button class="btn primary" id="walletRefill" type="button">Review $10.00 refill</button>
         </div>
-        <p class="note" id="walletEstimate">Calculating the current Video-time estimate…</p>
+        <p class="note" id="walletEstimate">Working out what this refill buys…</p>
       </div>
 
       <div class="usage-subsection" aria-labelledby="auto-topup-heading">
         <div class="usage-section-heading compact"><p class="status-chip">Off by default</p><h3 id="auto-topup-heading">Optional automatic top-up</h3></div>
         <div class="wallet-controls">
           <label><span>Trigger below</span><input id="autoThreshold" type="number" min="1" max="499" step="0.01" value="5.00"></label>
-          <label><span>Refill amount</span><input id="autoRefill" type="number" min="5" max="500" step="0.01" value="10.00"></label>
+          <label><span>Refill amount</span><input id="autoRefill" type="number" min="10" max="500" step="0.01" value="10.00"></label>
           <label><span>Monthly maximum</span><input id="autoCap" type="number" min="5" max="2000" step="0.01" value="50.00"></label>
         </div>
         <p class="wallet-rules" id="autoRules">Off by default. Set all three limits, review the exact rule, save a payment method through Stripe, then explicitly enable it. Stripe may require confirmation. Every refill creates a receipt and account notification.</p>

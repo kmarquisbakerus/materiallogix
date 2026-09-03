@@ -82,7 +82,68 @@ export function price(productId, termId) {
 // never bleed money. Cloud jobs are separate prepaid credits on top.
 
 export const MONTHLY_UNITS = { voice_starter: 30, single: 500, single_pro: 500, full: 1000, pro: 1000 };
-export const PAY_PER_EXPORT = { units: 1, price: 2.99 };
+
+// One unit is one clean image, and every other export is priced by the same
+// unit policy that meters it: a minute of finished voice is one unit, a minute
+// of finished video is four. "Exports from $2.99" is the floor, not the only
+// price - a photo, a minute of audio, and a minute of video are three different
+// things to buy.
+export const UNIT_PRICE = 2.99;
+
+// These ids are the checkout SKUs. The billing service must accept all three;
+// a SKU it does not know is a checkout that fails after the customer clicked.
+export const EXPORT_PRODUCTS = Object.freeze([
+  Object.freeze({ id: 'export_image', product: 'photo', units: 1, per: 'image', label: 'One clean photo export' }),
+  Object.freeze({ id: 'export_audio', product: 'voice', units: 1, per: 'minute', label: 'One clean minute of audio' }),
+  Object.freeze({ id: 'export_video', product: 'video', units: 4, per: 'minute', label: 'One clean minute of video' })
+]);
+
+export const EXPORT_PRODUCT_BY_ID = Object.fromEntries(EXPORT_PRODUCTS.map(item => [item.id, item]));
+
+/** The single export that covers a Studio, for the paywall to quote. */
+export const exportForProduct = product => EXPORT_PRODUCTS.find(item => item.product === product) || null;
+
+// The licence carries a plan id; customers were sold a plan name. One map,
+// so no screen shows the id.
+const PLAN_NAMES = Object.freeze({
+  voice_starter: 'Voice Starter', single: 'Single Studio', single_pro: 'Single Studio Pro',
+  full: 'Full Studio', pro: 'Pro Studio', payg: 'Pay per export'
+});
+
+/** How a plan reads to the person who bought it. */
+export function planLabel(plan) {
+  const id = String(plan || '');
+  if (!id) return 'No active plan';
+  if (id.startsWith('suspended:')) {
+    const base = PLAN_NAMES[id.slice('suspended:'.length)];
+    return base ? `${base} (suspended)` : 'Suspended plan';
+  }
+  return PLAN_NAMES[id] || 'No active plan';
+}
+
+/** Every plan that unlocks a Studio, named as the site names them. */
+export function plansCovering(product) {
+  return [...new Set(PRODUCTS
+    .filter(item => item.selectedProduct === null || item.selectedProduct === product)
+    .map(item => item.name.split(' — ')[0]))];
+}
+
+/** What one export of this kind costs, and how many units it spends. */
+export function exportPrice(id, quantity = 1) {
+  const item = EXPORT_PRODUCT_BY_ID[id];
+  if (!item) return null;
+  const count = Math.max(1, Math.ceil(Number(quantity) || 1));
+  const units = item.units * count;
+  return {
+    id, product: item.product, per: item.per, label: item.label,
+    quantity: count, units,
+    total: +(units * UNIT_PRICE).toFixed(2),
+    unitPrice: UNIT_PRICE
+  };
+}
+
+/** The cheapest single export, which is what "exports from" quotes. */
+export const PAY_PER_EXPORT = Object.freeze({ units: 1, price: UNIT_PRICE });
 
 // Premium natural voice, sold with the Pro tiers and billed by the hour beyond
 // the included minutes.
@@ -140,11 +201,59 @@ export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
 export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
-  includedPromotionalCents: { videoSingle: 2000, singlePro: 2000, full: 2000, pro: 2000 },
   includedEquivalentSeconds: 200,
   pricePerMinute: 3,
   productionEnabled: false
 };
+
+// Included prepaid cloud credit, granted each paid period. It spends on any
+// cloud job - a photo upscale, a voice render, or a video render - because a
+// customer who bought Photo has no use for credit that only buys video.
+export const CLOUD_CREDIT = Object.freeze({
+  includedCents: Object.freeze({ voice_starter: 0, single: 2000, single_pro: 2000, full: 2000, pro: 2000 }),
+  spendableOn: Object.freeze(['image', 'voice', 'video']),
+  freeUpscalePlans: Object.freeze(['pro']),
+  walletDiscount: Object.freeze({ pro: 0.2 })
+});
+
+/** Credit included with a licence this period, in cents. Never negative. */
+export function includedCloudCents(license) {
+  if (!license) return 0;
+  const plan = String(license.plan);
+  if (plan.startsWith('suspended:')) return 0;
+  return CLOUD_CREDIT.includedCents[plan] || 0;
+}
+
+/**
+ * Split a quoted cloud job between included credit and the prepaid wallet.
+ * The credit is spent first, and a job is only executable when the two
+ * together cover it - cloud work is prepaid, so it never runs on account.
+ */
+export function applyCloudCredit(quotedCents, { creditCents = 0, walletCents = 0 } = {}) {
+  const owed = Math.max(0, Math.round(Number(quotedCents) || 0));
+  const credit = Math.max(0, Math.round(Number(creditCents) || 0));
+  const wallet = Math.max(0, Math.round(Number(walletCents) || 0));
+  const fromCredit = Math.min(owed, credit);
+  const fromWallet = Math.min(owed - fromCredit, wallet);
+  const shortfallCents = owed - fromCredit - fromWallet;
+  return {
+    owedCents: owed,
+    fromCreditCents: fromCredit,
+    fromWalletCents: fromWallet,
+    shortfallCents,
+    creditRemainingCents: credit - fromCredit,
+    walletRemainingCents: wallet - fromWallet,
+    executable: shortfallCents === 0
+  };
+}
+
+/** What a top-up actually costs this licence, after any plan discount. */
+export function walletTopUpCents(amountCents, license) {
+  const amount = Math.max(0, Math.round(Number(amountCents) || 0));
+  const plan = license ? String(license.plan) : '';
+  const discount = plan.startsWith('suspended:') ? 0 : (CLOUD_CREDIT.walletDiscount[plan] || 0);
+  return { amountCents: amount, discount, chargedCents: Math.round(amount * (1 - discount)) };
+}
 
 // Quality lanes: what each tier's renders run through. Free is a real
 // preview lane — capable, capped, and always watermarked. Paid licenses use

@@ -38,9 +38,10 @@ import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './c
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
-import { quoteCloudJob, recordExport } from './pricing.js';
+import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
+import { pricingUrl } from './site-links.js';
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, props = {}, ...kids) => {
@@ -936,7 +937,7 @@ function renderSidebar() {
     if (lic) {
       licBox.append(
         el('p', { className: 'hint', style: 'margin-bottom:6px' },
-          `Licensed \u2014 ${String(lic.plan).replaceAll('_', ' ')}${lic.selected_product ? ` / ${lic.selected_product}` : ''} (${lic.email}). Clean exports require online authorization and verified remaining usage.`),
+          `Licensed \u2014 ${planLabel(lic.plan)}${lic.selected_product ? ` / ${String(lic.selected_product).replace(/^./, c => c.toUpperCase())}` : ''} (${lic.email}). Clean exports require online authorization and verified remaining usage.`),
         btn('Deactivate on this device', 'btn sm', () => { deactivate(); render(); }));
     } else {
       const input = el('input', { type: 'text', placeholder: 'ML1.\u2026 license key' });
@@ -945,7 +946,7 @@ function renderSidebar() {
       licBox.append(input, el('div', { style: 'height:6px' }),
         btn('Activate', 'btn sm', async () => {
           const lic = await activate(input.value);
-          if (lic) { toast(`Licensed: ${lic.plan}.`); render(); }
+          if (lic) { toast(`Licensed: ${planLabel(lic.plan)}.`); render(); }
           else {
             const reason = activationFailureReason();
             msg.textContent = reason === 'online_verification_required' || reason === 'verification_unavailable'
@@ -1980,6 +1981,9 @@ async function reviewCloudVideoRender(asset) {
   try { plan = videoRenderPlan(asset); }
   catch (error) { return toast(error.message, true); }
   const quote = quoteCloudJob({ kind: 'video', durationSeconds: plan.outputSeconds });
+  // What the licence includes is known here; what remains this period is the
+  // server's to report, so the split is never guessed on this side.
+  const includedCredit = includedCloudCents(globalThis.lic);
   const consent = el('input', { type: 'checkbox' });
   const continueButton = btn('Compile and send package', 'btn primary', async () => {
     if (!consent.checked) return;
@@ -2022,7 +2026,10 @@ async function reviewCloudVideoRender(asset) {
   continueButton.disabled = true;
   consent.onchange = () => { continueButton.disabled = !consent.checked; };
   dialog('Review cloud render', el('div', {},
-    el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds; included Video credit is used first.`),
+    el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds.`),
+    el('p', { className: 'hint' }, includedCredit
+      ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo, video or voice. It is used before your wallet; the server settles the actual amount.`
+      : 'This job is paid from your prepaid wallet. The server settles the actual amount.'),
     el('label', { className: 'checkline' }, consent,
       el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are scheduled for deletion within 24 hours.'))),
   [btn('Cancel', 'btn', closeDialog), btn('Use local render', 'btn', () => { closeDialog(); renderEditedVideo(asset); }), continueButton]);
@@ -3685,12 +3692,19 @@ async function doExport(exportOpts = {}) {
   const product = state.assets.some(asset => asset.kind === 'video') ? 'video' : 'photo';
   const lic = await activeLicense();
   if (!covers(lic, product)) {
+    // Name every plan that covers this Studio, and the single export that does
+    // not need a plan at all, rather than a fixed two.
+    const singleExport = exportForProduct(product);
+    const quote = singleExport ? exportPrice(singleExport.id) : null;
     return dialog('A matching license is required to download',
       el('div', {},
         el('p', {}, 'Free preview lets you edit, compare, and review inside MaterialLogix. It does not create downloadable files.'),
         el('p', { className: 'hint', style: 'margin-top:10px' },
-          `Activate a ${product === 'video' ? 'Video' : 'Photo'} Single Studio or Full Studio license in Deliver, then reconnect for usage confirmation.`)),
-      [btn('Close', 'btn primary', closeDialog)]);
+          `Activate ${plansCovering(product).join(', ')} in Deliver, then reconnect for usage confirmation.`),
+        quote ? el('p', { className: 'hint', style: 'margin-top:6px' },
+          `Or buy this one on its own: ${quote.label.toLowerCase()} costs $${quote.total.toFixed(2)}, no plan.`) : null),
+      [btn('Close', 'btn', closeDialog),
+       btn('See plans and single exports', 'btn primary', () => { closeDialog(); location.assign(pricingUrl()); })]);
   }
   preflightDialog(async () => {
     const pairs = approvedPairs(state.assets);

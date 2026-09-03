@@ -100,6 +100,17 @@ try {
   await page.evaluate(() => document.querySelector('#exportBtn').click());
   await settle(page, 2000);
   ok('export is refused before a licence', /license is required/i.test(await title(page)), await title(page));
+  {
+    const paywall = await page.evaluate(() => {
+      const box = document.querySelector('#dialog, .dialog, dialog') || document.body;
+      return { text: box.innerText, buttons: [...box.querySelectorAll('button')].map(b => b.textContent.trim()) };
+    });
+    ok('the paywall names every plan that covers it and the price of one export',
+      /Single Studio/.test(paywall.text) && /Pro Studio/.test(paywall.text) && /\$2\.99/.test(paywall.text),
+      paywall.text.replace(/\s+/g, ' ').slice(0, 120));
+    ok('the paywall offers a way to buy', paywall.buttons.some(label => /plans and single exports/i.test(label)),
+      paywall.buttons.join(', '));
+  }
   await closeDialog(page);
   allErrors.push(...free.errors);
   await free.context.close();
@@ -338,6 +349,21 @@ try {
     const expected = `${CLOUD_PRICING.minimumRefill}..${CLOUD_PRICING.maximumRefill}`;
     const bounds = await page.evaluate(() => { const input = document.querySelector('#walletAmount'); return `${input.min}..${input.max}`; });
     ok('the wallet bounds come from the declared range', bounds === expected, `${bounds} (declared ${expected})`);
+    const view = await page.evaluate(() => ({
+      status: document.querySelector('#usageStatus')?.textContent || '',
+      cards: [...document.querySelectorAll('.usage-card')].map(node => node.textContent),
+      summary: document.querySelector('#planSummary')?.textContent || '',
+      balance: document.querySelector('#walletBalance')?.textContent || '',
+      breakdownRows: document.querySelectorAll('#usageBreakdown tbody tr').length,
+      ledgerRows: document.querySelectorAll('#usageTable tbody tr').length,
+      portalEnabled: document.querySelector('#billingPortal') ? !document.querySelector('#billingPortal').disabled : null
+    }));
+    ok('the account page renders every panel from the server',
+      view.cards.length >= 8 && view.breakdownRows > 0 && view.ledgerRows > 0 && /remaining/.test(view.balance),
+      `${view.cards.length} cards, ${view.breakdownRows} breakdown rows, ${view.ledgerRows} ledger rows`);
+    ok('the plan is named the way it was sold, and billing is reachable',
+      /Full Studio/.test(view.summary) && view.cards.some(text => /^PlanFull Studio/.test(text)) && view.portalEnabled === true,
+      `${view.cards.find(text => /^Plan/.test(text)) || '(no plan card)'} | ${view.summary.slice(0, 80)}`);
     const refill = value => page.evaluate(async amount => {
       document.querySelector('#walletStatus').textContent = '';
       const input = document.querySelector('#walletAmount'); input.value = amount;

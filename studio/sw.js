@@ -5,7 +5,7 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v22';
+const CACHE = 'materiallogix-shell-v23';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 // Every module the four pages import, plus the stylesheets they link. An
 // installed copy that is missing one of these does not degrade - it fails to
@@ -21,7 +21,7 @@ const SHELL = [
   'js/generate.js', 'js/inpaint-foundation.js', 'js/cloud-video.js', 'js/spin-viewer.js', 'js/geometry.js', 'js/human-geometry.js', 'js/device.js', 'js/raw.js', 'js/raw-preview.js', 'js/voice.js',
   'js/capture-guidance.js', 'js/capture-pacer.js', 'js/video-plan.js',
   'js/editing.js', 'js/print.js', 'js/house-voices.js', 'js/voice-quality.js', 'js/voice-reference.js', 'js/color-management.js',
-  'js/plural.js', 'js/service-error.js',
+  'js/plural.js', 'js/service-error.js', 'js/site-links.js',
   'js/pricing.js', 'js/license.js', 'js/license-key.js',
   'js/billing-client.js', 'js/usage.js', 'js/admin.js',
   'assets/raw/worker.js'
