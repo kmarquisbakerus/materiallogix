@@ -26,8 +26,9 @@ jobs:
 
           root = Path('.')
           output = root / 'materiallogix-cloudflare-upload.zip'
-          excluded_roots = {'.git', '.github'}
-          excluded_names = {output.name}
+          # Only the deployable site ships; tooling and tests stay in the repository.
+          excluded_roots = {'.git', '.github', 'tests'}
+          excluded_names = {output.name, 'package.json', 'package-lock.json'}
 
           with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
               for path in sorted(root.rglob('*')):

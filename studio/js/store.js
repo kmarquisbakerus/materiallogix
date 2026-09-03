@@ -37,6 +37,9 @@ function open() {
   return dbPromise;
 }
 
+// Cached per asset id; see the object URL section below.
+const urlCache = new Map();
+
 function tx(store, mode, fn) {
   return open().then(db => new Promise((resolve, reject) => {
     const t = db.transaction(store, mode);
@@ -87,6 +90,7 @@ export async function addAsset(asset, file) {
 }
 
 export async function deleteAsset(id) {
+  releaseUrl(id);
   await tx('blobs', 'readwrite', s => s.delete(id));
   return tx('assets', 'readwrite', s => s.delete(id));
 }
@@ -95,9 +99,7 @@ export const getBlob = id => tx('blobs', 'readonly', s => s.get(id));
 
 // --- object URL cache ------------------------------------------------------
 // Revoking eagerly breaks <img> reuse across re-renders, so URLs are cached
-// per asset id and released only when the asset is deleted.
-
-const urlCache = new Map();
+// per asset id and released when the asset is deleted.
 
 export async function objectUrl(assetId) {
   if (urlCache.has(assetId)) return urlCache.get(assetId);

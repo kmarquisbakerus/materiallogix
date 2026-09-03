@@ -82,16 +82,4 @@ async function checkForUpdates() {
 }
 checkForUpdates();
 
-const select = document.querySelector('#studioServiceSelect');
-if (select) {
-  const here = location.pathname.toLowerCase();
-  select.value = here.endsWith('/voice.html') || here.endsWith('/voice') ? 'voice' : 'review';
-  select.addEventListener('change', () => {
-    const query = location.search || '';
-    const hash = location.hash || '';
-    const target = select.value === 'voice' ? `voice.html${query}${hash}` : `index.html${query}${hash}`;
-    location.href = target;
-  });
-}
-
 await import('./privacy.js');
