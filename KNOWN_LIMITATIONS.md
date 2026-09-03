@@ -40,3 +40,17 @@ none of these. Turning a sign-in flag on also requires its
 Cloud inpainting stays disabled in the same fail-closed way, but it is not on
 this list: it needs a provider contract and accepted cost fixtures, not an
 account approval.
+
+## Prices
+
+The published site is the single source of truth. `studio/js/pricing.js` now
+matches it exactly, and a test fails the build if the two ever disagree again -
+on a plan, a term price, the pay-per-export price, the wallet range, the Voice
+Starter allowance, or the premium voice rate.
+
+Two of the six advertised plans, Single Studio Pro and Pro Studio, sell the Pro
+Motion Engine, five personal voice clones, and premium voice minutes. Those
+capabilities are declared and entitled - a Pro licence resolves to the Pro lane
+and unlocks the Studios it paid for - but the Pro Motion Engine and the premium
+voice models are not shipped yet, so a Pro licence currently delivers the same
+renders as its standard tier. Do not sell the Pro plans until both ship.

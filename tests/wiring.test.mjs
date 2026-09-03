@@ -9,7 +9,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const find = args => execFileSync('find', ['.', ...args], { cwd: ROOT, encoding: 'utf8' })
   .split('\n').map(line => line.trim()).filter(Boolean);
 
-const SKIP = ['-not', '-path', './.git/*', '-not', '-path', '*/assets/human/*', '-not', '-path', './tests/*'];
+const SKIP = ['-not', '-path', './.git/*', '-not', '-path', '*/assets/human/*',
+  '-not', '-path', './tests/*', '-not', '-path', '*/node_modules/*'];
 const jsFiles = find(['-name', '*.js', ...SKIP]);
 const htmlFiles = find(['-name', '*.html', ...SKIP]);
 const cssFiles = find(['-name', '*.css', ...SKIP]);

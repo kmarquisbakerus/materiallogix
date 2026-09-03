@@ -21,39 +21,39 @@ export const PRODUCTS = [
     name: 'Voice Starter',
     monthly: 5,
     totals: { monthly: 5 },
-    pitch: '60 finished local voice minutes each month and one active personal voice profile.'
+    pitch: '30 finished local voice minutes each month and one active personal voice profile.'
   },
-  {
-    id: 'single_photo',
-    plan: 'single', selectedProduct: 'photo',
-    name: 'Single Studio — Photo',
-    monthly: 9,
-    totals: { monthly: 9, quarterly: 24, yearly: 84 },
-    pitch: 'Photo direction, review, and delivery.'
-  },
-  {
-    id: 'single_video',
-    plan: 'single', selectedProduct: 'video',
-    name: 'Single Studio — Video',
-    monthly: 9,
-    totals: { monthly: 9, quarterly: 24, yearly: 84 },
-    pitch: 'Video direction, editing, and accepted render features.'
-  },
-  {
-    id: 'single_voice',
-    plan: 'single', selectedProduct: 'voice',
-    name: 'Single Studio — Voice',
-    monthly: 9,
-    totals: { monthly: 9, quarterly: 24, yearly: 84 },
-    pitch: 'Voice direction and accepted local voice features.'
-  },
+  ...['photo', 'video', 'voice'].map(product => ({
+    id: `single_${product}`,
+    plan: 'single', selectedProduct: product,
+    name: `Single Studio — ${product[0].toUpperCase()}${product.slice(1)}`,
+    monthly: 15,
+    totals: { monthly: 15, quarterly: 40, yearly: 140 },
+    pitch: 'One Studio: direction, review, and delivery.'
+  })),
+  ...['photo', 'video', 'voice'].map(product => ({
+    id: `single_pro_${product}`,
+    plan: 'single_pro', selectedProduct: product,
+    name: `Single Studio Pro — ${product[0].toUpperCase()}${product.slice(1)}`,
+    monthly: 25,
+    totals: { monthly: 25, quarterly: 67, yearly: 235 },
+    pitch: 'One Studio, at its best: the Pro Motion Engine, personal voice clones, and premium voice minutes.'
+  })),
   {
     id: 'full',
     plan: 'full', selectedProduct: null,
     name: 'Full Studio',
-    monthly: 19,
-    totals: { monthly: 19, quarterly: 50, yearly: 180 },
-    pitch: 'Photo, Video, and Voice in one license.'
+    monthly: 29,
+    totals: { monthly: 29, quarterly: 77, yearly: 275 },
+    pitch: 'Photo, Video, and Voice in one licence.'
+  },
+  {
+    id: 'pro',
+    plan: 'pro', selectedProduct: null,
+    name: 'Pro Studio',
+    monthly: 39,
+    totals: { monthly: 39, quarterly: 104, yearly: 366 },
+    pitch: 'Every Studio, at its best.'
   }
 ];
 
@@ -81,8 +81,16 @@ export function price(productId, termId) {
 // Local renders cost us $0, so units price VALUE, not cost — overage can
 // never bleed money. Cloud jobs are separate prepaid credits on top.
 
-export const MONTHLY_UNITS = { voice_starter: 60, single: 500, full: 1000 };
-export const PAY_PER_EXPORT = { units: 1, price: 3.99 };
+export const MONTHLY_UNITS = { voice_starter: 30, single: 500, single_pro: 500, full: 1000, pro: 1000 };
+export const PAY_PER_EXPORT = { units: 1, price: 2.99 };
+
+// Premium natural voice, sold with the Pro tiers and billed by the hour beyond
+// the included minutes.
+export const PREMIUM_VOICE = Object.freeze({
+  includedMinutes: Object.freeze({ single_pro: 60, pro: 120 }),
+  extraPricePerHour: 4.99,
+  personalClones: Object.freeze({ voice_starter: 1, single: 1, single_pro: 5, full: 1, pro: 5 })
+});
 
 // Customer-visible prepaid cloud rates. The server must authorize the quoted
 // amount before submission and settle the actual amount afterward. Local work
@@ -91,7 +99,7 @@ export const CLOUD_PRICING = {
   imageUpscale: { price: 0.10, unit: 'image', estimatedCost: 0.01 },
   voiceRender: { price: 0.25, unit: 'minute', estimatedCost: 0.10 },
   videoUpscale: { price: 3.00, unit: 'output minute', estimatedCostLow: 0.40, estimatedCostHigh: 0.80 },
-  minimumRefill: 5,
+  minimumRefill: 10,
   maximumRefill: 500,
   prepaidOnly: true,
   autoCharge: 'optional-explicit-opt-in'
@@ -132,7 +140,7 @@ export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
 export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
-  includedPromotionalCents: { videoSingle: 1000, full: 1000 },
+  includedPromotionalCents: { videoSingle: 2000, singlePro: 2000, full: 2000, pro: 2000 },
   includedEquivalentSeconds: 200,
   pricePerMinute: 3,
   productionEnabled: false
@@ -161,6 +169,17 @@ export const LANES = {
   }
 };
 
+// The Pro tiers buy quality, not quantity: the same allowances, run through the
+// Pro Motion Engine, with premium voice and more personal clones.
+LANES.pro = {
+  ...LANES.paid,
+  label: 'Pro lane',
+  motionEngine: 'pro',
+  voice: { maxWords: Infinity, stamped: false, knobs: true, quality: 'premium' },
+  cloudUpscaleIncluded: true,
+  walletDiscount: 0.2
+};
+
 export const VOICE_STARTER_LANE = Object.freeze({
   ...LANES.paid,
   label: 'Voice Starter lane',
@@ -171,10 +190,14 @@ export const VOICE_STARTER_LANE = Object.freeze({
 
 export function laneFor(license, product) {
   if (!license) return LANES.free;
-  if (license.plan === 'voice_starter' && product === 'voice') return VOICE_STARTER_LANE;
-  if (license.plan === 'full') return LANES.paid;
-  if (license.plan === 'single' && license.selected_product === product) return LANES.paid;
-  if (license.plan === 'payg') return LANES.paid;
+  const plan = String(license.plan);
+  if (plan.startsWith('suspended:')) return LANES.free;
+  const selected = license.selected_product || license.selectedProduct;
+  if (plan === 'voice_starter') return product === 'voice' ? VOICE_STARTER_LANE : LANES.free;
+  if (plan === 'pro') return LANES.pro;
+  if (plan === 'single_pro') return selected === product ? LANES.pro : LANES.free;
+  if (plan === 'full' || plan === 'payg') return LANES.paid;
+  if (plan === 'single') return selected === product ? LANES.paid : LANES.free;
   return LANES.free;
 }
 

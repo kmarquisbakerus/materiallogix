@@ -1,3 +1,7 @@
+import { PAY_PER_EXPORT } from './studio/js/pricing.js';
+
+const money = amount => `$${Number(amount).toFixed(2)}`;
+
 const ready = document.readyState === 'loading'
   ? new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }))
   : Promise.resolve();
@@ -45,7 +49,7 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     return button;
   };
 
-  addButton(card('Free Preview'), { checkoutSku: 'export_one' }, 'Buy one clean export — $3.99');
+  addButton(card('Free Preview'), { checkoutSku: 'export_one' }, `Buy one clean export — ${money(PAY_PER_EXPORT.price)}`);
   addButton(card('Voice Starter'), { checkoutPlan: 'voice_starter' }, 'Choose Voice Starter');
 
   const single = card('Single Studio');
@@ -80,7 +84,24 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     }
   }
 
+  // A Pro tier is one Studio at its best, so it needs the same product choice
+  // the standard Single Studio card offers.
+  const proSingle = card('Single Studio Pro');
+  if (proSingle && !proSingle.querySelector('[data-checkout-plan]')) {
+    const productSelect = document.createElement('select');
+    productSelect.setAttribute('aria-label', 'Single Studio Pro product');
+    productSelect.innerHTML = '<option value="single_pro_photo">Photo</option><option value="single_pro_video">Video</option><option value="single_pro_voice">Voice</option>';
+    productSelect.style.cssText = 'width:100%;min-height:44px;margin-top:16px;border:1px solid var(--hair);border-radius:10px;background:var(--card);color:var(--ink);padding:0 12px;font:inherit';
+    proSingle.append(productSelect);
+    const button = addButton(proSingle, { checkoutPlan: 'single_pro_photo' }, 'Choose Single Studio Pro — Photo');
+    productSelect.addEventListener('change', () => {
+      button.dataset.checkoutPlan = productSelect.value;
+      button.textContent = `Choose Single Studio Pro — ${productSelect.options[productSelect.selectedIndex].text}`;
+    });
+  }
+
   addButton(card('Full Studio'), { checkoutPlan: 'full' }, 'Choose Full Studio');
+  addButton(card('Pro Studio'), { checkoutPlan: 'pro' }, 'Choose Pro Studio');
 
   const plansContainer = pricing.querySelector('.plans');
   if (plansContainer && !document.querySelector('#billingTerm')) {

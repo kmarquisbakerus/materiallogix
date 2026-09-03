@@ -8,6 +8,7 @@
 import { serve } from './serve.mjs';
 import { engineStub } from './engine-stub.mjs';
 import { mintLicence, studioContext, photoScript } from './harness.mjs';
+import { CLOUD_PRICING } from '../../studio/js/pricing.js';
 
 const BASE = 'http://127.0.0.1:8099/studio';
 let passed = 0;
@@ -334,8 +335,9 @@ try {
     await page.goto(`${BASE}/usage.html?dev=1`, { waitUntil: 'domcontentloaded' });
     await settle(page, 4000);
     ok('the usage page loads', /Production activity/i.test(await page.evaluate(() => document.body.innerText)));
+    const expected = `${CLOUD_PRICING.minimumRefill}..${CLOUD_PRICING.maximumRefill}`;
     const bounds = await page.evaluate(() => { const input = document.querySelector('#walletAmount'); return `${input.min}..${input.max}`; });
-    ok('the wallet bounds come from the declared range', bounds === '5..500', bounds);
+    ok('the wallet bounds come from the declared range', bounds === expected, `${bounds} (declared ${expected})`);
     const refill = value => page.evaluate(async amount => {
       document.querySelector('#walletStatus').textContent = '';
       const input = document.querySelector('#walletAmount'); input.value = amount;
@@ -343,8 +345,10 @@ try {
       await new Promise(r => setTimeout(r, 300));
       return document.querySelector('#walletStatus').textContent;
     }, value);
-    ok('a refill below the minimum is refused', /Choose a refill/.test(await refill('2.00')));
-    ok('a refill at the minimum goes to checkout', (await refill('5.00')) === '' && prompts.length > 0, prompts.at(-1) || '');
+    const below = (CLOUD_PRICING.minimumRefill - 1).toFixed(2);
+    const atMinimum = CLOUD_PRICING.minimumRefill.toFixed(2);
+    ok(`a refill below the minimum is refused ($${below})`, /Choose a refill/.test(await refill(below)));
+    ok(`a refill at the minimum goes to checkout ($${atMinimum})`, (await refill(atMinimum)) === '' && prompts.length > 0, prompts.at(-1) || '');
 
     await page.goto(`${BASE}/admin.html?dev=1`, { waitUntil: 'domcontentloaded' });
     await settle(page, 4000);

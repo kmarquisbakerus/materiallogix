@@ -162,11 +162,18 @@ export function activeLicenseKey() {
 export function deactivate() { localStorage.removeItem(STORE); localStorage.removeItem(CHECK_STORE); }
 
 /** Does the active license cover a product? complete covers everything. */
+const EVERY_PRODUCT = Object.freeze(['photo', 'video', 'voice']);
+
+/** Plans that unlock every Studio, and plans that unlock the one they name. */
+const COVERS_EVERYTHING = new Set(['full', 'pro', 'payg']);
+const COVERS_ONE = new Set(['single', 'single_pro']);
+
 export function covers(payload, product) {
   if (!payload || String(payload.plan).startsWith('suspended:')) return false;
-  if (payload.plan === 'full') return ['photo', 'video', 'voice'].includes(product);
-  if (payload.plan === 'voice_starter') return product === 'voice';
-  if (payload.plan === 'single') return payload.selected_product === product || payload.selectedProduct === product;
-  if (payload.plan === 'payg') return ['photo', 'video', 'voice'].includes(product);
+  if (!EVERY_PRODUCT.includes(product)) return false;
+  const plan = String(payload.plan);
+  if (COVERS_EVERYTHING.has(plan)) return true;
+  if (COVERS_ONE.has(plan)) return payload.selected_product === product || payload.selectedProduct === product;
+  if (plan === 'voice_starter') return product === 'voice';
   return false;
 }

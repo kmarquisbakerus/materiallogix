@@ -28,7 +28,8 @@ test('unusable values still read as a sentence fragment', () => {
 test('no shipped copy falls back to a "(s)" placeholder', () => {
   const files = execFileSync('find', ['.', '-name', '*.js', '-o', '-name', '*.html'], { cwd: ROOT, encoding: 'utf8' })
     .split('\n').map(line => line.trim())
-    .filter(file => file && !file.startsWith('./.git') && !file.includes('/assets/human/') && !file.startsWith('./tests/'));
+    .filter(file => file && !file.startsWith('./.git') && !file.includes('/assets/human/')
+      && !file.startsWith('./tests/') && !file.includes('/node_modules/'));
   const offenders = [];
   for (const file of files) {
     if (file.endsWith('plural.js')) continue;
