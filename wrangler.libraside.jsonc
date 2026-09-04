@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "libraside-technologies-site",
+  "compatibility_date": "2026-09-04",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "librasidetechnologies.com/*",
+      "zone_name": "librasidetechnologies.com"
+    },
+    {
+      "pattern": "www.librasidetechnologies.com/*",
+      "zone_name": "librasidetechnologies.com"
+    }
+  ],
+  "assets": {
+    "directory": "./company-site"
+  }
+}

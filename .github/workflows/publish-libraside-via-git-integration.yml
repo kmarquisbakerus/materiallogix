@@ -1,4 +1,4 @@
-name: Publish approved LibraSide site through Git integration
+name: Publish and verify approved LibraSide site
 
 on:
   push:
@@ -6,13 +6,15 @@ on:
       - company/libraside-technologies
     paths:
       - '.github/workflows/publish-libraside-via-git-integration.yml'
+      - 'company-site/**'
+      - 'wrangler.libraside.jsonc'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: libraside-git-integration-publish
+  group: libraside-production-publish
   cancel-in-progress: false
 
 jobs:
@@ -21,9 +23,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out the approved corporate-site branch
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v5
 
       - name: Validate the approved static website
         shell: bash
@@ -32,113 +32,73 @@ jobs:
           test -f company-site/index.html
           test -f company-site/styles.css
           test -f company-site/site.js
+          test -f company-site/.assetsignore
           test -f company-site/media/libraside-investor-hero.webp
           test -f company-site/media/libraside-investor-hero-proof.webp
           test -f company-site/media/studio-founder-review-actual.webp
           test -f company-site/media/sideof-group-chat-actual.webp
           test -f company-site/media/evidence-manifest.json
+          test -f wrangler.libraside.jsonc
+          node -e "JSON.parse(require('fs').readFileSync('wrangler.libraside.jsonc', 'utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('company-site/media/evidence-manifest.json', 'utf8'))"
           grep -Fq 'Technology<br> with boundaries.' company-site/index.html
           grep -Fq 'Proof before promise.' company-site/index.html
           grep -Fq 'libraside-investor-hero-proof.webp' company-site/index.html
-          grep -Fq 'Actual product interface · fictional demo data' company-site/index.html
+          grep -Fq 'Actual product interface' company-site/index.html
+          grep -Fq 'fictional demo data' company-site/index.html
           grep -Fq 'LibraSide Technologies LLC' company-site/index.html
           if grep -Eiq 'beforeinstallprompt|serviceWorker|manifest\.json|add to home screen' company-site/index.html company-site/site.js; then
             echo '::error::Web-app installation behavior is not permitted on this corporate website.'
             exit 1
           fi
 
-      - name: Identify the Git branch currently feeding the live company site
-        id: source
+      - name: Publish through Workers static assets when credentials are configured
+        id: deploy
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*'
-          live=/tmp/libraside-live.html
-          curl --fail --silent --show-error --location --max-time 30 \
-            -H 'Cache-Control: no-cache' \
-            "https://librasidetechnologies.com/?source_probe=${GITHUB_RUN_ID}" > "$live"
-
-          current='company/libraside-technologies'
-          target=''
-          reason=''
-
-          while IFS= read -r ref; do
-            branch="${ref#origin/}"
-            case "$branch" in
-              HEAD|backup/*|dependabot/*) continue ;;
-            esac
-            if git show "$ref:company-site/index.html" > /tmp/candidate.html 2>/dev/null && cmp -s /tmp/candidate.html "$live"; then
-              target="$branch"
-              reason='exact-company-site-match'
-              break
-            fi
-          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin | sort)
-
-          if [ -z "$target" ]; then
-            while IFS= read -r ref; do
-              branch="${ref#origin/}"
-              case "$branch" in
-                HEAD|backup/*|dependabot/*|main) continue ;;
-              esac
-              if git show "$ref:company-site/index.html" > /tmp/candidate.html 2>/dev/null \
-                && grep -Fq 'LibraSide Technologies' /tmp/candidate.html \
-                && { grep -Fq 'Better tools.' /tmp/candidate.html || grep -Fq 'Technology<br> with boundaries.' /tmp/candidate.html; }; then
-                target="$branch"
-                reason='company-site-marker-match'
-                break
-              fi
-            done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin | sort)
-          fi
-
-          if [ -z "$target" ]; then
-            target="$current"
-            reason='approved-branch-fallback'
-          fi
-
-          printf 'target=%s\nreason=%s\n' "$target" "$reason" | tee /tmp/source-selection.txt
-          echo "target=$target" >> "$GITHUB_OUTPUT"
-          echo "reason=$reason" >> "$GITHUB_OUTPUT"
-
-      - name: Put the approved site on the branch serving Cloudflare
-        shell: bash
-        env:
-          TARGET_BRANCH: ${{ steps.source.outputs.target }}
-        run: |
-          set -euo pipefail
-          approved=/tmp/approved-company-site
-          cp -a company-site "$approved"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
-          if [ "$TARGET_BRANCH" = 'company/libraside-technologies' ]; then
-            printf '%s\n' "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" > company-site/.cloudflare-rebuild
-            git add company-site/.cloudflare-rebuild
-            git commit -m 'Trigger Cloudflare rebuild for the approved LibraSide site'
-            git push origin HEAD:company/libraside-technologies
+          if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            npx --yes wrangler@4.128.0 deploy --config wrangler.libraside.jsonc
+            echo 'executed=true' >> "$GITHUB_OUTPUT"
+            echo 'mode=deployed-and-verified' >> "$GITHUB_OUTPUT"
           else
-            git worktree add /tmp/live-source "origin/$TARGET_BRANCH"
-            rm -rf /tmp/live-source/company-site
-            cp -a "$approved" /tmp/live-source/company-site
-            printf '%s\n' "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" > /tmp/live-source/company-site/.cloudflare-rebuild
-            cd /tmp/live-source
-            git add -A company-site
-            if git diff --cached --quiet; then
-              git commit --allow-empty -m 'Trigger Cloudflare rebuild for the approved LibraSide site'
-            else
-              git commit -m 'Publish the approved LibraSide corporate website'
-            fi
-            git push origin "HEAD:$TARGET_BRANCH"
+            echo '::warning::Cloudflare deployment credentials are not configured; running verification-only. This job will fail if production differs from the approved source.'
+            echo 'executed=false' >> "$GITHUB_OUTPUT"
+            echo 'mode=verified-existing-production' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify the public root and www domains
         shell: bash
         run: |
           set -euo pipefail
+          expected_hash="$(sha256sum company-site/index.html | awk '{print $1}')"
+          normalize_hosted_html() {
+            python - "$1" "$2" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          source = pathlib.Path(sys.argv[1])
+          target = pathlib.Path(sys.argv[2])
+          body = source.read_bytes()
+          beacon = re.compile(
+              rb'(?m)^<script type="module" src="https://static\.cloudflareinsights\.com/'
+              rb'beacon\.min\.js/[^"]+" integrity="sha512-[^"]+" data-cf-beacon='
+              rb"'[^']+' crossorigin=\"anonymous\"></script>\r?\n?"
+          )
+          matches = beacon.findall(body)
+          if len(matches) > 1:
+              raise SystemExit('More than one hosting analytics beacon was injected.')
+          target.write_bytes(beacon.sub(b'', body))
+          PY
+          }
           verify() {
             local url="$1"
             local body=/tmp/verify.html
+            local normalized=/tmp/verify-source.html
             for attempt in $(seq 1 60); do
               if curl --fail --silent --show-error --location --max-time 30 \
                 -H 'Cache-Control: no-cache' \
@@ -146,14 +106,17 @@ jobs:
                 && grep -Fq 'Technology<br> with boundaries.' "$body" \
                 && grep -Fq 'Proof before promise.' "$body" \
                 && grep -Fq 'libraside-investor-hero-proof.webp' "$body" \
-                && grep -Fq 'Actual product interface · fictional demo data' "$body" \
-                && grep -Fq 'LibraSide Technologies LLC' "$body"; then
-                echo "$url serves the approved LibraSide corporate website."
+                && grep -Fq 'Actual product interface' "$body" \
+                && grep -Fq 'fictional demo data' "$body" \
+                && grep -Fq 'LibraSide Technologies LLC' "$body" \
+                && normalize_hosted_html "$body" "$normalized" \
+                && [ "$(sha256sum "$normalized" | awk '{print $1}')" = "$expected_hash" ]; then
+                echo "$url serves the approved LibraSide website with no content changes beyond the permitted hosting analytics beacon."
                 return 0
               fi
               sleep 10
             done
-            echo "::error::$url did not serve the approved website during the verification window."
+            echo "::error::$url did not serve the exact approved website during the verification window."
             sed -n '1,20p' /tmp/curl-error.txt || true
             return 1
           }
@@ -168,8 +131,9 @@ jobs:
           {
             "status": "published-and-verified",
             "sourceCommit": "${GITHUB_SHA}",
-            "servingBranch": "${{ steps.source.outputs.target }}",
-            "selectionReason": "${{ steps.source.outputs.reason }}",
+            "deploymentExecuted": "${{ steps.deploy.outputs.executed }}",
+            "deploymentMode": "${{ steps.deploy.outputs.mode }}",
+            "hostingTarget": "libraside-technologies-site",
             "root": "https://librasidetechnologies.com/",
             "www": "https://www.librasidetechnologies.com/",
             "verifiedAt": "$(date -u +%FT%TZ)"
@@ -184,8 +148,8 @@ jobs:
           name: libraside-publication-evidence
           path: |
             publication-result.json
-            /tmp/source-selection.txt
             /tmp/verify.html
+            /tmp/verify-source.html
             /tmp/curl-error.txt
           if-no-files-found: warn
           retention-days: 7
