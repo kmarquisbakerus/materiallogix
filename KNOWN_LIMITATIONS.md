@@ -328,3 +328,60 @@ is not the security boundary.
 
 The audible mark matters as much as the visual one: a visual-only watermark is
 removed by cropping, and an audio-only one by muting. Video needs both.
+
+## The video engine is licensed by territory
+
+The Tencent Hunyuan Community License grants rights "for the Territory only",
+and §1(l) defines the Territory as "the worldwide territory, excluding the
+territory of the European Union, United Kingdom and South Korea". Commercial
+use inside it is free and unconditional up to 100 million MAU (§4); Tencent
+claims no rights in the outputs (§6(d)); outputs may not be used to improve any
+other AI model (§5(b)).
+
+**The clause that decides the shape of the control is §5(c):**
+
+> You must not use, reproduce, modify, distribute, or display the Tencent
+> Hunyuan Works, Output or results of the Tencent Hunyuan Works outside the
+> Territory. Any such use outside the Territory is unlicensed and unauthorized
+> under this Agreement.
+
+It restricts the **Output**, not only the model. Rendering in Ohio and showing
+the result to somebody in Dublin is "display ... outside the Territory".
+
+So the gate is on **where the customer is**, not where the servers are. A
+US-only server estate does not make an EU delivery licensed, and the licence
+says nothing about server location - we grepped it for `server`,
+`infrastructur`, `locat`, `resid`, `data cent` and `deploy` and found no such
+clause. Keeping the fleet in the Americas is sound for other reasons; it is not
+what satisfies this licence.
+
+An excluded customer is **served, not refused**. `model-licence.js` routes the
+27 EU member states, GB and KR to **Wan 2.2**, which is Apache-2.0 with no
+territorial condition, no user ceiling and no registration. They get a working
+product rendered by a different model, and the notice says so rather than
+failing silently.
+
+Two edges the tests hold:
+
+- **Under-blocking**: an unknown or malformed region is refused, never guessed.
+  ISO 3166-1 reserves `AA`, `ZZ`, `QM`-`QZ` and `XA`-`XZ` for private use, so
+  they name no country and can never clear the check.
+- **Over-blocking**: the licence says "European Union", so Norway, Iceland,
+  Liechtenstein and Switzerland are outside the exclusion as drafted. Refusing
+  them would be its own harm.
+
+**US export control is not the binding constraint here.** Downloading published
+open-weight models into the US is an import, and ECCN 4E091 does not control
+weights published under 15 CFR §734.7. The 2025 AI Diffusion Rule that most
+compliance memos cite was rescinded by BIS in May 2025. Self-hosting on our own
+infrastructure is the mitigation for the deemed-export risk, not the problem.
+The live regulatory watch item is the Commerce ICTS framework (15 CFR Part 791),
+which has not yet been applied to general-purpose AI models but is the hook that
+would be used. Customer procurement policy is likelier to bite before regulation
+does. None of this is legal advice, and the DOJ bulk sensitive data rule (28 CFR
+Part 202) is worth counsel's eye if we handle video of identifiable people at
+scale.
+
+**Do not detect this by text-searching licences for "European Union".** The
+LTX-2.x Community License contains the phrase in a consumer-protection savings
+clause and would false-positive.
