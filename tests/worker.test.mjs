@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../_worker.js';
+import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// The Worker's own rule, read from the Worker, so the test cannot drift from it.
+const NOT_THE_SITE = new RegExp(
+  readFileSync(resolve(ROOT, '_worker.js'), 'utf8').match(/const NOT_THE_SITE = \/(.+)\/i;/)[1], 'i');
 
 // `_headers` and `_redirects` do not apply in Pages advanced mode, so the
 // Worker is the only place these can be set. A release that quietly loses them
@@ -107,4 +116,65 @@ test('off the edge, the region is unknown rather than invented', async () => {
   const response = await get('https://materiallogix.com/edge/region');
   assert.deepEqual(await response.json(), { country: null, source: 'unavailable' });
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
+});
+
+test('nothing but the site is served', async () => {
+  // The deploy package was built by zipping the repository minus a short
+  // exclusion list, so KNOWN_LIMITATIONS.md - which names every unshipped
+  // feature and says "Do not sell the Pro plans until both ship" - sat at a
+  // public URL on the marketing domain, with robots.txt saying `Allow: /`.
+  const internal = [
+    '/KNOWN_LIMITATIONS.md', '/ZERO_TRUST.md', '/SECURITY.md',
+    '/package.json', '/package-lock.json',
+    '/node_modules/playwright-core/README.md', '/node_modules/playwright-core/index.js',
+    '/tests/pricing.test.mjs', '/tests/browser/harness.mjs',
+    '/.github/workflows/verify.yml', '/.gitignore',
+    '/studio/js/deep/nested/node_modules/thing.js'
+  ];
+  for (const path of internal) {
+    const response = await get('https://materiallogix.com' + path);
+    assert.equal(response.status, 404, `${path} is readable on the public site`);
+    assertHardened(response, path);
+  }
+});
+
+test('blocking internal files does not take any of the site with it', async () => {
+  const site = [
+    '/', '/index.html', '/404.html', '/checkout-site.js',
+    '/studio/', '/studio/index.html', '/studio/voice.html', '/studio/usage.html',
+    '/studio/admin.html', '/studio/js/app.js', '/studio/js/pricing.js',
+    '/legal/terms.html', '/legal/privacy.html', '/legal/refunds.html',
+    '/robots.txt', '/sitemap.xml', '/logo.svg', '/indexnow-key.txt',
+    '/cc89cc851acf64485c1280baa77eab1b.txt', '/demo/index.html', '/edge/region'
+  ];
+  for (const path of site) {
+    const response = await get('https://materiallogix.com' + path);
+    assert.notEqual(response.status, 404, `${path} is part of the site and must be served`);
+  }
+});
+
+test('every file the deploy package ships is one the Worker will serve', () => {
+  // The two rules have to agree. A file in the package that the Worker 404s is
+  // dead weight; a file the Worker serves that the package omits is a broken
+  // link in production.
+  const shipped = execFileSync('python3', ['-c', `
+import pathlib, sys
+root = pathlib.Path('.')
+site_dirs = ('studio/', 'legal/', 'media/', 'demo/')
+site_files = {'index.html','404.html','checkout-site.js','_worker.js','robots.txt',
+              'sitemap.xml','logo.svg','CNAME','indexnow-key.txt',
+              'cc89cc851acf64485c1280baa77eab1b.txt'}
+for p in sorted(root.rglob('*')):
+    if not p.is_file(): continue
+    rel = p.relative_to(root).as_posix()
+    if rel in site_files or rel.startswith(site_dirs): print(rel)
+`], { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
+
+  assert.ok(shipped.length > 50, `the package looks empty: ${shipped.length} files`);
+  // _worker.js is the Worker itself; Pages consumes it rather than serving it.
+  const refused = shipped.filter(file => file !== '_worker.js' && NOT_THE_SITE.test('/' + file));
+  assert.deepEqual(refused, [], `the package ships files the Worker will 404:\n  ${refused.join('\n  ')}`);
+  for (const required of ['index.html', 'studio/index.html', 'studio/js/app.js', 'legal/terms.html']) {
+    assert.ok(shipped.includes(required), `${required} is missing from the deploy package`);
+  }
 });

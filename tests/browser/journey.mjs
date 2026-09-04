@@ -22,8 +22,18 @@ const ok = (label, pass, detail = '') => {
 let chromium;
 try { ({ chromium } = await import('playwright-core')); }
 catch { console.error('The journey needs playwright-core installed. See tests/browser/README.md.'); process.exit(2); }
-const executablePath = process.env.JOURNEY_CHROME || process.env.CHROME_PATH;
-if (!executablePath) { console.error('Set JOURNEY_CHROME to a Chromium binary. See tests/browser/README.md.'); process.exit(2); }
+// An explicit binary wins - that is how this repository's dev container points
+// at its preinstalled Chromium. Otherwise fall back to the one playwright-core
+// installed, so `npx playwright-core install chromium && npm run journey` works
+// with nothing to configure. Without this fallback the suite could not run in
+// CI, which is why it never did.
+const executablePath = process.env.JOURNEY_CHROME || process.env.CHROME_PATH || (() => {
+  try { return chromium.executablePath(); } catch { return ''; }
+})();
+if (!executablePath) {
+  console.error('No Chromium found. Set JOURNEY_CHROME, or run `npx playwright-core install chromium`. See tests/browser/README.md.');
+  process.exit(2);
+}
 
 const site = await serve();
 const engine = await engineStub();

@@ -16,6 +16,11 @@ const SECURITY_HEADERS = {
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
 };
 
+// Repository files that are not part of the published site: documentation,
+// dependency manifests, installed packages, the test suite, and anything
+// dotted. Matched on the whole path so a nested copy cannot slip through.
+const NOT_THE_SITE = /(^|\/)(node_modules|tests?)\/|(^|\/)\.|\.(md|mjs|yml|yaml|lock)$|(^|\/)package(-lock)?\.json$/i;
+
 // `Response.redirect` returns an immutable response, so hardening means
 // rebuilding it rather than mutating headers in place.
 const harden = response => {
@@ -49,6 +54,20 @@ export default {
     if (path === '/app' || path === '/app/') return canonical('/studio/');
     if (path.startsWith('/app/')) return canonical('/studio/' + path.slice('/app/'.length));
     if (path === '/voice') return canonical('/studio/voice.html', 302);
+
+    // Nothing but the site itself is served.
+    //
+    // The deploy package is built by zipping the repository minus a short
+    // exclusion list, so anything added to the repository is published by
+    // default. That put KNOWN_LIMITATIONS.md - which names every unshipped
+    // feature and says in terms "Do not sell the Pro plans until both ship" -
+    // at a public URL on the marketing domain, with robots.txt saying
+    // `Allow: /`. The packaging step now uses an allow-list, and this is the
+    // second lock: a file that is not part of the site is not served even if
+    // it reaches the bucket.
+    if (NOT_THE_SITE.test(path)) {
+      return harden(new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } }));
+    }
 
     // Where the customer is, from the edge rather than from the browser.
     //
