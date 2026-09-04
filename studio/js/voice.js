@@ -27,12 +27,41 @@ const wobble = (i, spread) => {
   return (x - Math.floor(x) - 0.5) * 2 * spread;
 };
 
+// The two direction controls the Studio offers, with the range each is drawn
+// over and the value it is neutral at. They used to reach the engine at render
+// time and nothing else, so the "Performance direction" panel sitting beside
+// them was the same plan at every setting: the only feedback a web customer
+// ever gets said the sliders did nothing.
+export const INTENSITY_RANGE = Object.freeze({ min: 0.25, max: 1.4, neutral: 0.6 });
+export const VARIATION_RANGE = Object.freeze({ min: 0.2, max: 0.7, neutral: 0.3 });
+
+// A control that has not been read yet arrives as '' and Number('') is 0,
+// which would clamp to the floor and quietly flatten every plan. Nothing given
+// means neutral, never minimum.
+const knob = (value, { min, max, neutral }) => {
+  if (value === '' || value === null || value === undefined) return neutral;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : neutral;
+};
+
 /**
  * @param {string} script  Markup: *word* = emphasis, ... = long beat,
  *                         blank line = paragraph (breath + reset).
+ * @param {{intensity?: number, variation?: number}} [direction]
+ *   `intensity` (0.25–1.4) is how far the read departs from a flat one: it
+ *   scales every expressive move and how long the beats are held. `variation`
+ *   (0.2–0.7) is how much the delivery drifts line to line. Omitting either
+ *   plans exactly as this planner did before the controls were wired in.
  * @returns {{segments: Array, totalWords: number}}
  */
-export function performancePlan(script) {
+export function performancePlan(script, { intensity, variation } = {}) {
+  // Measured against neutral, so the shipped slider positions are a 1.0 here
+  // and the plan a customer sees on load is the plan they always saw.
+  const drive = knob(intensity, INTENSITY_RANGE) / INTENSITY_RANGE.neutral;
+  const spread = knob(variation, VARIATION_RANGE) / VARIATION_RANGE.neutral;
+  // A bigger performance holds its beats longer, but a pause is timing rather
+  // than expression, so it travels a quarter as far as the rest.
+  const hold = 1 + (drive - 1) * 0.25;
   const paragraphs = String(script || '').split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
   const segments = [];
   let idx = 0;
@@ -66,12 +95,12 @@ export function performancePlan(script) {
           text,
           emphasis,
           // Short lines land slower (they are the punches); long runs move.
-          rate: +(1 + (wordCount > 12 ? 0.04 : wordCount < 5 ? -0.05 : 0) + wobble(idx, 0.025)).toFixed(3),
+          rate: +(1 + (wordCount > 12 ? 0.04 : wordCount < 5 ? -0.05 : 0) * drive + wobble(idx, 0.025 * spread)).toFixed(3),
           // Questions lift, statements settle.
-          pitch: +(isQuestion ? 1.02 : 1 + wobble(idx + 7, 0.012)).toFixed(3),
+          pitch: +(isQuestion ? 1 + 0.02 * drive : 1 + wobble(idx + 7, 0.012 * spread)).toFixed(3),
           intent,
-          energy: +(1 + (isExclamation ? 0.08 : wordCount < 6 ? 0.035 : -0.01) + emphasis.length * 0.025 + wobble(idx + 23, 0.025)).toFixed(3),
-          pauseAfterMs: Math.round((PAUSE_MS[tail] || 260) * (1 + wobble(idx + 13, 0.15))),
+          energy: +(1 + ((isExclamation ? 0.08 : wordCount < 6 ? 0.035 : -0.01) + emphasis.length * 0.025) * drive + wobble(idx + 23, 0.025 * spread)).toFixed(3),
+          pauseAfterMs: Math.round((PAUSE_MS[tail] || 260) * hold * (1 + wobble(idx + 13, 0.15 * spread))),
           breathBefore: first || (wordCount >= 10 && idx % 3 !== 1),
           paragraphStart: first
         });
@@ -79,7 +108,7 @@ export function performancePlan(script) {
         idx++;
       }
     }
-    if (segments.length) segments[segments.length - 1].pauseAfterMs += 320;   // paragraph settle
+    if (segments.length) segments[segments.length - 1].pauseAfterMs += Math.round(320 * hold);   // paragraph settle
   }
   return { segments, totalWords: segments.reduce((n, s) => n + s.text.split(' ').length, 0) };
 }
@@ -90,6 +119,65 @@ export function planDuration(plan) {
   const pauses = plan.segments.reduce((n, s) => n + s.pauseAfterMs, 0) / 1000;
   const breaths = plan.segments.filter(s => s.breathBefore).length * 0.32;
   return +(speech + pauses + breaths).toFixed(1);
+}
+
+/**
+ * A read time somebody can act on. `planDuration` answers in seconds because
+ * the fit arithmetic needs a number, but printing that number is how
+ * "~4000.9s read" reached the screen: past about a minute a raw second count
+ * stops being a length and becomes arithmetic homework. Phrased the way the
+ * Usage page already phrases a duration, with hours once a read runs past one.
+ */
+export function readTimeLabel(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor(total / 60) % 60;
+  if (hours) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  const remainder = total % 60;
+  return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+// The custom fit-length field's own `max`, and a floor of one second because a
+// read cannot be fitted to no time at all - the markup's `min="0"` is a length
+// the box accepts and the plan cannot use.
+export const FIT_SECONDS = Object.freeze({ min: 1, max: 600 });
+
+/**
+ * The fit target the two controls describe: a project video's own duration, or
+ * the length typed into the custom box. The typed box used to be
+ * `Number(value) || 0`, so `0` and `-5` blanked the readout with no word about
+ * why, and `99999` was answered in full — "room for ~183083 more words" — past
+ * the `max="600"` the field itself advertises. A picked video is whatever
+ * length it is; only the typed value carries the range.
+ *
+ * `unparsed` is the field's own `validity.badInput`. A `type="number"` box keeps
+ * letters out altogether, but `e`, `.` and `-` go in and can leave it holding
+ * something that is not a number, reported as an empty `value` — so emptiness
+ * alone cannot tell a customer who has typed nothing from one who has.
+ *
+ * @returns {{seconds: number, message: string}}  `seconds` is 0 when there is
+ *   nothing to fit to. `message` is empty unless the typed value needs saying
+ *   something about, and is what belongs on screen when it does.
+ */
+export function fitTargetSeconds(pick, custom = '', { unparsed = false } = {}) {
+  if (String(pick ?? '') !== 'custom') {
+    const picked = Number(pick);
+    return { seconds: Number.isFinite(picked) && picked > 0 ? picked : 0, message: '' };
+  }
+  const typed = String(custom ?? '').trim();
+  if (!typed && !unparsed) return { seconds: 0, message: '' };   // the box is empty, not wrong
+  const seconds = unparsed ? NaN : Number(typed);
+  if (!Number.isFinite(seconds)) {
+    return { seconds: 0, message: `Enter the length in seconds, ${FIT_SECONDS.min} to ${FIT_SECONDS.max}.` };
+  }
+  if (seconds < FIT_SECONDS.min) {
+    return { seconds: 0, message: `A fit length is at least ${FIT_SECONDS.min} second. Enter up to ${FIT_SECONDS.max}.` };
+  }
+  if (seconds > FIT_SECONDS.max) {
+    return { seconds: FIT_SECONDS.max, message: `The longest fit length is ${FIT_SECONDS.max} seconds. Enter ${FIT_SECONDS.max} or less.` };
+  }
+  return { seconds, message: '' };
 }
 
 /**

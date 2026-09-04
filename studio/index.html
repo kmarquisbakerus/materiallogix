@@ -19,6 +19,12 @@
 </head>
 <body>
 <div id="app">
+  <!-- Inside #app, so the entrance overlay's `inert` covers it too: a skip
+       link that stayed live would be a way out of a modal. -->
+  <a class="skip-link" href="#main">Skip to the workspace</a>
+  <!-- The workspace builds its own headings from <h4> down, so without this
+       the page had no <h1> and its outline began four levels in. -->
+  <h1 class="sr-only">MaterialLogix Studio workspace</h1>
   <header class="topbar">
     <button class="btn sm" type="button" id="menuBtn" aria-label="Create or open" aria-controls="sidebar" aria-expanded="false">Create</button>
     <a class="brand" href="#studio-entry" aria-label="MaterialLogix Studio home">
@@ -59,8 +65,10 @@
 <input type="file" id="verdictInput" accept="application/json,.json" hidden>
 <input type="file" id="recoveryInput" accept="application/zip,.zip" hidden>
 
-<dialog id="dlg">
-  <div class="dlg-head" id="dlgTitle"></div>
+<!-- Every dialog in the Studio is this one, retitled. Without the reference
+     each of them opened announced as "dialog" and nothing else. -->
+<dialog id="dlg" aria-labelledby="dlgTitle">
+  <h2 class="dlg-head" id="dlgTitle"></h2>
   <div class="dlg-body" id="dlgBody"></div>
   <div class="dlg-foot" id="dlgFoot"></div>
 </dialog>

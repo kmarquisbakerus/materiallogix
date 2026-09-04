@@ -131,15 +131,57 @@ async function busy(fn) {
   finally { state.busy = false; document.body.style.cursor = ''; }
 }
 
-function dialog(title, body, buttons) {
-  $('#dlgTitle').textContent = title;
-  $('#dlgBody').replaceChildren(body);
-  $('#dlgFoot').replaceChildren(...buttons.filter(Boolean));
+// Every dialog in the Studio is the one `<dialog id="dlg">`, retitled. So
+// `dialog()` used to overwrite whatever was on screen in place, and
+// `closeDialog()` closed whatever was on screen whoever asked for it: an import
+// finishing shut the shortcuts panel the customer had opened, and a job's own
+// question could be overwritten before it was read. Two rules fix both without
+// a second element. A dialog opened over another covers it and hands it back
+// when it closes, so nothing on screen is destroyed; and closing is scoped to
+// the dialog that asked, so a job finishing long after the customer moved on
+// can only ever close its own.
+const dialogStack = [];   // the last entry is the one on screen
+let stackClosings = 0;    // element closes the stack asked for, so the close
+                          // event can tell them from one it did not
+
+function paintDialog() {
   const d = $('#dlg');
+  const top = dialogStack.at(-1);
+  // `close` is delivered in a later task, by which time the caller may already
+  // have opened the next dialog — "Export anyway" does exactly that — so the
+  // stack counts its own closes rather than reading the event as an outside one.
+  if (!top) { d.className = ''; if (d.open) { stackClosings += 1; d.close(); } return; }
+  $('#dlgTitle').textContent = top.title;
+  $('#dlgBody').replaceChildren(top.body);
+  $('#dlgFoot').replaceChildren(...top.buttons);
+  // The skin belongs to the dialog, not to the element they share.
+  d.className = top.className;
   if (!d.open) d.showModal();
-  return d;
 }
-const closeDialog = () => { const d = $('#dlg'); d.close(); d.classList.remove('feedback-popover'); };
+
+/**
+ * Opens a dialog and returns a handle whose `close()` closes that one dialog
+ * and nothing else. Use the handle anywhere the close happens after an await —
+ * by then the customer has had time to open something of their own.
+ */
+function dialog(title, body, buttons, { className = '', onDismiss = null } = {}) {
+  const entry = { title, body, buttons: buttons.filter(Boolean), className, onDismiss };
+  dialogStack.push(entry);
+  paintDialog();
+  return { close: () => dismissDialog(entry) };
+}
+
+/** Drops one dialog wherever it is stacked; repaints only if it was on screen. */
+function dismissDialog(entry) {
+  const index = dialogStack.indexOf(entry);
+  if (index < 0) return;
+  dialogStack.splice(index, 1);
+  if (index === dialogStack.length) paintDialog();
+  entry.onDismiss?.();
+}
+
+/** For a button inside a dialog: the one on screen is the one it belongs to. */
+const closeDialog = () => dismissDialog(dialogStack.at(-1));
 const btn = (label, cls = 'btn', onclick) => {
   const b = el('button', { className: cls, type: 'button' }, label);
   if (onclick) b.onclick = onclick;
@@ -497,10 +539,14 @@ async function runAnalysis(asset, { quiet = false } = {}) {
 
 async function analyzeAll() {
   const pending = state.assets.filter(a => !a.auto);
-  if (!pending.length) return toast('Every asset has already been analysed.');
+  // "Already analysed" is vacuously true of an empty library and reads as a
+  // fault: nothing has been analysed, because there is nothing to analyse.
+  if (!pending.length) return toast(state.assets.length
+    ? 'Every asset has already been analysed.'
+    : 'Nothing to check yet — import or generate a photo first.');
   const bar = el('i');
   const status = el('p', {}, `Analysing ${count(pending.length, 'asset')}…`);
-  dialog('Automated checks', el('div', {}, status, el('div', { className: 'progress' }, bar)),
+  const progress = dialog('Automated checks', el('div', {}, status, el('div', { className: 'progress' }, bar)),
     [btn('Close', 'btn', closeDialog)]);
   try {
     await busy(async () => {
@@ -512,7 +558,7 @@ async function analyzeAll() {
       }
     });
   } catch (error) {
-    closeDialog();
+    progress.close();
     render();
     toast(error?.message ? sentence(deliveryReason(error)) : 'Analysis stopped early. Already-analysed assets kept their results.', true);
     return;
@@ -541,13 +587,21 @@ async function probe(file, url) {
   }
 }
 
-async function importFiles(fileList) {
+// A refusal has to name the gesture the customer actually made. One sentence
+// served both the drop target and the file picker, so choosing a file through
+// the picker was told there were no media files "in that drop".
+const IMPORT_REFUSALS = Object.freeze({
+  drop: 'No supported photo or video files in that drop.',
+  picker: 'No supported photo or video files in that selection.'
+});
+
+async function importFiles(fileList, gesture = 'picker') {
   const files = [...fileList].filter(isImportableMediaFile);
-  if (!files.length) return toast('No supported photo or video files in that drop.', true);
+  if (!files.length) return toast(IMPORT_REFUSALS[gesture] || IMPORT_REFUSALS.picker, true);
 
   const bar = el('i');
   const status = el('p', {}, `Importing ${count(files.length, 'file')}…`);
-  dialog('Import', el('div', {}, status, el('div', { className: 'progress' }, bar)), [btn('Close', 'btn', closeDialog)]);
+  const progress = dialog('Import', el('div', {}, status, el('div', { className: 'progress' }, bar)), [btn('Close', 'btn', closeDialog)]);
 
   let imported = 0, blocked = 0;
   try {
@@ -622,7 +676,7 @@ async function importFiles(fileList) {
     }
   });
   } catch (error) {
-    closeDialog();
+    progress.close();
     state.assets = await store.listAssets(state.project.id).catch(() => state.assets);
     render();
     toast(error?.message ? sentence(deliveryReason(error)) : 'Import failed. Files already imported are safe in the library.', true);
@@ -630,7 +684,7 @@ async function importFiles(fileList) {
   }
   state.assets = await store.listAssets(state.project.id);
   forgetDecodesOutside(state.assets.map(a => a.id));
-  closeDialog();
+  progress.close();
   render();
   toast(`Imported and analysed ${count(imported, 'file')}.${blocked ? ` ${count(blocked, 'file')} ${blocked === 1 ? 'was' : 'were'} blocked.` : ''}`);
 }
@@ -658,11 +712,15 @@ function photoWorkflowSteps(active = 1) {
         el('span', {}, String(index + 1)), label)));
 }
 
+// Held so the generation that finishes can close this dialog and only this
+// dialog; the same panel also lives in the sidebar, where there is none to close.
+let photoCreationDialog = null;
+
 function openPhotoCreationDialog() {
   // From the start page, generation deserves the centre of the screen —
   // not a drawer. The dialog closes itself when the photos arrive.
-  const d = dialog('Generate a photo', generatePanel(), [btn('Close', 'btn', closeDialog)]);
-  d.classList.add('generate-dialog');
+  photoCreationDialog = dialog('Generate a photo', generatePanel(), [btn('Close', 'btn', closeDialog)],
+    { className: 'generate-dialog' });
 }
 
 function openPhotoCreation() {
@@ -871,8 +929,9 @@ function generatePanel() {
         forgetDecodesOutside(state.assets.map(a => a.id));
         status.textContent = `Done \u2014 ${count} photo${count === 1 ? '' : 's'} added and checked.`;
         render();
-        const dlg = $('#dlg');
-        if (dlg.open && dlg.classList.contains('generate-dialog')) { dlg.classList.remove('generate-dialog'); closeDialog(); }
+        // Only the dialog this panel was opened in, and only if it is still up —
+        // never whatever the customer opened while the render was running.
+        photoCreationDialog?.close();
         toast(`Created ${count} candidate${count === 1 ? '' : 's'}.`);
       } catch (err) {
         const release = reserved ? await releaseUsage(reserved, 'render_failed') : null;
@@ -1275,22 +1334,22 @@ function renderSidebar() {
 
 function renameProject() {
   const input = el('input', { type: 'text', value: state.project.name });
-  dialog('Rename project', el('label', { className: 'field' }, el('span', {}, 'Name'), input), [
+  const rename = dialog('Rename project', el('label', { className: 'field' }, el('span', {}, 'Name'), input), [
     btn('Cancel', 'btn', closeDialog),
     btn('Save', 'btn primary', () => {
       state.project.name = input.value.trim() || state.project.name;
-      store.saveProject(state.project).then(() => { closeDialog(); boot(state.project.id); });
+      store.saveProject(state.project).then(() => { rename.close(); boot(state.project.id); });
     })
   ]);
 }
 
 function deleteProjectFlow() {
-  dialog('Delete project',
+  const confirm = dialog('Delete project',
     el('p', {}, `Delete "${state.project.name}" and its ${count(state.assets.length, 'asset')}? Back up first — this cannot be undone.`),
     [btn('Cancel', 'btn', closeDialog),
      btn('Delete', 'btn primary', async () => {
        await store.deleteProject(state.project.id);
-       closeDialog(); boot();
+       confirm.close(); boot();
      })]);
 }
 
@@ -1831,6 +1890,19 @@ function attachLoupe(host, decoded, cropFn) {
 }
 
 function removeLoupe() { document.querySelector('.loupe')?.remove(); }
+
+/**
+ * The loupe is a hover concept: `.loupe` is `display:none` below 900px in the
+ * stylesheet, because a finger has no cursor to place it under. Anything that
+ * can turn it on has to ask here first, or the control does nothing on the
+ * viewport it is offered on and the stage stops answering drags as well.
+ */
+function loupeIsAvailable() { return !matchMedia('(max-width: 900px)').matches; }
+
+function setLoupe(on) {
+  state.loupe = loupeIsAvailable() && on;
+  if (!state.loupe) removeLoupe();
+}
 
 function drawLoupe(decoded, sx, sy, clientX, clientY) {
   const SIZE = 260;
@@ -2526,12 +2598,12 @@ async function playWithComments(asset) {
   input.onkeydown = e => { if (e.key === 'Enter') { add(); e.stopPropagation(); } };
 
   const stopPlayback = () => { vid.pause(); vid.removeAttribute('src'); vid.load(); };
-  const commentsDialog = dialog(asset.filename,
+  dialog(asset.filename,
     el('div', {}, vid,
       el('div', { style: 'display:flex;gap:6px;margin-top:12px' }, input, btn('Add timecode', 'btn', add)),
       listBox),
-    [btn('Close', 'btn', () => { stopPlayback(); renderReview(); closeDialog(); })]);
-  commentsDialog.addEventListener('close', stopPlayback, { once: true });
+    [btn('Close', 'btn', () => { stopPlayback(); renderReview(); closeDialog(); })],
+    { onDismiss: stopPlayback });
   paint();
 }
 
@@ -2732,8 +2804,7 @@ async function openIdentitySpinPreview(person, assets, mode = 'body') {
     el('div', { className: 'spin-actions' },
       btn('Front / reset', 'btn sm', () => { stop(); paint(0); stage.focus(); }), play));
   const close = () => { stop(); closeDialog(); };
-  const spinDialog = dialog(`${person} · easy spin preview`, body, [btn('Close', 'btn primary', close)]);
-  spinDialog.addEventListener('close', stop, { once: true });
+  dialog(`${person} · easy spin preview`, body, [btn('Close', 'btn primary', close)], { onDismiss: stop });
   paint(0);
   requestAnimationFrame(() => stage.focus());
 }
@@ -2839,8 +2910,7 @@ function rejectionDialog(asset, targetStatus) {
       closeDialog(); renderReview(); renderCounters();
       toast('Thanks — this helps the next result.');
     })
-  ]);
-  $('#dlg').classList.add('feedback-popover');
+  ], { className: 'feedback-popover' });
 }
 
 function logBlock(asset) {
@@ -3034,6 +3104,9 @@ async function generativeFillDialog(asset) {
     el('p', { className: 'hint' }, 'Believable skin, fabric, anatomy, materials, and environmental light remain the default unless you explicitly choose a stylized result.'),
     el('label', { className: 'field' }, el('span', {}, 'Avoid'), negative),
     el('label', { className: 'editor-slider fill-strength' }, el('span', {}, 'Blend strength'), denoise, denoiseOut), status);
+  // Assigned by the `dialog()` call below; the handler only ever runs after it,
+  // and it must close its own dialog, not whatever survived the render.
+  let fillDialog = null;
   const run = btn('Create new candidate', 'btn primary', async () => {
     const requested = promptInput.value.trim();
     if (!requested) return toast('Describe the intended result first.', true);
@@ -3099,7 +3172,7 @@ async function generativeFillDialog(asset) {
         forgetDecodesOutside(state.assets.map(a => a.id));
         state.index = Math.max(0, visibleAssets().findIndex(item => item.id === created.id));
       });
-      closeDialog(); render(); toast(fillBoundaryQuality?.status === 'pass'
+      fillDialog.close(); render(); toast(fillBoundaryQuality?.status === 'pass'
         ? 'Generative Fill Beta candidate created — automated boundary continuity passed; complete human review.'
         : 'Generative Fill Beta candidate created and flagged for boundary review.', fillBoundaryQuality?.status !== 'pass');
     } catch (err) {
@@ -3108,7 +3181,7 @@ async function generativeFillDialog(asset) {
     }
     finally { run.disabled = false; }
   });
-  dialog('Generative Fill Beta', body, [btn('Cancel', 'btn', closeDialog), run]);
+  fillDialog = dialog('Generative Fill Beta', body, [btn('Cancel', 'btn', closeDialog), run]);
   requestAnimationFrame(paintPreview);
 }
 
@@ -3911,11 +3984,13 @@ function stageTools(asset, surface, surfaces) {
     };
     fills.append(b);
   }
-  const loupeBtn = pressed(btn('Loupe', 'btn sm', () => {
-    state.loupe = !state.loupe;
-    if (!state.loupe) removeLoupe();
+  // Offered only where it can draw: below 900px the stylesheet hides `.loupe`
+  // outright, so on a phone the toggle turned on something invisible and then
+  // took the drag handlers with it.
+  const loupeBtn = loupeIsAvailable() ? pressed(btn('Loupe', 'btn sm', () => {
+    setLoupe(!state.loupe);
     renderReview();
-  }), state.loupe);
+  }), state.loupe) : null;
   const thirdsBtn = pressed(btn('Thirds', 'btn sm', () => { state.thirds = !state.thirds; renderReview(); }), state.thirds);
   const zoomOutBtn = btn('Zoom out', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1 / 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); });
   const zoomInBtn = btn('Zoom in', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); });
@@ -4415,12 +4490,12 @@ function wire() {
   $('#projectSelect').onchange = e => boot(e.target.value);
   $('#newProject').onclick = () => {
     const input = el('input', { type: 'text', placeholder: 'Campaign or client name' });
-    dialog('New project', el('label', { className: 'field' }, el('span', {}, 'Project name'), input), [
+    const creation = dialog('New project', el('label', { className: 'field' }, el('span', {}, 'Project name'), input), [
       btn('Cancel', 'btn', closeDialog),
       btn('Create', 'btn primary', async () => {
         const p = newProject(input.value.trim() || 'Untitled project');
         await store.saveProject(p);
-        closeDialog(); boot(p.id);
+        creation.close(); boot(p.id);
       })
     ]);
   };
@@ -4461,6 +4536,17 @@ function wire() {
   $('#exportBtn').onclick = () => doExport();
   $('#exportMoreBtn').onclick = () => { document.querySelector('.topbar-more')?.removeAttribute('open'); doExport(); };
   $('#helpBtn').onclick = showHelp;
+  // Escape dismisses the dialog on screen, not the element every dialog shares:
+  // if it was covering another the element stays open and repaints with the one
+  // underneath, so the stack decides what closes rather than the browser.
+  $('#dlg').addEventListener('cancel', event => { event.preventDefault(); dismissDialog(dialogStack.at(-1)); });
+  // Anything that closes the element itself — a stray close() from outside, or
+  // Escape where the browser will not let the cancel be prevented — takes every
+  // dialog that was on it, and each of them still has to stop what it started.
+  $('#dlg').addEventListener('close', () => {
+    if (stackClosings > 0) { stackClosings -= 1; return; }
+    for (const entry of dialogStack.splice(0, dialogStack.length)) entry.onDismiss?.();
+  });
   $('#fileInput').onchange = e => { importFiles(e.target.files); e.target.value = ''; };
   $('#recoveryInput').onchange = e => { const f = e.target.files?.[0]; if (f) restoreProject(f); e.target.value = ''; };
   $('#verdictInput').onchange = e => { if (e.target.files[0]) importVerdict(e.target.files[0]); e.target.value = ''; };
@@ -4477,7 +4563,7 @@ function wire() {
   window.addEventListener('drop', e => {
     e.preventDefault(); dragDepth = 0;
     document.querySelector('.dropzone')?.classList.remove('hot');
-    if (e.dataTransfer?.files?.length) importFiles(e.dataTransfer.files);
+    if (e.dataTransfer?.files?.length) importFiles(e.dataTransfer.files, 'drop');
   });
 
   window.addEventListener('keydown', e => {
@@ -4522,7 +4608,9 @@ function wire() {
       case 'd': if (asset && state.activeSurface) decidePlacement(asset, state.activeSurface, 'denied'); break;
       case 'f': state.view = state.view === 'source' ? 'placement' : 'source'; renderReview(); break;
       case 'c': state.view = state.view === 'compare' ? 'placement' : 'compare'; renderReview(); break;
-      case 'l': state.loupe = !state.loupe; if (!state.loupe) removeLoupe(); renderReview(); break;
+      case 'l':
+        if (!loupeIsAvailable()) { toast('The loupe needs a wider window — it puts 1:1 source pixels under the pointer.'); break; }
+        setLoupe(!state.loupe); renderReview(); break;
       case 't': state.thirds = !state.thirds; renderReview(); break;
       case 'g': if (asset) reframeAll(asset); break;
       case 'b': state.mode = state.mode === 'board' ? 'review' : 'board'; render(); break;

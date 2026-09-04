@@ -11,8 +11,12 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/app.css">
 <style>
-  .studio { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr) 264px; gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
-  .studio > section { background: var(--ground); padding: 26px 28px; overflow-y: auto; }
+  /* Two panes and the jobs rail. The panes are the page's <main> and the rail
+     is a sibling landmark, as it already is in the photo workspace, so the
+     grid is nested rather than one row of three. */
+  .studio { display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
+  .studio-panes { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr); gap: 1px; background: var(--hair); min-height: 0; }
+  .studio-panes > section { background: var(--ground); padding: 26px 28px; overflow-y: auto; }
   .studio h2 { font: 300 22px/1.2 var(--serif); margin: 0 0 4px; }
   .studio p.lead { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; line-height: 1.6; }
   #script { width: 100%; min-height: 220px; font: 400 14px/1.7 var(--serif); padding: 14px; }
@@ -34,14 +38,14 @@
   .engine-state + .btn { margin-top:8px; }
   .topbar-more-menu a.btn { color:var(--ink-2); }
   body[data-voice-mode="guided"] .voice-advanced { display:none !important; }
-  @media (max-width: 1280px) { .studio { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } }
+  @media (max-width: 1280px) { .studio { grid-template-columns: minmax(0,1fr); } .studio-panes { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } }
   @media (pointer:coarse) {
     .knob input[type=range] { min-height:44px; touch-action:pan-y; }
     .voice-studio .seg button, .voice-studio .activity-head .btn { min-height:44px; }
   }
   @media (max-width: 900px) {
-    .studio { display:block; overflow-y:auto; background:var(--ground); }
-    .studio > section { overflow:visible; padding:22px 16px; border-bottom:1px solid var(--hair); }
+    .studio, .studio-panes { display:block; overflow-y:auto; background:var(--ground); }
+    .studio-panes > section { overflow:visible; padding:22px 16px; border-bottom:1px solid var(--hair); }
     #script { min-height:180px; }
     .knob { display:grid; grid-template-columns:minmax(0,1fr) 42px; gap:7px 10px; align-items:center; }
     .knob > label { grid-column:1 / -1; width:auto !important; }
@@ -53,6 +57,10 @@
 </head>
 <body class="voice-studio">
 <div id="app">
+  <a class="skip-link" href="#main-content">Skip to the voice studio</a>
+  <!-- The page shipped with no <h1> and no <main> at all: its outline began at
+       <h2> and nothing on it sat inside a landmark. -->
+  <h1 class="sr-only">MaterialLogix Voice Studio</h1>
   <header class="topbar">
     <a class="brand" href="index.html" aria-label="MaterialLogix Studio home">
       <strong><span class="brand-material">Material</span><span class="brand-logix">Logix</span><span class="brand-studio">Voice Studio</span></strong>
@@ -70,6 +78,7 @@
   </header>
 
   <div class="studio">
+    <main class="studio-panes" id="main-content">
     <section>
       <h2>Script</h2>
       <p class="lead">Use <b>*stars*</b> for emphasis and blank lines for pauses.</p>
@@ -144,6 +153,7 @@ Create with freedom. Finish with *confidence*.</textarea>
       <p class="lead">Every render is evaluated for room tone, dynamics, pause variation, clipping, transients, sibilance, and compression before delivery.</p>
       <div id="tells"><p class="lead">Render or import audio to begin quality analysis.</p></div>
     </section>
+    </main>
     <aside class="activity-rail" id="activityRail" aria-label="Jobs, execution location, progress, and usage"></aside>
   </div>
 </div>
