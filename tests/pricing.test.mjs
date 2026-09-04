@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
-  CLOUD_VIDEO, CLOUD_VOICE, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit,
+  CLOUD_VIDEO, CLOUD_VOICE, MEASURED_VIDEO_COST, exportPrice, CLOUD_SURCHARGE, deliveredPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit,
   exportUnits, unitsForDeliveries, UNITS_PER_VIDEO_MINUTE, deliveryRulesFor, requiresWatermark
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
@@ -106,20 +106,46 @@ test('the video rate is priced against the one measurement that exists', () => {
   assert.equal(CLOUD_PRICING.videoUpscale.price, CLOUD_VIDEO.pricePerMinute,
     'the wallet rate and the cloud-video rate must be the same number');
   assert.equal(Math.round(CLOUD_PRICING.videoUpscale.estimatedCost * 100), MEASURED_VIDEO_COST.centsPerOutputMinute);
+  // The surcharge only has to cover the GPU. The product's margin lives in the
+  // deliverable price, which the customer already paid; asking the surcharge to
+  // carry it too is what produced a $5.99 cloud minute.
   const margin = 1 - MEASURED_VIDEO_COST.centsPerOutputMinute / (CLOUD_PRICING.videoUpscale.price * 100);
-  assert.ok(margin > 0.5, `a cloud minute leaves only ${(margin * 100).toFixed(1)}% after GPU`);
+  assert.ok(margin > 0.25, `the cloud surcharge leaves only ${(margin * 100).toFixed(1)}% after GPU`);
   assert.equal(MEASURED_VIDEO_COST.productionLengthConfirmed, false,
     'if the checkpoint has been run, say so here and re-price against the real number');
   assert.equal(CLOUD_VIDEO.productionEnabled, false,
     'the lane cannot open on a cost measured from ten seconds');
 });
 
-test('a cloud minute costs more than one finished on the customer own machine', () => {
-  // Local renders cost nothing to serve; cloud renders cost GPU time. Selling
-  // the cloud minute at or below the local price gives the dearer product away.
-  const local = exportPrice('export_video').total;
-  assert.ok(CLOUD_PRICING.videoUpscale.price > local,
-    `cloud is $${CLOUD_PRICING.videoUpscale.price}/min but a local minute sells for $${local}`);
+test('the cloud is charged by what it costs, not by what the file is worth', () => {
+  // Photo and voice cloud jobs cost the same whatever their length - almost all
+  // of it is pod spin-up - so they are charged per job. Only video has compute
+  // that scales, so only video is charged per output minute.
+  assert.equal(CLOUD_SURCHARGE.photo.basis, 'job');
+  assert.equal(CLOUD_SURCHARGE.voiceRender.basis, 'job');
+  assert.equal(CLOUD_SURCHARGE.voiceTraining.basis, 'job');
+  assert.equal(CLOUD_SURCHARGE.video.basis, 'output minute');
+
+  // A ten-minute script costs us half a cent more than a one-minute one, so it
+  // must not cost the customer ten times more to send it to the cloud.
+  const oneMin = deliveredPrice('voice', { units: 1, cloud: true });
+  const tenMin = deliveredPrice('voice', { units: 10, cloud: true });
+  assert.equal(oneMin.surchargeCents, tenMin.surchargeCents,
+    'a longer script must not pay a longer cloud bill');
+  assert.equal(tenMin.totalCents - deliveredPrice('voice', { units: 10 }).totalCents, tenMin.surchargeCents);
+
+  // Video is the opposite: five minutes of GPU is five times one minute of GPU.
+  const oneVid = deliveredPrice('video', { units: 1, cloud: true });
+  const fiveVid = deliveredPrice('video', { units: 5, cloud: true });
+  assert.equal(fiveVid.surchargeCents, oneVid.surchargeCents * 5);
+
+  // Every surcharge clears the pod cost it exists to cover.
+  for (const [key, surcharge] of Object.entries(CLOUD_SURCHARGE)) {
+    const rate = { photo: 'imageUpscale', voiceRender: 'voiceRender',
+      voiceTraining: 'voiceTraining', video: 'videoUpscale' }[key];
+    assert.equal(CLOUD_PRICING[rate].price, surcharge.price, `${key} and its wallet rate disagree`);
+    assert.ok(surcharge.price > CLOUD_PRICING[rate].estimatedCost, `${key} is charged below its cost`);
+  }
 });
 
 test('the wallet range is declared once and enforced from that declaration', () => {

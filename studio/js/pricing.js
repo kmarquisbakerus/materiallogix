@@ -116,10 +116,59 @@ export const UNITS_PER_VIDEO_MINUTE = 4;
  * sign-in providers wait on their developer accounts.
  */
 export const RENDER_PRICES = Object.freeze({
-  photo: Object.freeze({ local: 2.99, cloud: 3.99, per: 'image' }),
-  video: Object.freeze({ local: 4.99, cloud: 5.99, per: 'minute' }),
-  voice: Object.freeze({ local: 2.99, cloud: 3.99, per: 'minute' })
+  photo: Object.freeze({ local: 2.99, per: 'image' }),
+  video: Object.freeze({ local: 4.99, per: 'minute' }),
+  voice: Object.freeze({ local: 2.99, per: 'minute' })
 });
+
+/**
+ * What rendering in the cloud adds, on top of the thing being made.
+ *
+ * This was priced as a second retail price for the same deliverable, which got
+ * the shape wrong in both directions. A cloud job's cost is dominated by pod
+ * spin-up - about $0.26 whatever it does - and only video has compute that
+ * scales with output. So:
+ *
+ *   - Photo and voice are charged PER JOB. A ten-minute script costs us half a
+ *     cent more than a one-minute one, so billing it by the minute charges for
+ *     a cost that does not exist.
+ *   - Video is charged PER OUTPUT MINUTE, because 185 GPU-minutes go into each
+ *     one and that is a cost that genuinely grows.
+ *
+ * The surcharge is what a plan's cloud credit is spent on. A plan's monthly
+ * units already paid for the file; the credit pays for where it was made. That
+ * separation matters: a unit earns us about three cents, so a cloud job billed
+ * against units would lose money on every render.
+ */
+export const CLOUD_SURCHARGE = Object.freeze({
+  photo: Object.freeze({ price: 0.50, basis: 'job', unit: 'image', lane: 'photo' }),
+  voiceRender: Object.freeze({ price: 0.50, basis: 'job', unit: 'render', lane: 'voice_render' }),
+  voiceTraining: Object.freeze({ price: 1.00, basis: 'job', unit: 'voice profile', lane: 'voice_training' }),
+  video: Object.freeze({ price: 2.00, basis: 'output minute', unit: 'output minute', lane: 'video' })
+});
+
+/**
+ * What a finished thing costs with no plan, made locally or in the cloud.
+ * `units` is images, or whole minutes. Returns cents, because money that has
+ * been through a float is money waiting to be wrong.
+ */
+export function deliveredPrice(product, { units = 1, cloud = false } = {}) {
+  const rate = RENDER_PRICES[product];
+  if (!rate) return null;
+  const count = Math.max(1, Math.ceil(Number(units) || 1));
+  const deliverableCents = Math.round(rate.local * 100) * count;
+  if (!cloud) {
+    return { product, units: count, deliverableCents, surchargeCents: 0, totalCents: deliverableCents, basis: 'local' };
+  }
+  const surcharge = product === 'video' ? CLOUD_SURCHARGE.video
+    : product === 'voice' ? CLOUD_SURCHARGE.voiceRender
+      : CLOUD_SURCHARGE.photo;
+  const surchargeCents = Math.round(surcharge.price * 100) * (surcharge.basis === 'job' ? 1 : count);
+  return {
+    product, units: count, deliverableCents, surchargeCents,
+    totalCents: deliverableCents + surchargeCents, basis: surcharge.basis
+  };
+}
 
 // Price is a separate decision from metering. A one-off video minute is sold at
 // its ladder price, not at four units of list, because a customer buying a
@@ -199,19 +248,19 @@ export const CLOUD_PRICING = {
   // same thing can never quote different numbers. A cloud image used to be
   // $0.10 - less than a plain photo export - which paid a customer to route
   // work through our GPUs.
-  imageUpscale: { price: RENDER_PRICES.photo.cloud, unit: 'image', estimatedCost: 0.01, available: false },
+  imageUpscale: { price: CLOUD_SURCHARGE.photo.price, unit: 'image', estimatedCost: 0.26, available: false },
   // Cloud voice, so a long script does not tie up the customer's machine.
   // Synthesis is a tiny GPU job; almost all of its cost is pod lifecycle, which
   // the video measurement puts at about a fifth of $1.31. Derived, not
   // measured - see CLOUD_VOICE.
-  voiceRender: { price: RENDER_PRICES.voice.cloud, unit: 'output minute', estimatedCost: 0.30, available: false },
+  voiceRender: { price: CLOUD_SURCHARGE.voiceRender.price, unit: 'render', estimatedCost: 0.27, available: false },
   // Conditioning a voice profile is the heavy one: a fine-tune over up to
   // thirty minutes of reference audio, which is what runs long on a CPU.
-  voiceTraining: { price: 4.99, unit: 'voice profile', estimatedCost: 0.60, available: false },
+  voiceTraining: { price: CLOUD_SURCHARGE.voiceTraining.price, unit: 'voice profile', estimatedCost: 0.40, available: false },
   // Measured at $1.31 per output minute for native 4K on a community RTX 4090
   // pool at $0.34/hr - see MEASURED_VIDEO_COST for what that measurement is
   // worth.
-  videoUpscale: { price: RENDER_PRICES.video.cloud, unit: 'output minute', estimatedCost: 1.31, available: true },
+  videoUpscale: { price: CLOUD_SURCHARGE.video.price, unit: 'output minute', estimatedCost: 1.31, available: true },
   minimumRefill: 10,
   maximumRefill: 500,
   prepaidOnly: true,
@@ -298,7 +347,7 @@ export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
   includedEquivalentSeconds: 200,
-  pricePerMinute: RENDER_PRICES.video.cloud,
+  pricePerMinute: CLOUD_SURCHARGE.video.price,
   productionEnabled: false
 };
 

@@ -50,6 +50,51 @@ Starter allowance, or the premium voice rate.
 
 ### The price ladder
 
+The plan prices are the published ones and are not in question: $5 Voice
+Starter, $15 Single Studio, $25 Single Studio Pro, $29 Full Studio, $39 Pro
+Studio. What follows is the export price and the cloud charge, which are.
+
+**A cloud job is a surcharge on a deliverable, not a second price for one.**
+Pricing it as a second retail price got the shape wrong in both directions: it
+made a cloud image cost more than the photo it delivered, and it billed a
+ten-minute script ten times over for a cost that does not grow with length.
+
+A cloud job's cost is dominated by pod spin-up - about $0.26 whatever it does.
+Only video has compute that scales with output: about 185 GPU-minutes per
+output minute, against roughly 0.1 for a minute of synthesised speech. So:
+
+| Charged | Basis | Rate | Pod cost |
+| --- | --- | --- | --- |
+| Cloud photo | per job | $0.50 | ~$0.26 |
+| Cloud voice render | per job, any script length | $0.50 | ~$0.27 |
+| Cloud voice conditioning | per job | $1.00 | ~$0.40 |
+| Cloud video | per output minute | $2.00 | $1.31 measured |
+
+The surcharge only has to cover the GPU. The product's margin lives in the
+deliverable price the customer already paid; asking the surcharge to carry it
+too is what produced a $5.99 cloud minute and a $3.99 cloud photo.
+
+That separation also closes a hole. A plan unit earns about three cents, and a
+cloud job costs twenty-six, so a cloud render billed against monthly units
+would lose money on every job. Units buy the file; credit buys the cloud.
+
+What that means for a customer:
+
+| | No plan, all in | With a plan |
+| --- | --- | --- |
+| One photo, local | $2.99 | 1 unit |
+| One photo, in the cloud | $3.49 | 1 unit + $0.50 credit |
+| Ten-minute script, local | $29.90 | 10 units |
+| Ten-minute script, in the cloud | $30.40 | 10 units + $0.50 credit |
+| One video minute, local | $4.99 | 4 units |
+| One video minute, in the cloud | $6.99 | 4 units + $2.00 credit |
+
+The $20 included credit now buys **40 cloud photos, or 40 cloud voice renders
+of any length, or ten minutes of cloud video** - where the previous rates gave
+it 3m20s of video and five photos.
+
+### The old ladder
+
 `RENDER_PRICES` is the whole ladder, and everything reads it:
 
 | | On the customer's machine | In the cloud |

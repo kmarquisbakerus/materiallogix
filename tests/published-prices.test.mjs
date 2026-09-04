@@ -6,7 +6,8 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor,
   EXPORT_PRODUCTS, exportPrice, UNIT_PRICE, CLOUD_CREDIT, includedCloudCents, applyCloudCredit,
-  walletTopUpCents, quoteCloudJob, planLabel, RENDER_PRICES, stripeCatalogue
+  walletTopUpCents, quoteCloudJob, planLabel, RENDER_PRICES, stripeCatalogue,
+  CLOUD_SURCHARGE, deliveredPrice
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
@@ -363,32 +364,37 @@ test('the account panels are styled by name, not by position', () => {
 
 // ── the price ladder ────────────────────────────────────────────────────────
 
-test('cloud always costs more than the customer own machine', () => {
-  // Local renders cost us nothing; cloud renders cost GPU time. A cloud photo
-  // used to be $0.10 against a $2.99 photo export, which paid a customer to
-  // route work through our GPUs.
-  for (const [product, rate] of Object.entries(RENDER_PRICES)) {
-    assert.ok(rate.local > 0, `${product} has no local price`);
-    if (rate.cloud === null) continue;
-    assert.ok(rate.cloud > rate.local,
-      `${product}: cloud $${rate.cloud} is not dearer than local $${rate.local}`);
+test('cloud always costs more than the customer own machine, but only by its cost', () => {
+  // A cloud image was once $0.10 against a $2.99 photo export, which paid a
+  // customer to route work through our GPUs. Then it was $3.99, which taxed a
+  // customer for not owning a GPU. It is the local price plus what the pod
+  // costs, and nothing else.
+  for (const product of Object.keys(RENDER_PRICES)) {
+    const local = deliveredPrice(product, { units: 1 });
+    const cloud = deliveredPrice(product, { units: 1, cloud: true });
+    assert.ok(cloud.totalCents > local.totalCents, `${product}: cloud is not dearer than local`);
+    assert.equal(cloud.deliverableCents, local.totalCents, `${product}: the cloud changed the file's price`);
+    assert.ok(cloud.surchargeCents > 0);
+    // The surcharge must stay a fraction of the thing itself, or it stops
+    // being a delivery choice and becomes a second product.
+    assert.ok(cloud.surchargeCents <= local.totalCents,
+      `${product}: the cloud costs more than the file it delivers`);
   }
 });
 
 test('nobody without a plan pays less than somebody with one', () => {
-  // The no-plan price and the rate a plan's wallet is charged are the same
-  // number. A plan only ever does better, through included credit and the Pro
-  // top-up discount. A cheaper no-plan price would pay customers to cancel.
-  assert.equal(CLOUD_PRICING.imageUpscale.price, RENDER_PRICES.photo.cloud);
-  assert.equal(CLOUD_PRICING.videoUpscale.price, RENDER_PRICES.video.cloud);
+  // A plan's advantage is its allowance and its credit, never a lower list
+  // price. A cheaper no-plan price would pay customers to cancel.
   for (const item of EXPORT_PRODUCTS) {
     assert.equal(exportPrice(item.id).total, RENDER_PRICES[item.product].local,
       `${item.id} is not sold at its ladder price`);
   }
+  // The wallet is charged the same surcharge a no-plan customer pays.
+  assert.equal(CLOUD_PRICING.imageUpscale.price, CLOUD_SURCHARGE.photo.price);
+  assert.equal(CLOUD_PRICING.videoUpscale.price, CLOUD_SURCHARGE.video.price);
   const jobCents = quoteCloudJob({ kind: 'video', durationSeconds: 60 }).amountCents;
-  assert.equal(jobCents, Math.round(RENDER_PRICES.video.cloud * 100),
-    'a cloud job quotes a different number than the ladder publishes');
-  // A plan's advantage is credit and discount, never a lower list price.
+  assert.equal(jobCents, Math.round(CLOUD_SURCHARGE.video.price * 100),
+    'a cloud job quotes a different number than the surcharge publishes');
   assert.ok(includedCloudCents({ plan: 'full' }) > 0, 'a paid plan must get credit');
   assert.ok(walletTopUpCents(10000, { plan: 'pro' }).chargedCents < 10000, 'Pro must get its discount');
   assert.equal(walletTopUpCents(10000, null).chargedCents, 10000, 'no plan means no discount');
