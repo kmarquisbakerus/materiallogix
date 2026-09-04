@@ -43,6 +43,13 @@ jobs:
       - name: Run the browser journey
         run: npm run journey
 
+      # The journey serves the repository directly and never touches _worker.js,
+      # so the policy the customer actually receives has no browser coverage
+      # there. A directive that blocks something the product legally loads
+      # would break production silently and pass every other suite.
+      - name: Check the Content-Security-Policy in a browser
+        run: npm run csp
+
       - name: Verify the deploy package ships only the site
         run: |
           python3 - <<'PY'

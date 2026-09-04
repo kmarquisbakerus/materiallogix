@@ -5,11 +5,12 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v26';
+const CACHE = 'materiallogix-shell-v27';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 // Every module the four pages import, plus the stylesheets they link. An
 // installed copy that is missing one of these does not degrade - it fails to
-// start. `npm test` walks the real import graph and fails if this list drifts.
+// start, with the three `OPTIONAL` entries below as the single exception.
+// `npm test` walks the real import graph and fails if this list drifts.
 const SHELL = [
   './', 'index.html', 'voice.html', 'usage.html', 'admin.html', 'manifest.webmanifest', 'icon.svg',
   'css/app.css', 'css/studio-entry.css', 'css/usage.css', 'css/admin.css',
@@ -34,6 +35,10 @@ const SHELL = [
 // handler would never match a single shell request.
 const shellPath = path => new URL(path, self.location.href).pathname;
 const SHELL_PATHS = new Set(SHELL.map(shellPath));
+// The operations console is served only to a Cloudflare Access session, so a
+// customer's install is answered 404 for these three and must carry on without
+// them. An ops machine that is signed in still gets them offline.
+const OPTIONAL = new Set(['admin.html', 'js/admin.js', 'css/admin.css']);
 // Proof-only candidate assets are warmed only when the explicit parity suite
 // runs. Keeping 14 MiB out of the mandatory shell protects normal installs.
 const PEOPLE_ASSETS = [
@@ -48,6 +53,17 @@ const PEOPLE_ASSETS = [
 const PEOPLE_PATHS = new Set(PEOPLE_ASSETS.map(shellPath));
 const NETWORK_TIMEOUT_MS = 1200;
 
+// A paid Stripe return lands on `index.html?checkout=success&session_id=…&claim=…`
+// and `checkout-result.js` scrubs the claim out of the address bar the moment
+// it has been spent, precisely so it is not left lying in history. Storing the
+// request as it arrived would leave it lying in Cache Storage instead, where
+// nothing clears it. Lookups already pass `ignoreSearch`, so the stored key
+// never needed the query string.
+const cacheKey = request => {
+  const url = new URL(request.url);
+  return new Request(url.origin + url.pathname);
+};
+
 async function networkFirst(request, event, cacheName = CACHE) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
@@ -55,7 +71,7 @@ async function networkFirst(request, event, cacheName = CACHE) {
     const response = await fetch(request, { cache: 'no-store', signal: controller.signal });
     if (response.ok) {
       const copy = response.clone();
-      event.waitUntil(caches.open(cacheName).then(cache => cache.put(request, copy)).catch(() => undefined));
+      event.waitUntil(caches.open(cacheName).then(cache => cache.put(cacheKey(request), copy)).catch(() => undefined));
     }
     return response;
   } catch {
@@ -75,7 +91,7 @@ self.addEventListener('install', event => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
     const results = await Promise.allSettled(SHELL.map(path => cache.add(path)));
-    const failed = SHELL.filter((_, index) => results[index].status === 'rejected');
+    const failed = SHELL.filter((path, index) => results[index].status === 'rejected' && !OPTIONAL.has(path));
     if (failed.length) {
       // Report every missing entry at once; a partial shell is a broken shell.
       throw new Error(`Offline shell incomplete: ${failed.join(', ')}`);

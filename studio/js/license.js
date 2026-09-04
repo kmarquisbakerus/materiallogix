@@ -60,12 +60,50 @@ let lastActivationFailure = null;
 
 export function activationFailureReason() { return lastActivationFailure; }
 
+// The stored check is the customer's own browser making a claim about a
+// conversation it had with the license service, so it can never be the trust
+// boundary; the boundary is the server, which sees the key on every
+// authorizeOutbound and can refuse a revoked one there. What the tag buys is
+// that the claim is not trivially editable: `{"revoked":true}` can no longer be
+// turned into three days of full entitlement by typing over one localStorage
+// value, and a record cannot be carried across to a different license. Anyone
+// prepared to run the page's own code can still mint a tag - that is the honest
+// limit of a client - but hand-editing storage no longer clears the bar.
+const TAG_V = 1;
+// An `okAt` written by this code is always in the past. A little tolerance
+// absorbs a clock the machine corrected between the write and the read;
+// anything beyond it is a timestamp nobody here wrote.
+const CLOCK_SKEW_MS = 5 * 60e3;
+const TAGGED_FIELDS = ['okAt', 'revoked', 'reason', 'entitlements', 'replacedAt'];
+
+async function recordTag(rec, key) {
+  const canonical = JSON.stringify([TAG_V, key, ...TAGGED_FIELDS.map(field => rec[field] ?? null)]);
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function readCheckRecord(key, now) {
+  let stored;
+  try { stored = JSON.parse(localStorage.getItem(CHECK_STORE)); } catch { return {}; }
+  if (!stored || typeof stored !== 'object') return {};
+  const { tag, ...rec } = stored;
+  // An unverifiable record is no record: it forces the phone-home rather than
+  // failing closed on its own, so a corrupt or half-written value costs a
+  // paying customer one network call and not their license.
+  if (typeof tag !== 'string' || tag !== await recordTag(rec, key)) return {};
+  if (rec.okAt !== undefined && (!Number.isFinite(rec.okAt) || rec.okAt > now + CLOCK_SKEW_MS)) delete rec.okAt;
+  return rec;
+}
+
+async function writeCheckRecord(rec, key) {
+  try { localStorage.setItem(CHECK_STORE, JSON.stringify({ ...rec, tag: await recordTag(rec, key) })); } catch { /* full */ }
+}
+
 export async function revalidateLicense(key, { requireFresh = false, now = Date.now() } = {}) {
-  /** Phone-home for keys minted with net:1. Sends the key and nothing else.
+  /** Phone-home for the stored key. Sends the key and nothing else.
    * Grace window: a failed or unreachable check within GRACE_DAYS of the
    * last successful check keeps an already-verified license working. */
-  let rec;
-  try { rec = JSON.parse(localStorage.getItem(CHECK_STORE)) || {}; } catch { rec = {}; }
+  const rec = await readCheckRecord(key, now);
   let freshVerified = false;
   const due = requireFresh || !rec.okAt || (now - rec.okAt) > CHECK_EVERY_H * 3600e3;
   if (due && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
@@ -101,7 +139,7 @@ export async function revalidateLicense(key, { requireFresh = false, now = Date.
   } else if (due && requireFresh) {
     rec.reason = 'online_verification_required';
   }
-  try { localStorage.setItem(CHECK_STORE, JSON.stringify(rec)); } catch { /* full */ }
+  await writeCheckRecord(rec, key);
   if (rec.revoked) return { valid: false, reason: rec.reason || 'revoked' };
   if (requireFresh && !freshVerified) return { valid: false, reason: rec.reason || 'verification_unavailable' };
   if (!rec.okAt) return { valid: false, reason: rec.reason || 'verification_required' };
@@ -117,18 +155,18 @@ export async function activeLicense() {
   if (!key) return null;
   const payload = await verifyLicense(key);
   if (!payload) { localStorage.removeItem(STORE); return null; }
-  if (payload.net === 1) {
-    const check = await revalidateLicense(key);
-    if (!check.valid) {
-      payload.suspended = check.reason;   // signature stands; features do not
-      return { ...payload, plan: 'suspended:' + payload.plan, reason: check.reason };
-    }
-    if (check.key && check.key !== key) {
-      const replacement = await verifyLicense(check.key);
-      if (replacement) return { ...replacement, entitlements: check.entitlements };
-    }
-    payload.entitlements = check.entitlements;
+  // Every key that verifies carries net:1 - verifyLicense refuses the rest - so
+  // there is no such thing as a key that skips the server check.
+  const check = await revalidateLicense(key);
+  if (!check.valid) {
+    payload.suspended = check.reason;   // signature stands; features do not
+    return { ...payload, plan: 'suspended:' + payload.plan, reason: check.reason };
   }
+  if (check.key && check.key !== key) {
+    const replacement = await verifyLicense(check.key);
+    if (replacement) return { ...replacement, entitlements: check.entitlements };
+  }
+  payload.entitlements = check.entitlements;
   return payload;
 }
 

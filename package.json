@@ -9,7 +9,8 @@
   },
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\"",
-    "journey": "node tests/browser/journey.mjs"
+    "journey": "node tests/browser/journey.mjs",
+    "csp": "node tests/browser/csp.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.62.1"

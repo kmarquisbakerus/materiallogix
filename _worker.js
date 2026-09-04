@@ -4,17 +4,74 @@
 // static assets are served through `env.ASSETS`. `_headers` and `_redirects`
 // are not consulted on that path, so response headers are set here or nowhere.
 
-// Directives that hold for a static site with same-origin APIs. `script-src`
-// and `connect-src` are deliberately absent: the Studio boots from an inline
-// theme script and talks to a local engine bridge over the customer's own
-// network, and a static allow-list would break both.
 const SECURITY_HEADERS = {
-  'Content-Security-Policy': "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff',
   'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=(), payment=(), interest-cohort=()',
   'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
 };
+
+// This origin holds the licence key, the bridge PIN, the whole project library
+// and an operations console, so script execution is allow-listed rather than
+// left open. The two reasons the policy used to name for having no
+// `script-src` are both answered here rather than avoided:
+//
+//   - the Studio pages boot from an inline theme script, so every response
+//     carries a fresh nonce and every `<script>` the page shipped with is
+//     stamped with it. An injected one cannot guess it;
+//   - the engine bridge is reachable at `connect-src`. Loopback is the whole
+//     of it because it is the whole of what a browser will allow: an https
+//     page is refused a LAN address as mixed content long before CSP is
+//     consulted, and a Studio opened over http from a Wi-Fi address is not
+//     served by this Worker at all.
+//
+// The rest is what the product actually loads: the MediaPipe vision bundle and
+// its models, the Cloudflare beacon, the blob module the people-mapping
+// runtime is imported from, and the blob worker behind camera RAW.
+const FONT_SWAP_HANDLER = "'sha256-MhtPZXr7+LpJUY5qtMutB+qWfQtMaPccfe7QXtCcEYc='";
+const policy = nonce => [
+  "default-src 'self'",
+  `script-src 'self' 'nonce-${nonce}' blob: 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://static.cloudflareinsights.com`,
+  // The site's one inline event handler promotes the print-only font
+  // stylesheet once it has loaded. Its hash is the only one accepted.
+  `script-src-attr 'unsafe-hashes' ${FONT_SWAP_HANDLER}`,
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "media-src 'self' data: blob:",
+  "worker-src 'self' blob:",
+  // The apex is named as well as `'self'` because the Studio addresses its API
+  // absolutely from anywhere that is not the apex (`api-root.js`), which is
+  // every preview deployment this Worker also serves.
+  "connect-src 'self' https://materiallogix.com data: blob: http://127.0.0.1:* http://localhost:* https://cdn.jsdelivr.net https://storage.googleapis.com https://cloudflareinsights.com",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join('; ');
+
+const mintNonce = () =>
+  btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))).replace(/=+$/, '');
+
+// Stamping is unconditional: a `<script src>` gains an attribute it does not
+// need, and no inline script the page shipped with can be missed. Only markup
+// the site itself wrote reaches this - `env.ASSETS` serves the deploy package -
+// and `npm test` counts the stamps against every page that ships.
+const stampNonce = async (response, nonce) => {
+  const html = (await response.text()).replace(/<script(?=[\s>])/gi, `<script nonce="${nonce}"`);
+  const headers = new Headers(response.headers);
+  headers.delete('Content-Length');
+  return new Response(html, { status: response.status, statusText: response.statusText, headers });
+};
+
+// The operations console is reconnaissance for anyone not on the team: it names
+// every admin endpoint, parameter and action, and the API behind it answers
+// only a Cloudflare Access session. Serve it to that session and to nobody
+// else. The offline shell treats these three as optional for this reason.
+const ADMIN_ONLY = /^\/studio\/(admin(\.html)?|js\/admin\.js|css\/admin\.css)$/;
+const hasAccessSession = request =>
+  Boolean(request.headers.get('Cf-Access-Jwt-Assertion')) ||
+  /(?:^|;\s*)CF_Authorization=/.test(request.headers.get('Cookie') || '');
 
 // Repository files that are not part of the published site: documentation,
 // dependency manifests, installed packages, the test suite, and anything
@@ -23,9 +80,10 @@ const NOT_THE_SITE = /(^|\/)(node_modules|tests?)\/|(^|\/)\.|\.(md|mjs|yml|yaml|
 
 // `Response.redirect` returns an immutable response, so hardening means
 // rebuilding it rather than mutating headers in place.
-const harden = response => {
+const harden = (response, nonce = mintNonce()) => {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value);
+  headers.set('Content-Security-Policy', policy(nonce));
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 };
 
@@ -69,6 +127,10 @@ export default {
       return harden(new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } }));
     }
 
+    if (ADMIN_ONLY.test(path) && !hasAccessSession(request)) {
+      return harden(new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } }));
+    }
+
     // Where the customer is, from the edge rather than from the browser.
     //
     // The video engine's licence excludes a list of territories, so the render
@@ -96,15 +158,17 @@ export default {
     }
 
     const response = await env.ASSETS.fetch(request);
-    if ((path === '/' || path === '/index.html') && response.headers.get('content-type')?.includes('text/html')) {
-      return harden(new HTMLRewriter()
+    const nonce = mintNonce();
+    if (!response.headers.get('content-type')?.includes('text/html')) return harden(response, nonce);
+    const page = (path === '/' || path === '/index.html')
+      ? new HTMLRewriter()
         .on('body', {
           element(element) {
             element.append('<script type="module" src="/checkout-site.js?v=20260903"></script>', { html: true });
           }
         })
-        .transform(response));
-    }
-    return harden(response);
+        .transform(response)
+      : response;
+    return harden(await stampNonce(page, nonce), nonce);
   }
 };

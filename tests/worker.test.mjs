@@ -18,6 +18,10 @@ const REQUIRED = [
   ['Content-Security-Policy', /frame-ancestors 'none'/],
   ['Content-Security-Policy', /object-src 'none'/],
   ['Content-Security-Policy', /base-uri 'self'/],
+  // Without these two the origin that holds the licence key, the bridge PIN
+  // and the operations console has no containment for the next injection.
+  ['Content-Security-Policy', /default-src 'self'/],
+  ['Content-Security-Policy', /script-src 'self' 'nonce-[A-Za-z0-9+/_-]{16,}'/],
   ['Referrer-Policy', /strict-origin-when-cross-origin/],
   ['X-Content-Type-Options', /^nosniff$/],
   ['Permissions-Policy', /camera=\(self\)/],
@@ -142,7 +146,7 @@ test('blocking internal files does not take any of the site with it', async () =
   const site = [
     '/', '/index.html', '/404.html', '/checkout-site.js',
     '/studio/', '/studio/index.html', '/studio/voice.html', '/studio/usage.html',
-    '/studio/admin.html', '/studio/js/app.js', '/studio/js/pricing.js',
+    '/studio/js/app.js', '/studio/js/pricing.js',
     '/legal/terms.html', '/legal/privacy.html', '/legal/refunds.html',
     '/robots.txt', '/sitemap.xml', '/logo.svg', '/indexnow-key.txt',
     '/cc89cc851acf64485c1280baa77eab1b.txt', '/demo/index.html', '/edge/region'
@@ -177,4 +181,54 @@ for p in sorted(root.rglob('*')):
   for (const required of ['index.html', 'studio/index.html', 'studio/js/app.js', 'legal/terms.html']) {
     assert.ok(shipped.includes(required), `${required} is missing from the deploy package`);
   }
+});
+
+test('the operations console is served only to a Cloudflare Access session', async () => {
+  // The console names every admin endpoint, parameter and action, and the API
+  // behind it answers nobody else, so serving the markup to the public is
+  // reconnaissance for no gain.
+  const consolePaths = ['/studio/admin.html', '/studio/admin', '/studio/js/admin.js', '/studio/css/admin.css'];
+  for (const path of consolePaths) {
+    const anonymous = await get('https://materiallogix.com' + path);
+    assert.equal(anonymous.status, 404, `${path} is readable without an Access session`);
+    assertHardened(anonymous, path);
+
+    const withHeader = await worker.fetch(new Request('https://materiallogix.com' + path,
+      { headers: { 'Cf-Access-Jwt-Assertion': 'stub.jwt.value' } }), env);
+    assert.equal(withHeader.status, 200, `${path} is not reachable with an Access assertion`);
+
+    const withCookie = await worker.fetch(new Request('https://materiallogix.com' + path,
+      { headers: { Cookie: 'cros=1; CF_Authorization=stub' } }), env);
+    assert.equal(withCookie.status, 200, `${path} is not reachable with an Access cookie`);
+  }
+});
+
+test('every script tag the pages ship with carries the response nonce', async () => {
+  // The policy names a nonce, so a page whose own scripts do not carry it does
+  // not boot at all: no theme, no service worker, no Voice Studio. Driven
+  // against the real files rather than a stub, because the count that matters
+  // is the one that ships.
+  const pages = ['/index.html', '/studio/index.html', '/studio/voice.html', '/studio/usage.html'];
+  const realAssets = {
+    ASSETS: {
+      fetch: request => new Response(readFileSync(resolve(ROOT, new URL(request.url).pathname.slice(1)), 'utf8'),
+        { status: 200, headers: { 'Content-Type': 'text/html' } })
+    }
+  };
+  for (const page of pages) {
+    const response = await worker.fetch(new Request('https://materiallogix.com' + page), realAssets);
+    const nonce = response.headers.get('Content-Security-Policy').match(/'nonce-([^']+)'/)[1];
+    const html = await response.text();
+    const tags = html.match(/<script(?=[\s>])/gi) || [];
+    const stamped = html.match(new RegExp(`<script nonce="${nonce.replace(/[+/]/g, '\\$&')}"`, 'g')) || [];
+    assert.ok(tags.length > 0, `${page} has no script tags to stamp`);
+    assert.equal(stamped.length, tags.length, `${page} ships ${tags.length - stamped.length} script tags the policy will refuse`);
+  }
+});
+
+test('two responses never share a nonce', async () => {
+  const first = await get('https://materiallogix.com/studio/index.html');
+  const second = await get('https://materiallogix.com/studio/index.html');
+  const nonceOf = response => response.headers.get('Content-Security-Policy').match(/'nonce-([^']+)'/)[1];
+  assert.notEqual(nonceOf(first), nonceOf(second), 'a reused nonce is a nonce an injection can learn');
 });
