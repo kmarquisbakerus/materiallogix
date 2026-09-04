@@ -309,3 +309,21 @@ test('no raw DOM insertion is handed a conditional that can be null', () => {
     }
   }
 });
+
+test('the people-review promise is not made unconditionally', () => {
+  // `analyzeGeometry` is the product's one networked extra and returns null
+  // when the vision models are unreachable, which `peopleReview` records as
+  // `manual-review-needed`. The workspace said "Every new photo is checked for
+  // faces, hands, and bodies before editing" whatever had happened, so the one
+  // sentence a customer reads before importing was false exactly when the
+  // check had not run.
+  const source = app;
+  assert.ok(!/Every new photo is checked for faces, hands, and bodies/.test(source),
+    'the unconditional promise is back');
+  assert.match(source, /manual-review-needed'\s*\n?\s*\?\s*'Automatic people review is unavailable/,
+    'the offline case must say the check did not run');
+  assert.match(source, /whenever the review models are reachable/,
+    'the available case must still be conditional');
+  // And the status it branches on has to be the one the analyser writes.
+  assert.match(source, /status: asset\.geometry \? 'complete' : 'manual-review-needed'/);
+});

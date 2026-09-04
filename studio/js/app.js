@@ -1022,7 +1022,15 @@ function renderSidebar() {
   const startBody = [
     photoWorkflowSteps(state.assets.length ? (reviewStatus ? 3 : 2) : 1),
     startActions,
-    el('p', { className: 'hint photo-flow-note' }, 'Every new photo is checked for faces, hands, and bodies before editing.')
+    // The people check is the product's one networked extra: `analyzeGeometry`
+    // returns null when the vision models are unreachable, and `peopleReview`
+    // records `manual-review-needed`. Promising it happens to every photo is a
+    // statement the offline case does not keep, so say what is true of the
+    // photos already in hand rather than of every photo there will ever be.
+    el('p', { className: 'hint photo-flow-note' },
+      reviewStatus?.status === 'manual-review-needed'
+        ? 'Automatic people review is unavailable on this connection — check faces, hands, and bodies yourself before editing.'
+        : 'New photos are checked for faces, hands, and bodies before editing, whenever the review models are reachable.')
   ];
   if (activeAsset) {
     startBody.push(btn(reviewStatus?.status === 'complete' ? 'Review again' : 'Review',
