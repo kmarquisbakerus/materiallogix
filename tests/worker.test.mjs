@@ -183,24 +183,45 @@ for p in sorted(root.rglob('*')):
   }
 });
 
-test('the operations console is served only to a Cloudflare Access session', async () => {
-  // The console names every admin endpoint, parameter and action, and the API
-  // behind it answers nobody else, so serving the markup to the public is
-  // reconnaissance for no gain.
+test('the operations console is served only to a verified Cloudflare Access session', async () => {
+  // The console names every admin endpoint, parameter and action, so serving
+  // the markup to the public is reconnaissance for no gain.
+  //
+  // The first version of this gate tested only that a header or cookie NAME was
+  // present, and this test asserted that a stub value opened it - which is
+  // exactly what an attacker sends. A check that looks like authentication and
+  // is not is worse than none, so the token is verified and the unverified
+  // cases below are the ones that must be refused.
   const consolePaths = ['/studio/admin.html', '/studio/admin', '/studio/js/admin.js', '/studio/css/admin.css'];
+  const configured = { ...env, ACCESS_TEAM_DOMAIN: 'team.cloudflareaccess.com', ACCESS_AUD: 'aud-value' };
+
   for (const path of consolePaths) {
     const anonymous = await get('https://materiallogix.com' + path);
     assert.equal(anonymous.status, 404, `${path} is readable without an Access session`);
     assertHardened(anonymous, path);
 
-    const withHeader = await worker.fetch(new Request('https://materiallogix.com' + path,
-      { headers: { 'Cf-Access-Jwt-Assertion': 'stub.jwt.value' } }), env);
-    assert.equal(withHeader.status, 200, `${path} is not reachable with an Access assertion`);
-
-    const withCookie = await worker.fetch(new Request('https://materiallogix.com' + path,
-      { headers: { Cookie: 'cros=1; CF_Authorization=stub' } }), env);
-    assert.equal(withCookie.status, 200, `${path} is not reachable with an Access cookie`);
+    for (const [label, headers] of [
+      ['a made-up assertion', { 'Cf-Access-Jwt-Assertion': 'stub.jwt.value' }],
+      ['a made-up cookie', { Cookie: 'cros=1; CF_Authorization=stub' }],
+      ['an empty assertion', { 'Cf-Access-Jwt-Assertion': '' }],
+      ['a well-formed but unsigned token', {
+        'Cf-Access-Jwt-Assertion': [
+          Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'k' })).toString('base64url'),
+          Buffer.from(JSON.stringify({ aud: 'aud-value', iss: 'https://team.cloudflareaccess.com',
+            exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url'),
+          Buffer.from('not-a-signature').toString('base64url')
+        ].join('.')
+      }]
+    ]) {
+      const forged = await worker.fetch(new Request('https://materiallogix.com' + path, { headers }), configured);
+      assert.equal(forged.status, 404, `${path} opened for ${label}`);
+    }
   }
+
+  // Unconfigured is not a reason to open the console.
+  const unconfigured = await worker.fetch(new Request('https://materiallogix.com/studio/admin.html',
+    { headers: { 'Cf-Access-Jwt-Assertion': 'stub.jwt.value' } }), env);
+  assert.equal(unconfigured.status, 404, 'the console opens when the Access audience is not configured');
 });
 
 test('every script tag the pages ship with carries the response nonce', async () => {

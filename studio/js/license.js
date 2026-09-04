@@ -63,23 +63,61 @@ export function activationFailureReason() { return lastActivationFailure; }
 // The stored check is the customer's own browser making a claim about a
 // conversation it had with the license service, so it can never be the trust
 // boundary; the boundary is the server, which sees the key on every
-// authorizeOutbound and can refuse a revoked one there. What the tag buys is
-// that the claim is not trivially editable: `{"revoked":true}` can no longer be
-// turned into three days of full entitlement by typing over one localStorage
-// value, and a record cannot be carried across to a different license. Anyone
-// prepared to run the page's own code can still mint a tag - that is the honest
-// limit of a client - but hand-editing storage no longer clears the bar.
+// authorizeOutbound and can refuse a revoked one there.
+//
+// Two things guard the record, and they are not equally strong. Be clear about
+// which is which, because an overstated control is worse than a missing one:
+//
+//   - `tag` is an UNKEYED digest over values the holder already has, computed
+//     by code that ships to their browser. It catches a corrupt or
+//     half-written record and a record copied from another licence. It does
+//     NOT resist anyone willing to recompute it, which is three lines in the
+//     same console that did the edit. It is an integrity check, not a security
+//     one, and it is not called one here.
+//   - `assertion` is signed by the licence service with the key this module
+//     already verifies licences against, so it cannot be minted in the
+//     browser at all. When one is present it is authoritative: it fixes the
+//     grace window, and a forged `okAt` beside it is ignored.
+//
+// Until the service issues assertions the honest position is that an offline
+// grace window is extendable by anyone prepared to edit storage, and that what
+// actually stops a revoked licence is the server refusing its next
+// authorizeOutbound.
 const TAG_V = 1;
 // An `okAt` written by this code is always in the past. A little tolerance
 // absorbs a clock the machine corrected between the write and the read;
 // anything beyond it is a timestamp nobody here wrote.
 const CLOCK_SKEW_MS = 5 * 60e3;
-const TAGGED_FIELDS = ['okAt', 'revoked', 'reason', 'entitlements', 'replacedAt'];
+const TAGGED_FIELDS = ['okAt', 'revoked', 'reason', 'entitlements', 'replacedAt', 'assertion'];
 
 async function recordTag(rec, key) {
   const canonical = JSON.stringify([TAG_V, key, ...TAGGED_FIELDS.map(field => rec[field] ?? null)]);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canonical));
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * A grace assertion signed by the licence service: `MLA1.<payload>.<sig>`,
+ * verified against the same public key as a licence, so the browser cannot
+ * mint one. The payload binds the licence id it was issued for and the moment
+ * the service confirmed it.
+ */
+export async function verifyGraceAssertion(assertion, licenceId) {
+  try {
+    const [tag, payloadB64, sigB64] = String(assertion || '').trim().split('.');
+    if (tag !== 'MLA1' || !payloadB64 || !sigB64) return null;
+    const payloadBytes = b64uToBytes(payloadB64);
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' },
+      await publicKey(), b64uToBytes(sigB64), payloadBytes);
+    if (!ok) return null;
+    const payload = JSON.parse(new TextDecoder().decode(payloadBytes));
+    // An assertion for somebody else's licence is not an assertion for this one.
+    if (!payload.lid || (licenceId && payload.lid !== licenceId)) return null;
+    if (!Number.isFinite(payload.okAt)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
 }
 
 async function readCheckRecord(key, now) {
@@ -91,6 +129,16 @@ async function readCheckRecord(key, now) {
   // failing closed on its own, so a corrupt or half-written value costs a
   // paying customer one network call and not their license.
   if (typeof tag !== 'string' || tag !== await recordTag(rec, key)) return {};
+
+  // A signed assertion outranks anything beside it. Where the service issues
+  // one, editing `okAt` in storage buys nothing: the signature does not cover
+  // the edited value and the assertion's own timestamp is the one that counts.
+  if (rec.assertion) {
+    const signed = await verifyGraceAssertion(rec.assertion, (await verifyLicense(key))?.lid);
+    if (!signed) { delete rec.assertion; delete rec.okAt; return rec; }
+    rec.okAt = signed.okAt;
+    if (signed.revoked === true) rec.revoked = true;
+  }
   if (rec.okAt !== undefined && (!Number.isFinite(rec.okAt) || rec.okAt > now + CLOCK_SKEW_MS)) delete rec.okAt;
   return rec;
 }
@@ -121,6 +169,10 @@ export async function revalidateLicense(key, { requireFresh = false, now = Date.
           rec.revoked = false;
           rec.reason = null;
           rec.entitlements = j.entitlements || {};
+          // Store the service's signed assertion when it issues one; it is
+          // what makes the grace window unforgeable rather than merely tidy.
+          if (typeof j.assertion === 'string') rec.assertion = j.assertion;
+          else delete rec.assertion;
           if (typeof j.replacementKey === 'string') {
             const replacement = await verifyLicense(j.replacementKey);
             if (replacement) {

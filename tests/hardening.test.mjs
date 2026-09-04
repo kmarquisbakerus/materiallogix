@@ -77,10 +77,22 @@ test('the policy still allows everything the product actually loads', async () =
   // A policy that breaks the product gets removed again, so name the real
   // dependencies: the MediaPipe bundle and its models, the blob module the
   // people-mapping runtime is imported from, and the camera RAW worker.
-  assert.ok(policy['script-src'].includes('https://cdn.jsdelivr.net'), 'the vision bundle is imported from jsdelivr');
+  // Path-scoped, not host-scoped. jsDelivr serves arbitrary GitHub and npm
+  // content from `/gh/<user>/<repo>@<ref>/<file>`, so naming the bare host
+  // would let an injected `<script src>` load anything and skip the nonce - a
+  // source list is a union, and the nonce closes only the inline vector.
+  assert.ok(policy['script-src'].includes('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/'),
+    'the vision bundle is imported from jsdelivr');
+  assert.ok(!policy['script-src'].includes('https://cdn.jsdelivr.net'),
+    'the whole of jsDelivr must not be a script source');
+  assert.ok(!policy['connect-src'].includes('https://cdn.jsdelivr.net'),
+    'the whole of jsDelivr must not be a connect source');
   assert.ok(policy['script-src'].includes('blob:'), 'the verified people-mapping runtime is imported from a blob');
   assert.ok(policy['script-src'].includes("'wasm-unsafe-eval'"), 'the vision backend instantiates WebAssembly');
-  assert.ok(policy['connect-src'].includes('https://storage.googleapis.com'), 'the landmark models are fetched from Google');
+  assert.ok(policy['connect-src'].includes('https://storage.googleapis.com/mediapipe-models/'),
+    'the landmark models are fetched from Google');
+  assert.ok(!policy['connect-src'].includes('https://storage.googleapis.com'),
+    'every bucket on storage.googleapis.com must not be reachable');
   assert.ok(policy['worker-src'].includes('blob:'), 'camera RAW decodes in a worker');
   assert.ok(policy['media-src'].includes('blob:'), 'rendered audio and video play from a blob');
   assert.ok(policy['img-src'].includes('blob:') && policy['img-src'].includes('data:'), 'previews are blobs and data URLs');

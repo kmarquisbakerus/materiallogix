@@ -31,7 +31,16 @@ const SECURITY_HEADERS = {
 const FONT_SWAP_HANDLER = "'sha256-MhtPZXr7+LpJUY5qtMutB+qWfQtMaPccfe7QXtCcEYc='";
 const policy = nonce => [
   "default-src 'self'",
-  `script-src 'self' 'nonce-${nonce}' blob: 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://static.cloudflareinsights.com`,
+  // Path-scoped, not host-scoped. jsDelivr serves arbitrary GitHub and npm
+  // content from `/gh/<user>/<repo>@<ref>/<file>`, so naming the bare host let
+  // an injected `<script src>` load anything at all and skip the nonce
+  // entirely - a source list is a union, and the nonce closes only the inline
+  // vector. A trailing slash matches a path prefix, so these are the packages
+  // the product loads and nothing else.
+  `script-src 'self' 'nonce-${nonce}' blob: 'wasm-unsafe-eval'`
+    + ' https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/'
+    + ' https://cdn.jsdelivr.net/npm/@tensorflow/'
+    + ' https://static.cloudflareinsights.com/',
   // The site's one inline event handler promotes the print-only font
   // stylesheet once it has loaded. Its hash is the only one accepted.
   `script-src-attr 'unsafe-hashes' ${FONT_SWAP_HANDLER}`,
@@ -43,7 +52,11 @@ const policy = nonce => [
   // The apex is named as well as `'self'` because the Studio addresses its API
   // absolutely from anywhere that is not the apex (`api-root.js`), which is
   // every preview deployment this Worker also serves.
-  "connect-src 'self' https://materiallogix.com data: blob: http://127.0.0.1:* http://localhost:* https://cdn.jsdelivr.net https://storage.googleapis.com https://cloudflareinsights.com",
+  "connect-src 'self' https://materiallogix.com data: blob: http://127.0.0.1:* http://localhost:*"
+    + ' https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/'
+    + ' https://cdn.jsdelivr.net/npm/@tensorflow/'
+    + ' https://storage.googleapis.com/mediapipe-models/'
+    + ' https://cloudflareinsights.com',
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -65,13 +78,75 @@ const stampNonce = async (response, nonce) => {
 };
 
 // The operations console is reconnaissance for anyone not on the team: it names
-// every admin endpoint, parameter and action, and the API behind it answers
-// only a Cloudflare Access session. Serve it to that session and to nobody
-// else. The offline shell treats these three as optional for this reason.
+// every admin endpoint, parameter and action. Serve it to a verified Cloudflare
+// Access session and to nobody else. The offline shell treats these as optional
+// for this reason.
+//
+// The first version of this checked only that a header or cookie NAME was
+// present, which any stranger can send: `Cf-Access-Jwt-Assertion: anything`
+// returned 200. A check that looks like authentication and is not is worse than
+// none, because it stops anyone asking the question again. The token is now
+// verified properly - signature against the team's published keys, plus
+// audience and expiry - and when the team domain and audience are not
+// configured the console is refused rather than opened.
 const ADMIN_ONLY = /^\/studio\/(admin(\.html)?|js\/admin\.js|css\/admin\.css)$/;
-const hasAccessSession = request =>
-  Boolean(request.headers.get('Cf-Access-Jwt-Assertion')) ||
-  /(?:^|;\s*)CF_Authorization=/.test(request.headers.get('Cookie') || '');
+
+const b64uToBytes = value => {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(padded + '='.repeat((4 - padded.length % 4) % 4));
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+};
+
+let cachedCerts = null;
+async function accessKeys(teamDomain) {
+  // Cloudflare rotates these; an hour is short enough to follow a rotation and
+  // long enough that the console is not one upstream outage from unusable.
+  if (cachedCerts && cachedCerts.domain === teamDomain && Date.now() - cachedCerts.at < 3600e3) {
+    return cachedCerts.keys;
+  }
+  const response = await fetch(`https://${teamDomain}/cdn-cgi/access/certs`, {
+    cf: { cacheTtl: 3600 }, signal: AbortSignal.timeout(5000)
+  });
+  if (!response.ok) throw new Error(`access_certs_${response.status}`);
+  const { keys } = await response.json();
+  if (!Array.isArray(keys) || !keys.length) throw new Error('access_certs_empty');
+  cachedCerts = { domain: teamDomain, at: Date.now(), keys };
+  return keys;
+}
+
+async function verifiedAccessSession(request, env) {
+  const teamDomain = env.ACCESS_TEAM_DOMAIN;
+  const audience = env.ACCESS_AUD;
+  // Unconfigured is not a reason to open the console. Fail closed.
+  if (!teamDomain || !audience) return false;
+
+  const token = request.headers.get('Cf-Access-Jwt-Assertion')
+    || (request.headers.get('Cookie') || '').match(/(?:^|;\s*)CF_Authorization=([^;]+)/)?.[1];
+  if (!token) return false;
+
+  const [headerB64, payloadB64, signatureB64] = String(token).split('.');
+  if (!headerB64 || !payloadB64 || !signatureB64) return false;
+  try {
+    const header = JSON.parse(new TextDecoder().decode(b64uToBytes(headerB64)));
+    const payload = JSON.parse(new TextDecoder().decode(b64uToBytes(payloadB64)));
+
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof payload.exp !== 'number' || payload.exp <= now) return false;
+    if (typeof payload.nbf === 'number' && payload.nbf > now + 60) return false;
+    if (payload.iss !== `https://${teamDomain}`) return false;
+    const claimed = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    if (!claimed.includes(audience)) return false;
+
+    const jwk = (await accessKeys(teamDomain)).find(candidate => candidate.kid === header.kid);
+    if (!jwk) return false;
+    const key = await crypto.subtle.importKey('jwk', jwk,
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']);
+    return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key,
+      b64uToBytes(signatureB64), new TextEncoder().encode(`${headerB64}.${payloadB64}`));
+  } catch {
+    return false;   // malformed, unreachable keys, anything: not a session
+  }
+}
 
 // Repository files that are not part of the published site: documentation,
 // dependency manifests, installed packages, the test suite, and anything
@@ -127,7 +202,7 @@ export default {
       return harden(new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } }));
     }
 
-    if (ADMIN_ONLY.test(path) && !hasAccessSession(request)) {
+    if (ADMIN_ONLY.test(path) && !(await verifiedAccessSession(request, env))) {
       return harden(new Response('Not found', { status: 404, headers: { 'Content-Type': 'text/plain' } }));
     }
 

@@ -216,6 +216,24 @@ rather than an implementation:
 | `POST /api/billing/portal` | the active licence key | Usage offers **Manage billing**; a subscription needs a way out as well as a way in. |
 | `GET /api/usage` | — | `license.plan` is rendered through `planLabel()`, so the service may keep sending plan ids. |
 | `GET /api/checkout/result?session_id=&claim=` | the pair Stripe returned in the success URL | Returns `{ licenseKey }` once the webhook has been processed, or a non-2xx with `{ error }` while it has not. This is the only thing that turns a payment into a licence. |
+| `POST /api/license/check` | the licence key | May return `assertion`: a `MLA1.<payload>.<sig>` token signed with the licence signing key, binding `lid` and `okAt`. Without it the offline grace window rests on an unsigned local record that anyone can recompute in devtools; with it, a forged `okAt` is ignored. The client verifies and prefers it already. |
+
+### The operations console
+
+`_worker.js` serves `/studio/admin*` only to a Cloudflare Access session whose
+JWT verifies against the team's published keys, with the audience and expiry
+checked. That needs two Worker environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `ACCESS_TEAM_DOMAIN` | e.g. `yourteam.cloudflareaccess.com` |
+| `ACCESS_AUD` | the Access application's audience tag |
+
+**Unconfigured, the console returns 404 to everyone, including the team.** That
+is deliberate: the first version of this gate checked only that a header was
+present, so `Cf-Access-Jwt-Assertion: anything` returned 200, and a check that
+looks like authentication and is not is worse than none. Set both before
+expecting the console to open.
 
 ### The Stripe success URL
 
