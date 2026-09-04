@@ -227,6 +227,41 @@ test('every colour refusal the export path can raise has words of its own', () =
 
 // --- pre-flight and the export path -------------------------------------------
 
+
+/**
+ * `preflightResult` lifted out of app.js and run against the real modules it
+ * uses. Grepping its body proves the words are present; running it proves the
+ * merge happens, which is the only thing the test is for.
+ */
+function runPreflightResult(project, assets) {
+  const body = app.slice(app.indexOf('function preflightResult()'),
+    app.indexOf('\n}', app.indexOf('function preflightResult()')) + 2);
+  const make = new Function('preflight', 'approvedPairs', 'colorExportDecision',
+    'COLOR_EXPORT_BLOCKS', 'Object', 'readableServiceError', 'state',
+    `${body}; return preflightResult;`);
+  const blocks = JSON.parse(JSON.stringify(COLOR_EXPORT_BLOCKS_FROM_APP()));
+  return make(preflight,
+    list => list.flatMap(a => Object.entries(a.placements || {})
+      .filter(([, p]) => p.decision === 'approved').map(([surfaceId]) => ({ asset: a, surfaceId }))),
+    colorExportDecision, blocks, Object, code => String(code).replaceAll('_', ' '),
+    { project, assets })();
+}
+
+/** The shipped block table, read from app.js so the words cannot drift. */
+function COLOR_EXPORT_BLOCKS_FROM_APP() {
+  const start = app.indexOf('const COLOR_EXPORT_BLOCKS');
+  assert.notEqual(start, -1, 'COLOR_EXPORT_BLOCKS moved');
+  // Brace-match rather than guess a terminator: the table is wrapped in
+  // Object.freeze(...), so it does not end at a line that is just `};`.
+  const open = app.indexOf('{', start);
+  let depth = 0, end = open;
+  for (let i = open; i < app.length; i++) {
+    if (app[i] === '{') depth++;
+    else if (app[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  return new Function(`return ${app.slice(open, end)}`)();
+}
+
 test('pre-flight cannot see the colour refusal on its own, so app.js merges it', () => {
   // The gap this covers, proven against the shipped modules: an approved asset
   // that never analysed raises nothing blocking, and the export refuses it.
@@ -239,10 +274,29 @@ test('pre-flight cannot see the colour refusal on its own, so app.js merges it',
   assert.equal(result.blocks, 0, 'analyze.js now blocks this on its own; the merge below can be reconsidered');
   assert.equal(colorExportDecision(asset.auto?.color || {}).allowed, false, 'the export path would ship this');
 
-  const merge = app.slice(app.indexOf('function preflightResult()'), app.indexOf('function preflightDialog'));
-  assert.match(merge, /colorExportDecision\(asset\.auto\?\.color \|\| \{\}\)/,
-    'pre-flight no longer asks the question the export path asks');
-  assert.match(merge, /blocks: result\.blocks \+ refusals\.length/, 'the refusals are not counted as blocking');
+  // Run the shipped merge, do not grep it. Both assertions here used to be
+  // source-shape matches that still passed with the merge functionally
+  // removed - a test that cannot fail for the thing it is attached to.
+  const merged = runPreflightResult({ surfaces: ['web-hero-desktop'], qaPreset: 'human', brief: {} }, [asset]);
+  assert.equal(merged.blocks, 1, 'the colour refusal is not counted as blocking');
+  const raised = merged.items.filter(i => i.level === 'block');
+  assert.equal(raised.length, 1);
+  assert.match(raised[0].message, /colour profile of this asset has not been read/);
+  assert.equal(raised[0].assetId, 'a1');
+  assert.ok(raised[0].fix, 'a blocking item must say what to do about it');
+
+  // An asset the export path would accept must not be invented as a blocker.
+  // `auto` has to carry what assetIssues reads, or the failure is the fixture's.
+  const fine = {
+    ...asset, id: 'a2', width: 2400, height: 1800,
+    auto: {
+      color: { profile: 'srgb' }, sharpness: 70,
+      exposure: { blown: 0, crushed: 0, meanLuma: 0.5 }, noise: 0.1
+    }
+  };
+  assert.equal(colorExportDecision(fine.auto.color).allowed, true, 'the fixture must be exportable');
+  const clean = runPreflightResult({ surfaces: ['web-hero-desktop'], qaPreset: 'human', brief: {} }, [fine]);
+  assert.equal(clean.refusals.length, 0, 'a deliverable asset was invented as a colour refusal');
 });
 
 test('every pre-flight surface reads the merged result, not the raw one', () => {
@@ -430,4 +484,23 @@ test('the only channel a failure has is announced, not just drawn', () => {
   // reader was already watching. Driven in a browser: regionExistedFirst true.
   assert.match(app, /wire\(\);\n[\s\S]{0,180}?announcer\(\);/,
     'the region must exist before the first message, not be made by it');
+});
+
+test('there is one issue renderer, so a severity word cannot be added to half of them', () => {
+  // The level word and the aria-hidden dot were added to `issueList` while the
+  // placement card kept its own copy, so half the issues in the product stayed
+  // a 5px dot whose colour was the only thing saying whether they blocked a
+  // delivery — at 1.09:1 against its neighbour. Two renderers for one thing is
+  // the defect; the missing word was the symptom.
+  const inline = app.match(/el\('div', \{ className: 'issue ' \+ i\.level/g) || [];
+  assert.equal(inline.length, 1, `${inline.length} places build an issue row; there must be one`);
+  assert.match(app, /function issueRow\(i, style = ''\)/, 'the shared renderer is gone');
+  assert.match(app, /card\.append\(issueRow\(i, 'border:0;padding:6px 0 0'\)\);/,
+    'the placement card must use the shared renderer, not its own copy');
+  assert.match(app, /return el\('div', \{\}, \.\.\.items\.map\(i => issueRow\(i\)\)\);/,
+    'the list must use it too');
+  // And what the shared one guarantees.
+  const row = /function issueRow\(i, style = ''\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';
+  assert.match(row, /ISSUE_LEVELS\[i\.level\] \|\| i\.level/, 'the level must be a word');
+  assert.match(row, /'aria-hidden': 'true'/, 'the decorative dot must not be announced');
 });

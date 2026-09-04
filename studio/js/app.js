@@ -1897,15 +1897,27 @@ async function paintCompare() {
 // it survives neither deuteranopia nor a screen reader. The word carries it.
 const ISSUE_LEVELS = Object.freeze({ block: 'Blocking', warn: 'Warning', info: 'Note' });
 
-function issueList(items, emptyText) {
-  if (!items.length) return el('p', { className: 'hint', style: 'margin:0' }, emptyText);
-  return el('div', {}, ...items.map(i => el('div', { className: 'issue ' + i.level },
+/**
+ * One issue, rendered one way.
+ *
+ * There were two of these. The severity word was added to this one and the
+ * placement card kept its own copy, so half the issues in the product were
+ * still a 5px dot whose colour was the only thing saying whether they blocked
+ * a delivery - at 1.09:1 against its neighbour.
+ */
+function issueRow(i, style = '') {
+  return el('div', { className: 'issue ' + i.level, ...(style ? { style } : {}) },
     el('span', { className: 'dot', 'aria-hidden': 'true' }),
     el('div', {},
       el('span', { className: 'where' }, `${ISSUE_LEVELS[i.level] || i.level} — `),
       i.surface ? el('span', { className: 'where' }, i.surface + ' — ') : null,
       el('span', { className: 'msg' }, i.message),
-      i.fix ? el('span', { className: 'fix' }, i.fix) : null))));
+      i.fix ? el('span', { className: 'fix' }, i.fix) : null));
+}
+
+function issueList(items, emptyText) {
+  if (!items.length) return el('p', { className: 'hint', style: 'margin:0' }, emptyText);
+  return el('div', {}, ...items.map(i => issueRow(i)));
 }
 
 function metricsBlock(asset) {
@@ -1997,8 +2009,7 @@ function placementCard(asset, surface) {
 
   const issues = placementIssues(asset, surface.id, state.project);
   for (const i of issues.filter(x => x.level !== 'info')) {
-    card.append(el('div', { className: 'issue ' + i.level, style: 'border:0;padding:6px 0 0' },
-      el('span', { className: 'dot' }), el('div', {}, el('span', { className: 'msg' }, i.message))));
+    card.append(issueRow(i, 'border:0;padding:6px 0 0'));
   }
   return card;
 }
