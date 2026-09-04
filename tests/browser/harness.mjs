@@ -20,7 +20,7 @@ export async function mintLicence(plan = 'full', selectedProduct = null) {
 }
 
 /** A browser context with billing stubbed and, optionally, a licence installed. */
-export async function studioContext(browser, { licence = null, features = {}, authenticated = true, checkoutLicenceKey = null } = {}) {
+export async function studioContext(browser, { licence = null, features = {}, authenticated = true, checkoutLicenceKey = null, comfyBase = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 1600, height: 1100 }, acceptDownloads: true });
   const api = [], downloads = [], errors = [];
 
@@ -106,6 +106,15 @@ export async function studioContext(browser, { licence = null, features = {}, au
     }
     return route.fulfill({ status: 404, body: '' });
   });
+
+  // Point the Studio at the engine stub's real address. Every ComfyUI call
+  // site reads `cros:comfyBase` before falling back to :8188, so the stub does
+  // not need to hold a fixed port.
+  if (comfyBase) {
+    await context.addInitScript(base => {
+      try { localStorage.setItem('cros:comfyBase', base); } catch { /* private mode */ }
+    }, comfyBase);
+  }
 
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(`PAGEERROR: ${error.message.split('\n')[0]}`));

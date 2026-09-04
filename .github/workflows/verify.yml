@@ -34,8 +34,11 @@ jobs:
       # renderer was never told about, a page that charged a different price
       # from the one it showed - passed the unit suite and would only have
       # been caught here, in a real browser driving the real application.
+      # playwright-core is a declared devDependency, so this is the copy npm ci
+      # just installed - not a floating fetch that could drift from the version
+      # the suite runs against.
       - name: Install Chromium
-        run: npx --yes playwright-core install --with-deps chromium
+        run: npx playwright-core install --with-deps chromium
 
       - name: Run the browser journey
         run: npm run journey

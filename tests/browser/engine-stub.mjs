@@ -4,7 +4,11 @@
 import { createServer } from 'node:http';
 import { deflateSync, crc32 } from 'node:zlib';
 
-const PORT = Number(process.argv[2] || 8188);
+// 0: any free port. 8188 is the ComfyUI address the Studio dials by default,
+// but every call site resolves it from `cros:comfyBase` first, so the harness
+// seeds that key with wherever this actually bound. A fixed port turned one
+// crashed run into EADDRINUSE for every run after it.
+const PORT = Number(process.argv[2] || 0);
 
 /** A real, decodable PNG - a tiny one still has to survive createImageBitmap. */
 function png(width = 768, height = 512) {
@@ -89,6 +93,6 @@ export function engineStub(port = PORT) {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  await engineStub();
-  console.log(`engine stub on http://127.0.0.1:${PORT}`);
+  const server = await engineStub();
+  console.log(`engine stub on http://127.0.0.1:${server.address().port}`);
 }

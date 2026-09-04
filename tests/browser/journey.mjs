@@ -10,7 +10,7 @@ import { engineStub } from './engine-stub.mjs';
 import { mintLicence, studioContext, photoScript } from './harness.mjs';
 import { CLOUD_PRICING } from '../../studio/js/pricing.js';
 
-const BASE = 'http://127.0.0.1:8099/studio';
+let BASE, SITE;   // set once the site server has a port
 let passed = 0;
 const failures = [];
 const step = title => console.log(`\n─── ${title} ${'─'.repeat(Math.max(0, 58 - title.length))}`);
@@ -23,21 +23,26 @@ let chromium;
 try { ({ chromium } = await import('playwright-core')); }
 catch { console.error('The journey needs playwright-core installed. See tests/browser/README.md.'); process.exit(2); }
 // An explicit binary wins - that is how this repository's dev container points
-// at its preinstalled Chromium. Otherwise fall back to the one playwright-core
-// installed, so `npx playwright-core install chromium && npm run journey` works
-// with nothing to configure. Without this fallback the suite could not run in
-// CI, which is why it never did.
-const executablePath = process.env.JOURNEY_CHROME || process.env.CHROME_PATH || (() => {
-  try { return chromium.executablePath(); } catch { return ''; }
-})();
-if (!executablePath) {
-  console.error('No Chromium found. Set JOURNEY_CHROME, or run `npx playwright-core install chromium`. See tests/browser/README.md.');
-  process.exit(2);
-}
+// at its preinstalled Chromium. With none set, let playwright-core launch
+// whatever it installed for itself, rather than naming a path and being wrong
+// about which build it chose. Without this the suite could not run in CI,
+// which is why it never did.
+const executablePath = process.env.JOURNEY_CHROME || process.env.CHROME_PATH || '';
 
 const site = await serve();
+SITE = `http://127.0.0.1:${site.address().port}`;
+BASE = `${SITE}/studio`;
 const engine = await engineStub();
-const browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] });
+// Every session is told where the stub actually bound, so no fixed port.
+const COMFY = `http://127.0.0.1:${engine.address().port}`;
+let browser;
+try {
+  browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox'] });
+} catch (error) {
+  console.error(`Could not start Chromium: ${error.message.split('\n')[0]}`);
+  console.error('Set JOURNEY_CHROME to a binary, or run `npx playwright-core install chromium`. See tests/browser/README.md.');
+  process.exit(2);
+}
 const licence = await mintLicence('full');
 
 const settle = (page, ms) => page.waitForTimeout(ms);
@@ -77,7 +82,7 @@ const fingerprint = page => page.evaluate(() => {
 const allErrors = [];
 try {
   // ── Free, then paid ──────────────────────────────────────────────────────
-  const free = await studioContext(browser, { licence: null, authenticated: false });
+  const free = await studioContext(browser, { comfyBase: COMFY, licence: null, authenticated: false });
   const page = free.page;
 
   step('Arrive at the Studio');
@@ -126,7 +131,7 @@ try {
   await free.context.close();
 
   // ── The paid session ─────────────────────────────────────────────────────
-  const paid = await studioContext(browser, { licence });
+  const paid = await studioContext(browser, { comfyBase: COMFY, licence });
   const app = paid.page;
   await app.goto(`${BASE}/index.html?dev=1#workspace`, { waitUntil: 'domcontentloaded' });
   await app.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
@@ -319,7 +324,7 @@ try {
   // ── Voice ────────────────────────────────────────────────────────────────
   step('Direct a voice');
   {
-    const voice = await studioContext(browser, { licence });
+    const voice = await studioContext(browser, { comfyBase: COMFY, licence });
     const page = voice.page;
     await page.goto(`${BASE}/voice.html?dev=1`, { waitUntil: 'domcontentloaded' });
     await settle(page, 4000);
@@ -349,7 +354,7 @@ try {
   // ── Wallet and ledger ────────────────────────────────────────────────────
   step('Check the wallet and the ledger');
   {
-    const account = await studioContext(browser, { licence });
+    const account = await studioContext(browser, { comfyBase: COMFY, licence });
     const page = account.page;
     const prompts = [];
     page.on('dialog', async dialog => { prompts.push(dialog.message().slice(0, 60)); await dialog.dismiss(); });
@@ -401,7 +406,7 @@ try {
     ['nothing renders while both flags are off', {}, 0],
     ['both appear the moment the server enables them', { google_sign_in: true, apple_sign_in: true }, 2]
   ]) {
-    const session = await studioContext(browser, { licence, features });
+    const session = await studioContext(browser, { comfyBase: COMFY, licence, features });
     await session.page.goto(`${BASE}/index.html?dev=1#workspace`, { waitUntil: 'domcontentloaded' });
     await session.page.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
     await settle(session.page, 1500);
@@ -421,7 +426,7 @@ try {
     // on, rather than trusting that the file exists.
     const bought = await mintLicence('full');
     let fulfilled = null;                       // the webhook has not landed yet
-    const buyer = await studioContext(browser, { checkoutLicenceKey: () => fulfilled });
+    const buyer = await studioContext(browser, { comfyBase: COMFY, checkoutLicenceKey: () => fulfilled });
     // The minted key only verifies against the public key swapped at the edge.
     await buyer.context.route('**/studio/js/license-key.js', route => route.fulfill({
       status: 200, contentType: 'text/javascript',
@@ -477,7 +482,7 @@ try {
     const regionAsked = new Set();
     const sendsFor = async (plan, product) => {
       const licence = await mintLicence(plan, product);
-      const ctx = await studioContext(browser, { licence });
+      const ctx = await studioContext(browser, { comfyBase: COMFY, licence });
       await ctx.context.route('**/edge/region', route => { regionAsked.add(ctx.context); route.continue(); });
       await ctx.page.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
       await settle(ctx.page, 3000);
@@ -565,7 +570,7 @@ try {
   // ── The free preview is short ────────────────────────────────────────────
   step('Preview voice without a licence');
   {
-    const guest = await studioContext(browser, {});
+    const guest = await studioContext(browser, { comfyBase: COMFY });
     const page = guest.page;
     await page.goto(`${BASE}/voice.html?dev=1`, { waitUntil: 'domcontentloaded' });
     await settle(page, 2500);
@@ -597,10 +602,10 @@ try {
   // ── The pricing table ────────────────────────────────────────────────────
   step('Read the pricing table and pick a plan');
   {
-    const shop = await studioContext(browser, {});
+    const shop = await studioContext(browser, { comfyBase: COMFY });
     const page = shop.page;
-    await page.goto('http://127.0.0.1:8099/index.html', { waitUntil: 'domcontentloaded' });
-    await page.addScriptTag({ type: 'module', url: 'http://127.0.0.1:8099/checkout-site.js' });
+    await page.goto(`${SITE}/index.html`, { waitUntil: 'domcontentloaded' });
+    await page.addScriptTag({ type: 'module', url: `${SITE}/checkout-site.js` });
     await settle(page, 1200);
 
     const cards = await page.evaluate(() => [...document.querySelectorAll('#pricing .plan h3')].map(h => h.textContent.trim()));
@@ -667,7 +672,7 @@ try {
 
   step('Work offline');
   {
-    const installed = await studioContext(browser, { licence });
+    const installed = await studioContext(browser, { comfyBase: COMFY, licence });
     const page = installed.page;
     await page.goto(`${BASE}/index.html`, { waitUntil: 'domcontentloaded' });
     await settle(page, 6000);
