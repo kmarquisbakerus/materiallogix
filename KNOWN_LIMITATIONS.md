@@ -76,7 +76,9 @@ as a surprise fee however small it is.
 
 The surcharge only has to cover the GPU. The product's margin lives in the
 deliverable price the customer already paid; asking the surcharge to carry it
-too is what produced a $5.99 cloud minute and a $3.99 cloud photo.
+too is what produced the old ladder below, where a cloud minute was a flat
+second retail price instead of the $4.99 deliverable plus the $2 the GPU
+actually costs.
 
 That separation also closes a hole. A plan unit earns about three cents, and a
 cloud job costs twenty-six, so a cloud render billed against monthly units
@@ -128,7 +130,7 @@ them is primary-source verified**. Confirm before quoting externally.
 | --- | --- | --- |
 | One clean photo | **$2.99** | **$3.99** |
 | One clean minute of audio | **$2.99** | **$3.99** |
-| One clean minute of video | **$4.99** | **$5.99** |
+| One clean minute of video | **$4.99** | **$6.99** |
 
 Two rules hold it together, both tested:
 
@@ -165,7 +167,8 @@ accounts.
 
 A minute finished on the customer's own machine costs us nothing to serve, and
 sells for **$4.99** with no plan. A minute rendered in the cloud runs on our
-GPUs and sells for **$5.99**.
+GPUs and sells for **$6.99** - the same $4.99 deliverable plus the $2
+surcharge.
 
 Price and metering are now separate. A video minute still spends **four units**
 of a plan's monthly allowance, because it is four times the work of an image -
@@ -174,7 +177,8 @@ the previous $11.96 came from.
 
 The only measured cost in the model is `MEASURED_VIDEO_COST`: **$1.31 per
 output minute** for native 4K on a community RTX 4090 pool at $0.34/hr, which
-leaves 78% at $5.99. That figure is extrapolated from **a single ten-second
+leaves 35% on the $2 surcharge and 81% on the $6.99 a no-plan cloud minute
+costs. That figure is extrapolated from **a single ten-second
 run** and the sixty-second checkpoint has never been run. Roughly a fifth of the
 cost is fixed pod lifecycle, so longer jobs should come in cheaper per minute
 and this is the pessimistic case. `productionEnabled` stays `false` until a
@@ -182,18 +186,23 @@ production-length fixture confirms it, and a test fails the build if that flag
 is opened while `productionLengthConfirmed` is still false.
 
 **Consequence to decide before launch:** the included $20 cloud credit bought
-6m 40s of video at the old $3.00/min. At $5.99 it buys **3m 20s**, or 5 cloud
-photos where it used to buy 200. The site
+6m 40s of video at the old $3.00/min. At the $2 surcharge it buys **10
+minutes**, or 20 cloud photos. The site
 promises "$20 of cloud credit each paid period" and that is still exactly what
 it grants - but if the intent was a number of *minutes* rather than a number of
 *dollars*, the credit has to rise with the rate.
 
-Two of the six advertised plans, Single Studio Pro and Pro Studio, sell the Pro
-Motion Engine, five personal voice clones, and premium voice minutes. Those
-capabilities are declared and entitled - a Pro licence resolves to the Pro lane
-and unlocks the Studios it paid for - but the Pro Motion Engine and the premium
-voice models are not shipped yet, so a Pro licence currently delivers the same
-renders as its standard tier. Do not sell the Pro plans until both ship.
+Two of the six advertised plans, Single Studio Pro and Pro Studio, were sold on
+the Pro Motion Engine, premium voice minutes, free cloud upscaling and a 20%
+wallet discount. Not one of the four is switched on, and the entire delta a Pro
+licence delivers today is the voice-profile cap: five personal clones instead
+of one. The two Pro panels in `index.html` now say exactly that - the clone
+count under "Pro adds today", the other four under "Not in this release", each
+with the sentence that until they ship a Pro licence renders as its standard
+tier does. Prices are unchanged, so the cards carry a disclosure rather than a
+withdrawal; withdrawing the six `single_pro_*` and `pro_*` rows from
+`stripeCatalogue()` is the only change that removes the exposure outright, and
+it is a `pricing.js` change, not a copy change.
 
 ## Client contracts the billing service must honour
 
@@ -292,17 +301,23 @@ The rest of the Pro lane still cannot be walled, because it does not exist:
 
 | Pro entitlement | Read by | Blocked on |
 | --- | --- | --- |
-| `voice.maxWords` | `scriptAllowance` | - shipped |
-| `voice.multiTake` | `allowsMultiSourceVoicePack` | - shipped |
-| `personalClones` | `voiceProfileLimit` | - shipped |
-| `upscale.model` | `upscaleModelsForLane` | - shipped |
+| `personalClones` | `voiceProfileLimit`, then `voice.html` | - shipped, and the only thing a Pro tier gives that its standard tier does not |
 | `motionEngine: 'pro'` | `video-engine.js`, on every render | the Pro Motion Engine is not shipped - the gate runs and records "no generative engine" |
 | `voice.quality: 'premium'` | nothing | premium voice models are not shipped |
-| `cloudUpscaleIncluded` | nothing | the cloud lane is disabled |
-| `walletDiscount` | `walletTopUpCents` | - shipped |
+| `includedMinutes`, `extraPricePerHour` | nothing | premium voice models are not shipped |
+| `cloudUpscaleIncluded`, `freeUpscalePlans` | nothing | the cloud lane is disabled, and `quoteCloudJob` is never passed a licence |
+| `walletDiscount` | `walletTopUpCents`, which no product module calls | the refill flow posts the undiscounted amount |
 
-A Pro licence today therefore renders exactly like its standard tier. Do not
-sell the Pro plans until the engines behind those first three rows exist.
+`voice.maxWords`, `voice.multiTake` and `upscale.model` were in this table and
+do not belong in it. `LANES.pro` spreads `LANES.paid` and overrides none of the
+three, so `scriptAllowance`, `allowsMultiSourceVoicePack` and
+`upscaleModelsForLane` return the same answer for both. They separate free from
+paid, not standard from Pro, and counting them here is how two tiers came to
+look walled when only one field was.
+
+A Pro licence today therefore renders exactly like its standard tier, and both
+Pro cards now say so in the card itself. Until the engines exist, the copy is
+the wall; `stripeCatalogue()` is where an actual withdrawal would go.
 
 ## Metering
 
@@ -321,7 +336,7 @@ correct - they are one photo artifact each.
 
 `stripeCatalogue()` generates every SKU the client can send to
 `/api/checkout/session` from the same declarations the site renders, so the
-payment processor and the page a customer read cannot disagree. 29 SKUs: 26
+payment processor and the page a customer read cannot disagree. 29 SKUs: 25
 subscription rows (`<plan>_<term>`), three one-time exports, and the
 customer-chosen wallet top-up with its range.
 
@@ -525,6 +540,45 @@ places.
 
 This is the check that would have caught all seven, and it is the one to run
 first when a tier is added.
+
+## Statements corrected against the code, and what is still blank
+
+Four published statements said something the product does not do. Each is now
+what the code does, and `tests/claims.test.mjs` pins the number to the function
+it comes from so it cannot drift back:
+
+| Statement | Was | Is | Pinned to |
+| --- | --- | --- | --- |
+| `legal/terms.html` Voice Starter allowance | 60 finished voice minutes | 30 | `MONTHLY_UNITS.voice_starter` |
+| `legal/terms.html` Voice Starter auditions | "unlimited marked audition previews" | every take renders clean and spends allowance | `VOICE_STARTER_LANE.voice.stamped === false` |
+| `legal/refunds.html` over-$50 purchases | "the Full Studio three-month term and both annual terms" | no list at all | `stripeCatalogue()` - 13 SKUs are over $50, five of them quarterly |
+| `index.html` "never use your allowance" | said of every preview, on four cards | said only of the proof export, which authorizes zero units | the proof branch in `doExport` |
+
+The refund page names no SKUs on purpose. A list of what costs over $50 is a
+second copy of the price table, and the rule reads the same without it.
+
+### Facts the documents still need from outside this repository
+
+Every one of these is written into the page as a literal
+`[TO BE COMPLETED: ...]` marker, so a page shipped with one still in it is
+visibly unfinished rather than quietly wrong.
+
+`legal/terms.html`
+- state of formation, company registration number and registered office address
+  of LibraSide Technologies, LLC
+- date, scope, conformance level and known exceptions of an accessibility
+  assessment - none has been carried out, and the page says so rather than
+  claiming WCAG 2.2 AA
+- the accessibility enforcement body for each country we sell into
+
+`legal/privacy.html`
+- retention periods for account and licence records, consent records, cloud-job
+  records, cloud-job media and output, security events, and billing records
+- name, address and email of the Article 27 representative in the EU, and of
+  the one in the UK. Voice packs and identity reference sets are Article 9
+  data, so the "occasional processing" exemption does not reach us and both
+  appointments are required
+- the transfer mechanism for personal data leaving the EEA and the UK
 
 ## What the terms carry, and what they cannot
 

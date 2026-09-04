@@ -314,16 +314,34 @@ test('a delivery spends units by what it actually is', () => {
   const mixed = unitsForDeliveries([{ kind: 'photo' }, { kind: 'video', seconds: 120 }]);
   assert.equal(mixed, 1 + UNITS_PER_VIDEO_MINUTE * 2);
 
-  // And the export has to use it, not the placement count.
+  // And each flow has to bill by what it actually produces.
   const source = read('studio/js/app.js');
-  assert.match(source, /quantity: unitsForDeliveries\(/, 'the campaign export must bill by what it renders');
-  assert.match(source, /seconds: pair\.asset\.duration/, 'the export must pass each clip its duration');
-  // A contact sheet and a review page are one photo artifact per placement, so
-  // those two do bill by count. The clean and proof packages must not.
-  const packageCall = /artifactKind: exportOpts\.proof[\s\S]{0,220}?\}\);/.exec(source)?.[0] || '';
+
+  // The campaign zip carries one rendered still per approved placement: a
+  // video placement gets a poster frame and the customer's own file handed
+  // back unmodified, never a cut. Billing it four units a source minute took
+  // 240 - a quarter of a Full Studio month - for one ten-minute upload
+  // approved on six surfaces, for a package that renders no video at all.
+  const packageCall = /artifactKind: exportOpts\.proof[\s\S]{0,260}?\}\);/.exec(source)?.[0] || '';
   assert.ok(packageCall, 'the campaign export authorization moved');
   assert.match(packageCall, /unitsForDeliveries\(/, 'the package must bill by what it renders');
-  assert.ok(!/quantity: pairs\.length/.test(packageCall), 'the package must not bill per placement');
+  assert.ok(!/quantity: pairs\.length[,\s]/.test(packageCall), 'the package must bill through the unit policy');
+  assert.match(source, /const deliveries = pairs\.map\(\(\) => \(\{ kind: 'photo' \}\)\);/,
+    'the package renders stills, so it must bill stills');
+  assert.equal(unitsForDeliveries([{ kind: 'photo' }, { kind: 'photo' }, { kind: 'photo' }]), 3,
+    'six placements of one clip is six stills, not four units a source minute');
+
+  // A watermarked proof is sold on every plan card as free, so it reserves
+  // nothing. The local ledger already skipped it while the server was charged.
+  assert.match(packageCall, /exportOpts\.proof \? 0 :/, 'a proof must spend no plan units');
+  assert.match(source, /if \(!exportOpts\.proof\) recordExport\(/, 'and the local ledger must agree with it');
+
+  // The flow that really does render video is the one that bills by duration.
+  assert.match(source, /quantity: exportUnits\('video', \{ seconds: plan\.outputSeconds \}\)/,
+    'a rendered cut must bill by its length, not a flat unit');
+
+  // A contact sheet and a review page are one photo artifact per placement, so
+  // those two do bill by count.
   assert.equal((source.match(/artifactKind: 'client_review', quantity: pairs\.length/g) || []).length, 1);
   assert.equal((source.match(/artifactKind: 'contact_sheet', quantity: pairs\.length/g) || []).length, 1);
 });

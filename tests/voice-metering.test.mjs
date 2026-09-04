@@ -36,7 +36,7 @@ const DEPENDENCIES = ['$', 'document', 'fetch', 'AudioContext', 'prompt', 'URL',
   'authorizeOutbound', 'settleOutbound', 'stagePendingUsageRelease', 'voidOutbound',
   'activeLicense', 'covers', 'humanizeBuffer', 'stampPreview', 'voiceTells',
   'voiceReferenceConsent', 'voiceProfileLimit', 'plansCovering', 'count',
-  'bridgeFetch', 'BRIDGE', 'checkEngine'];
+  'bridgeFetch', 'BRIDGE', 'checkEngine', 'recordConsent', 'ensureGuardianAck'];
 
 // eslint-disable-next-line no-new-func
 const buildPage = new Function(...DEPENDENCIES, `
@@ -75,7 +75,8 @@ function harness({
   settle = { authorization: { status: 'settled' } },
   stampAvailable = true,
   humanize = null,
-  bridge = null
+  bridge = null,
+  guardianAck = true
 } = {}) {
   const billing = [];
   const stagedDuringFlight = [];
@@ -133,12 +134,14 @@ function harness({
   $('#voiceRetention').checked = true;
 
   let decodes = 0;
+  const consents = [], acks = [];
+  let promptWith = () => 'my-voice';
   const deps = {
     $,
     document: { createElement: tag => new Element(tag), getElementById: () => null },
     fetch: fetchStub,
     AudioContext: class { async decodeAudioData() { return ++decodes === 1 ? clean : stampSource; } close() { return Promise.resolve(); } },
-    prompt: () => 'my-voice',
+    prompt: (...args) => promptWith(...args),
     URL: { createObjectURL: blob => { blobs.push(blob.size); return `blob:take-${blobs.length}`; } },
     activeLicense: async () => license,
     covers,
@@ -160,7 +163,12 @@ function harness({
       return { ok: true, json: async () => ({ report: 'ready' }) };
     },
     BRIDGE: 'http://127.0.0.1:8189',
-    checkEngine: () => {}
+    checkEngine: () => {},
+    // A voice profile is biometric data, so both of these have to happen
+    // before the upload and both are watched here: the confirmation that was
+    // asked, and the record that was written.
+    recordConsent: async record => { consents.push(record); return { id: 'consent_test', ...record }; },
+    ensureGuardianAck: async options => { acks.push(options); return guardianAck; }
   };
 
   let pending = () => [];
@@ -170,7 +178,8 @@ function harness({
   });
 
   return {
-    billing, stagedDuringFlight, channelReads, blobs, $,
+    billing, stagedDuringFlight, channelReads, blobs, $, consents, acks,
+    setPrompt: fn => { promptWith = fn; },
     pending: () => pending(),
     async playAndCheck() { return (await ready).playAndCheck(new ArrayBuffer(64)); },
     async savePack() { return (await ready).savePack(new Blob([new Uint8Array(8)]), { status: 'pass', advisories: [] }); }
@@ -260,4 +269,50 @@ test('the profile gate asks pricing which Studio the licence bought', async () =
   const voiceStarter = harness({ license: { plan: 'voice_starter', selected_product: 'voice' } });
   await voiceStarter.savePack();
   assert.deepEqual(voiceStarter.billing, ['outbound/authorize', 'outbound/settle']);
+});
+
+test('a voice profile is not built without the age confirmation, on any route', async () => {
+  // `ensureGuardianAck` had exactly two call sites, and "Import reference" -
+  // the route that accepts somebody else's audio file, including the composite
+  // multi-voice blend - was not one of them. The route most likely to carry a
+  // stranger's or a minor's voice was the only one with no age gate. Every
+  // route into a profile funnels through savePack, so the gate lives there.
+  const refused = harness({ guardianAck: false });
+  await refused.savePack();
+  assert.deepEqual(refused.billing, [], 'nothing may be reserved before the age confirmation');
+  assert.equal(refused.consents.length, 0, 'a refused confirmation records no consent');
+  assert.match(refused.$('#recState').textContent, /age and guardian confirmation/);
+
+  const allowed = harness();
+  await allowed.savePack();
+  assert.equal(allowed.acks.length, 1, 'the confirmation must be asked once per subject');
+  assert.equal(allowed.acks[0].subject, 'my-voice', 'the confirmation must name the subject it covers');
+  assert.equal(allowed.acks[0].purpose, 'voice_conditioning');
+});
+
+test('the consent is written down against the subject, not read and dropped', async () => {
+  // `voiceReferenceConsent(...)` was read for `.status` and fell out of scope.
+  // Nothing persisted it and no consent store existed, while privacy.html
+  // stated that consent records live in access-controlled databases. For
+  // biometric data the burden of demonstrating consent is ours, and a record
+  // that was never written cannot be produced.
+  const session = harness();
+  await session.savePack();
+  assert.equal(session.consents.length, 1, 'the consent must be recorded');
+  const [record] = session.consents;
+  assert.equal(record.subject, 'my-voice', 'a record with nobody on it covers nobody');
+  assert.equal(record.purpose, 'voice_conditioning');
+  assert.equal(record.granted, true);
+  assert.ok(record.statement.length > 20, 'the record must say what was agreed');
+  assert.equal(record.evidence.authorizedSource, true);
+  assert.equal(record.evidence.retentionAccepted, true);
+});
+
+test('an unnamed subject is refused rather than filed under nothing', async () => {
+  const session = harness();
+  session.setPrompt(() => '   ');
+  await session.savePack();
+  assert.deepEqual(session.billing, []);
+  assert.equal(session.consents.length, 0);
+  assert.match(session.$('#recState').textContent, /needs the name of the person/);
 });

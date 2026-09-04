@@ -39,7 +39,7 @@ import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecisio
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
 import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel,
-  laneFor, upscaleModelsForLane, LANES, unitsForDeliveries, deliveryRulesFor, requiresWatermark } from './pricing.js';
+  laneFor, upscaleModelsForLane, LANES, exportUnits, unitsForDeliveries, deliveryRulesFor, requiresWatermark } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 import { videoEngineForThisCustomer, rememberEnginePreference, EDITORIAL_PROVENANCE } from './video-engine.js';
 import { PRO_VIDEO_ENGINE, STANDARD_VIDEO_ENGINE } from './model-licence.js';
@@ -552,6 +552,7 @@ function generatePanel() {
         btn('Try again', 'btn sm', () => renderLocal(true)));
       return;
     }
+    const unlicensed = !covers(await activeLicense(), 'photo');
     const ckptSel = el('select', {});
     for (const [index, c] of ckpts.entries()) ckptSel.append(el('option', { value: c }, `Studio quality ${index + 1}`));
     const promptBox = el('textarea', { placeholder: 'What to generate. Wording from the brief helps.', rows: 3 });
@@ -608,12 +609,20 @@ function generatePanel() {
       state.recentPrompts = [...(state.recentPrompts || []), screen.normalized].slice(-20);
       go.disabled = true;
       let ticker = null;
+      let reserved = null;       // the image being created, until it settles
       try {
         await busy(async () => {
           for (let i = 0; i < count; i++) {
             const plan = jobPlan();
             const label = `Image ${i + 1} of ${count}`;
             status.textContent = `${label} \u2014 queued\u2026`;
+            // Creating an image is a licensed Photo capability and a local
+            // production job, metered exactly like enhancement and Generative
+            // Fill. This was the one generative path that reserved nothing, so
+            // a visitor with no licence at all generated without limit.
+            const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
+            if (!authorization.ok) throw new Error(readableServiceError(authorization.reason || 'authorization_required'));
+            reserved = authorization.authorization.id;
             const startedAt = Date.now();
             const tick = () => {
               const elapsed = Math.round((Date.now() - startedAt) / 1000);
@@ -636,6 +645,8 @@ function generatePanel() {
               recordCpuPace((Date.now() - startedAt) / 1000, plan.steps, plan.width, plan.height);
               refreshSpeedNote();
             }
+            await settleOutbound(reserved, await blobEvidenceHash(blob));
+            reserved = null;
             const file = new File([blob], `gen_${seed}_${i + 1}.png`, { type: 'image/png' });
             const asset = newAsset(state.project.id, file);
             asset.source = 'generated-local';
@@ -656,13 +667,16 @@ function generatePanel() {
         if (dlg.open && dlg.classList.contains('generate-dialog')) { dlg.classList.remove('generate-dialog'); closeDialog(); }
         toast(`Created ${count} candidate${count === 1 ? '' : 's'}.`);
       } catch (err) {
-        status.textContent = 'Failed: ' + err.message;
+        const release = reserved ? await releaseUsage(reserved, 'render_failed') : null;
+        status.textContent = `Failed: ${sentence(err.message)}${release ? ` ${release.message}` : ''}`;
       } finally {
         if (ticker) clearInterval(ticker);
         go.disabled = false;
       }
     });
     local.replaceChildren(head,
+      ...(unlicensed ? [el('p', { className: 'hint', style: 'color:var(--warn)' },
+        'Photo creation runs on this computer and draws no cloud balance, but it is a licensed Photo capability. Activate a Photo Single Studio or Full Studio licence in Deliver.')] : []),
       el('label', { className: 'field' }, el('span', {}, 'Quality'), ckptSel),
       el('label', { className: 'field' }, el('span', {}, 'Describe your image'), promptBox),
       el('label', { className: 'field' }, el('span', {}, 'Look'), styleSel),
@@ -1051,7 +1065,19 @@ function deleteProjectFlow() {
      })]);
 }
 
+// What the Studio made, as opposed to what the customer brought in. A raw
+// camera import is still their own photograph; the rest is licensed output.
+const DERIVED_SOURCES = new Set(['generated-local', 'generated-fill-local', 'enhanced-local', 'rendered-local']);
+
 async function backupProject() {
+  // A recovery file is the customer's own project and their own media, so it
+  // is never paywalled. What the Studio produced for them is a licensed
+  // deliverable: without a covering licence this zip was a clean,
+  // full-resolution export of every generated frame, taken with no key at all.
+  const lic = await activeLicense();
+  const carried = state.assets.filter(asset =>
+    !DERIVED_SOURCES.has(asset.source) || covers(lic, asset.kind === 'video' ? 'video' : 'photo'));
+  const withheld = state.assets.length - carried.length;
   const cleanProject = {
     ...state.project,
     providers: Object.fromEntries(Object.entries(state.project.providers || {})
@@ -1061,18 +1087,19 @@ async function backupProject() {
     schema: 'materiallogix/recovery@2',
     exportedAt: new Date().toISOString(),
     project: cleanProject,
-    assets: state.assets
+    assets: carried
   }, null, 2);
   const entries = [{ name: 'project.json', data: manifest }];
   try {
     await busy(async () => {
-      for (const asset of state.assets) {
+      for (const asset of carried) {
         const blob = await store.getBlob(asset.id);
         if (blob) entries.push({ name: `media/${asset.id}`, data: new Uint8Array(await blob.arrayBuffer()) });
       }
     });
     downloadBlob(makeZip(entries), `${slug(state.project.name)}-recovery.zip`);
-    toast(`Recovery file saved with ${count(entries.length - 1, 'media file')}.`);
+    toast(`Recovery file saved with ${count(entries.length - 1, 'media file')}.${withheld
+      ? ` ${count(withheld, 'file')} created in Studio stayed out — activate a licence to include them.` : ''}`);
   } catch (error) {
     toast(error?.message || 'The recovery file could not be created. Nothing was saved.', true);
   }
@@ -2115,7 +2142,11 @@ async function renderEditedVideo(asset) {
     return toast('This device cannot add the preview watermark that an unlicensed render requires. Activate a Video plan, or update the Video pack.', true);
   }
   const opts = { ...plan.opts, resume: true };
-  const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload', quantity: 1 });
+  // The cut this render delivers is what it costs. A flat unit charged an hour
+  // of finished video the same as a minute, on the one local flow that really
+  // does the work.
+  const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload',
+    quantity: exportUnits('video', { seconds: plan.outputSeconds }) });
   if (!authorization.ok) return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
   const jobId = await stableLocalVideoJobId(asset, opts);
   const controller = new AbortController();
@@ -3767,26 +3798,35 @@ async function openPrintDelivery() {
   dialog('Print-ready photo', body, [btn('Cancel', 'btn', closeDialog), download]);
 }
 
+/**
+ * The download paywall. Every path that puts a file in the customer's hands
+ * asks the same question, so they ask it here and get one answer: the client
+ * review page and the contact sheet used to ask nobody, and a Voice Starter
+ * downloaded both.
+ */
+async function licensedToDeliver(product) {
+  if (covers(await activeLicense(), product)) return true;
+  // Name every plan that covers this Studio, and the single export that does
+  // not need a plan at all, rather than a fixed two.
+  const singleExport = exportForProduct(product);
+  const quote = singleExport ? exportPrice(singleExport.id) : null;
+  dialog('A matching license is required to download',
+    el('div', {},
+      el('p', {}, 'Free preview lets you edit, compare, and review inside MaterialLogix. It does not create downloadable files.'),
+      el('p', { className: 'hint', style: 'margin-top:10px' },
+        `Activate ${plansCovering(product).join(', ')} in Deliver, then reconnect for usage confirmation.`),
+      quote ? el('p', { className: 'hint', style: 'margin-top:6px' },
+        `Or buy this one on its own: ${quote.label.toLowerCase()} costs $${quote.total.toFixed(2)}, no plan.`) : null),
+    [btn('Close', 'btn', closeDialog),
+     btn('See plans and single exports', 'btn primary', () => { closeDialog(); location.assign(pricingUrl()); })]);
+  return false;
+}
+
 async function doExport(exportOpts = {}) {
   if (!state.project) return;
   if (!approvedPairs(state.assets).length) return toast('Nothing approved yet \u2014 approve at least one placement.', true);
   const product = state.assets.some(asset => asset.kind === 'video') ? 'video' : 'photo';
-  const lic = await activeLicense();
-  if (!covers(lic, product)) {
-    // Name every plan that covers this Studio, and the single export that does
-    // not need a plan at all, rather than a fixed two.
-    const singleExport = exportForProduct(product);
-    const quote = singleExport ? exportPrice(singleExport.id) : null;
-    return dialog('A matching license is required to download',
-      el('div', {},
-        el('p', {}, 'Free preview lets you edit, compare, and review inside MaterialLogix. It does not create downloadable files.'),
-        el('p', { className: 'hint', style: 'margin-top:10px' },
-          `Activate ${plansCovering(product).join(', ')} in Deliver, then reconnect for usage confirmation.`),
-        quote ? el('p', { className: 'hint', style: 'margin-top:6px' },
-          `Or buy this one on its own: ${quote.label.toLowerCase()} costs $${quote.total.toFixed(2)}, no plan.`) : null),
-      [btn('Close', 'btn', closeDialog),
-       btn('See plans and single exports', 'btn primary', () => { closeDialog(); location.assign(pricingUrl()); })]);
-  }
+  if (!await licensedToDeliver(product)) return;
   preflightDialog(async () => {
     const pairs = approvedPairs(state.assets);
     let authorizationId = null;
@@ -3807,15 +3847,19 @@ async function doExport(exportOpts = {}) {
           bar.style.width = `${(done / total) * 100}%`;
         }, extra, exportOpts));
       const evidenceHash = await blobEvidenceHash(blob);
-      // Each approved placement renders its own file, and a video file costs by
-      // its length. Billing `pairs.length` charged a ten-minute cut the same as
-      // a still.
+      // Bill what the zip carries: one rendered still per approved placement. A
+      // video placement gets a poster frame and the customer's own file back
+      // unmodified, never a cut, so four units a source minute took 240 — a
+      // quarter of a Full Studio month — for one ten-minute upload approved on
+      // six surfaces.
+      const deliveries = pairs.map(() => ({ kind: 'photo' }));
+      // A proof spends nothing. It is stamped across the frame and capped at
+      // 960px, which every plan card sells as free, so it reserves and settles
+      // at zero; the local ledger below already skipped it.
       const authorization = await authorizeOutbound({
         product,
         artifactKind: exportOpts.proof ? 'proof_export' : 'clean_export',
-        quantity: unitsForDeliveries(pairs.map(pair => ({
-          kind: pair.asset.kind, seconds: pair.asset.duration || 0
-        }))),
+        quantity: exportOpts.proof ? 0 : unitsForDeliveries(deliveries),
         operationId: evidenceHash
       });
       if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');
@@ -3848,6 +3892,7 @@ function preflightMarkdown() {
 async function exportClientPage() {
   const pairs = approvedPairs(state.assets);
   if (!pairs.length) return toast('Approve something first — the client page shows approved placements.', true);
+  if (!await licensedToDeliver('photo')) return;
   const bar = el('i');
   const status = el('p', {}, 'Building…');
   dialog('Client review page', el('div', {}, status, el('div', { className: 'progress' }, bar),
@@ -3888,6 +3933,7 @@ async function importVerdict(file) {
 async function exportContactSheet() {
   const pairs = approvedPairs(state.assets);
   if (!pairs.length) return toast('Nothing approved yet.', true);
+  if (!await licensedToDeliver('photo')) return;
   const colorBlock = pairs.map(pair => ({ asset: pair.asset, decision: colorExportDecision(pair.asset.auto?.color || {}) }))
     .find(entry => !entry.decision.allowed);
   if (colorBlock) return toast(`${colorBlock.asset.filename} needs an accepted color conversion before export.`, true);

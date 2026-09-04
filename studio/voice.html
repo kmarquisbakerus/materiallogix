@@ -157,7 +157,7 @@ import { voiceReferenceConsent } from './js/voice-quality.js';
 import { ensureGuardianAck } from './js/capture-guidance.js';
 import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from './js/voice-reference.js';
 import { voiceGuidance } from './js/capture-guidance.js';
-import { listAssets } from './js/store.js';
+import { listAssets, recordConsent } from './js/store.js';
 
 const $ = s => document.querySelector(s);
 const BRIDGE_HOST = /^(localhost$|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(location.hostname) ? location.hostname : '127.0.0.1';
@@ -615,8 +615,38 @@ async function savePack(blob, assessment) {
       : `Your plan keeps ${count(profileLimit, 'active personal voice profile')}. Discard one, or move to a plan with more, before adding another.`;
     return;
   }
-  const name = prompt('Name this voice reference (letters and dashes):', 'my-voice');
-  if (!name) return;
+  // The name is the subject this reference is of, so it is asked for before
+  // consent rather than after: a consent record with nobody's name on it
+  // cannot be produced for the person it is supposed to cover.
+  const name = prompt('Whose voice is this? Name the subject (letters and dashes):', 'my-voice');
+  if (!name || !name.trim()) {
+    $('#recState').textContent = 'A voice reference needs the name of the person it is of.';
+    return;
+  }
+  // Every route into a voice profile arrives here - the recorder, a single
+  // imported file, and the composite blend - so this is the one place the age
+  // and guardian confirmation has to be. Import used to have none at all,
+  // which left the route most likely to carry a stranger's or a minor's voice
+  // as the only one with no age gate.
+  if (!(await ensureGuardianAck({ subject: name, purpose: 'voice_conditioning', record: recordConsent }))) {
+    $('#recState').textContent = 'Nothing was saved. A voice reference needs the age and guardian confirmation.';
+    return;
+  }
+  // The consent was checked above and then thrown away. It is written down
+  // now, against the subject it covers, because the burden of showing what was
+  // agreed for biometric data sits with us.
+  try {
+    await recordConsent({
+      subject: name,
+      purpose: 'voice_conditioning',
+      statement: 'Source rights confirmed and local-retention terms accepted for conditioning a personal voice profile.',
+      granted: true,
+      evidence: { surface: 'voice-reference', authorizedSource: consent.authorizedSource, retentionAccepted: consent.retentionAccepted }
+    });
+  } catch (error) {
+    $('#recState').textContent = `Nothing was saved: the consent record could not be stored (${error.message}).`;
+    return;
+  }
   const authorization = await authorizeOutbound({ product: 'voice', artifactKind: 'upload', quantity: 1 });
   if (!authorization.ok) {
     $('#recState').textContent = `Online voice-reference authorization failed (${authorization.reason || 'authorization_required'}). Nothing was uploaded.`;
@@ -682,6 +712,8 @@ $('#recBtn').onclick = async () => {
     rec.stop();
     return;
   }
+  // The per-subject confirmation happens in savePack, where the subject is
+  // known. This one only keeps the microphone from starting unprompted.
   if (!(await ensureGuardianAck())) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });

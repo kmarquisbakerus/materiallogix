@@ -98,12 +98,43 @@ export function retryAdvice(kind, coverage = {}) {
 export const GUARDIAN_ACK_KEY = 'mlx:capture-age-ack';
 export const GUARDIAN_ACK_TEXT = 'I confirm I am 18 or older — or I am 13–17 and my parent or legal guardian consents to this capture and is present. References of anyone under 13 are not permitted.';
 
-export function guardianAckGiven() {
-  try { return Boolean(localStorage.getItem(GUARDIAN_ACK_KEY)); } catch { return false; }
+/**
+ * Has this subject been acknowledged for this purpose?
+ *
+ * The flag used to be one global key: whoever used the browser first answered
+ * for every person captured afterwards, possibly years later, and the AUP says
+ * the confirmation is taken "before any capture". It is now keyed to the
+ * subject and the purpose, so a new subject is a new question.
+ *
+ * Called with no subject it answers the old question - is there a blanket
+ * acknowledgment on this browser - which is what the pre-subject call sites
+ * still ask while they are migrated.
+ */
+export function guardianAckGiven(subject = '', purpose = 'capture') {
+  try {
+    if (!String(subject).trim()) return Boolean(localStorage.getItem(GUARDIAN_ACK_KEY));
+    return Boolean(localStorage.getItem(subjectAckKey(subject, purpose)));
+  } catch { return false; }
 }
 
-export function ensureGuardianAck(doc = document) {
-  if (guardianAckGiven()) return Promise.resolve(true);
+const subjectAckKey = (subject, purpose) =>
+  `${GUARDIAN_ACK_KEY}:${purpose}:${String(subject).trim().toLowerCase()}`;
+
+/**
+ * Confirm age and guardian consent before a capture, and write a record of it.
+ *
+ * `options.subject` names who the capture is of. Without it the confirmation
+ * is the old blanket one, which is why every capture path should pass it.
+ * `options.record` is the durable writer (`store.recordConsent`), injected so
+ * this module stays free of a storage dependency and so a test can watch what
+ * would be written.
+ */
+export function ensureGuardianAck(options = {}, doc = document) {
+  // Tolerate the original ensureGuardianAck(document) shape: a Document has
+  // querySelector, an options bag does not.
+  if (options && typeof options.querySelector === 'function') { doc = options; options = {}; }
+  const { subject = '', purpose = 'capture', record = null } = options;
+  if (guardianAckGiven(subject, purpose)) return Promise.resolve(true);
   return new Promise(resolve => {
     const dlg = doc.createElement('dialog');
     dlg.className = 'guardian-ack';
@@ -117,7 +148,19 @@ export function ensureGuardianAck(doc = document) {
     box.onchange = () => { go.disabled = !box.checked; };
     const finish = ok => { dlg.close(); dlg.remove(); resolve(ok); };
     go.onclick = () => {
-      try { localStorage.setItem(GUARDIAN_ACK_KEY, new Date().toISOString()); } catch { /* still allowed this session */ }
+      const at = new Date().toISOString();
+      try {
+        localStorage.setItem(GUARDIAN_ACK_KEY, at);
+        if (String(subject).trim()) localStorage.setItem(subjectAckKey(subject, purpose), at);
+      } catch { /* still allowed this session */ }
+      // The flag makes the dialog stop asking. The record is the thing that can
+      // be produced when somebody asks what was agreed, so a failure to write
+      // it must not be silent.
+      if (record && String(subject).trim()) {
+        Promise.resolve(record({ subject, purpose, statement: GUARDIAN_ACK_TEXT, granted: true,
+          evidence: { surface: 'guardian-ack-dialog', acknowledgedAt: at } }))
+          .catch(error => console.error('The consent record could not be stored:', error));
+      }
       finish(true);
     };
     cancel.onclick = () => finish(false);

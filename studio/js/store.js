@@ -1,8 +1,12 @@
-// IndexedDB persistence. Three stores: projects, assets (metadata), blobs (files).
-// Blobs are kept separate so the metadata store stays cheap to scan.
+// IndexedDB persistence. Four stores: projects, assets (metadata), blobs
+// (files), and consents. Blobs are kept separate so the metadata store stays
+// cheap to scan.
 
 const DB_NAME = 'creative-review-os';
-const DB_VERSION = 1;
+// 2: the consents store. A face or a voice is biometric data, and the burden
+// of demonstrating consent for it sits on us - a localStorage flag is not a
+// record and cannot be produced.
+const DB_VERSION = 2;
 
 let dbPromise = null;
 
@@ -21,6 +25,11 @@ function open() {
       }
       if (!db.objectStoreNames.contains('blobs')) {
         db.createObjectStore('blobs');
+      }
+      if (!db.objectStoreNames.contains('consents')) {
+        const s = db.createObjectStore('consents', { keyPath: 'id' });
+        s.createIndex('subject', 'subject', { unique: false });
+        s.createIndex('recordedAt', 'recordedAt', { unique: false });
       }
     };
     req.onsuccess = () => {
@@ -205,4 +214,93 @@ export async function usage() {
     const { usage: used, quota } = estimate;
     return Number.isFinite(quota) ? { used: Number(used) || 0, quota } : null;
   } catch { return null; }
+}
+
+// --- consent records -------------------------------------------------------
+//
+// A voice pack and a 360° facial capture are biometric data, and the privacy
+// policy says so. Where the lawful basis is explicit consent, the burden of
+// demonstrating it sits on us: a localStorage flag is not a record, is not
+// per-subject, and cannot be produced when somebody asks what was agreed.
+//
+// These records are written on the device that took the consent, alongside the
+// media they cover, so they survive as long as the work does. That is the
+// honest limit and it is worth stating: this is the customer's own copy, not a
+// server-side register. `POST /api/consent` in the contract table is what would
+// make it producible centrally, and it is not built.
+
+export const CONSENT_SCHEMA = 'materiallogix.consent.v1';
+
+/**
+ * Record one consent, for one subject, for one purpose, at one moment.
+ * Returns the stored record so a caller can show or export it.
+ */
+export async function recordConsent({ subject, purpose, statement, granted = true, evidence = {} } = {}) {
+  const named = String(subject || '').trim();
+  if (!named) throw new Error('A consent record needs the subject it covers.');
+  if (!purpose) throw new Error('A consent record needs the purpose it covers.');
+  const record = {
+    schema: CONSENT_SCHEMA,
+    id: `consent_${crypto.randomUUID()}`,
+    subject: named,
+    purpose: String(purpose),
+    statement: String(statement || ''),
+    granted: granted === true,
+    recordedAt: new Date().toISOString(),
+    evidence: { ...evidence }
+  };
+  const db = await open();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('consents', 'readwrite');
+    tx.objectStore('consents').put(record);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  return record;
+}
+
+/** Every consent held for a subject, newest first. */
+export async function consentsFor(subject) {
+  const named = String(subject || '').trim();
+  if (!named) return [];
+  const db = await open();
+  const found = await new Promise((resolve, reject) => {
+    const tx = db.transaction('consents', 'readonly');
+    const req = tx.objectStore('consents').index('subject').getAll(named);
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+  return found.sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
+}
+
+/** Has this subject granted consent for this purpose? */
+export async function consentGranted(subject, purpose) {
+  return (await consentsFor(subject)).some(record => record.purpose === purpose && record.granted === true);
+}
+
+/** Everything on file, for a subject-access request or an export. */
+export async function allConsents() {
+  const db = await open();
+  const found = await new Promise((resolve, reject) => {
+    const tx = db.transaction('consents', 'readonly');
+    const req = tx.objectStore('consents').getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror = () => reject(req.error);
+  });
+  return found.sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
+}
+
+/** Erase every consent record for a subject, for a deletion request. */
+export async function forgetConsents(subject) {
+  const records = await consentsFor(subject);
+  if (!records.length) return 0;
+  const db = await open();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('consents', 'readwrite');
+    const store = tx.objectStore('consents');
+    for (const record of records) store.delete(record.id);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  return records.length;
 }
