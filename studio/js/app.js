@@ -578,7 +578,9 @@ async function probe(file, url) {
       const { width, height, duration } = await grabVideoFrame(url, 0);
       return { width, height, duration: Number.isFinite(duration) ? duration : 0, reason: '' };
     }
-    const managed = await decodeColorManagedBlob(file);
+    // Dimensions only: probe never reads the pixels, and building them is the
+    // expensive half of a wide-gamut decode.
+    const managed = await decodeColorManagedBlob(file, { pixels: false });
     if (managed) return { width: managed.w, height: managed.h, duration: 0, reason: '' };
     const img = await loadImage(url);
     return { width: img.naturalWidth, height: img.naturalHeight, duration: 0, reason: '' };

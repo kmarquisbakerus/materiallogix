@@ -231,13 +231,20 @@ export function toneMapLinearBt2020ToSrgb(linearBt2020) {
     toneMap: 'aces-luminance-v1', deliverySpace: 'srgb' };
 }
 
-export async function decodeColorManagedBlob(blob) {
+export async function decodeColorManagedBlob(blob, { pixels = true } = {}) {
   if (!blob?.arrayBuffer) return null;
   const head = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
   const radiance = (startsWithAscii(head, '#?RADIANCE') || startsWithAscii(head, '#?RGBE'))
     ? parseRadianceHdr(new Uint8Array(await blob.arrayBuffer())) : null;
   if (radiance) {
     const converted = toneMapLinearBt2020ToSrgb(radiance.linearBt2020);
+    if (!pixels) {
+      return { source: null, w: radiance.width, h: radiance.height, colorTransform: {
+        conversion: converted.toneMap, conversionAccepted: true, toneMappingApplied: true,
+        sourceDynamicRangeStops: radiance.dynamicRangeStops, sourceMaximumLinear: +radiance.maximumLinear.toFixed(6),
+        clippedChannelFraction: converted.clippedChannelFraction
+      } };
+    }
     const canvas = document.createElement('canvas');
     canvas.width = radiance.width; canvas.height = radiance.height;
     const context = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
@@ -252,6 +259,21 @@ export async function decodeColorManagedBlob(blob) {
   if (!['display-p3', 'adobe-rgb', 'cmyk'].includes(metadata.profile)) return null;
   if (typeof createImageBitmap !== 'function') return null;
   const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'default', premultiplyAlpha: 'none' });
+  // Converting is the expensive half and `probe()` - which runs on every
+  // import - never reads the pixels. It paid for a full-resolution canvas it
+  // discarded, which on a large wide-gamut photograph is a second copy of
+  // every pixel and the main thread blocked while it is made.
+  //
+  // An explicit argument, not a lazy getter: a getter reads as free and is
+  // not, spreading the result (`{ ...managed }`, which app.js does) invokes
+  // it, and a caller that never touches it would leave the bitmap open.
+  if (!pixels) {
+    const w = bitmap.width, h = bitmap.height;
+    bitmap.close?.();
+    return { source: null, w, h, colorTransform: {
+      conversion: 'browser-icc-to-srgb', conversionAccepted: metadata.profile === 'display-p3', toneMappingApplied: false
+    } };
+  }
   const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
   const context = canvas.getContext('2d', { colorSpace: 'srgb', willReadFrequently: true });
   context.drawImage(bitmap, 0, 0); bitmap.close?.();
@@ -377,6 +399,35 @@ export function detectHdrSignal(bytes, { radiance = null, iccProfile = null } = 
   return iccDescribesHdr(iccProfile);
 }
 
+/**
+ * The ICC profile out of a PNG's `iCCP` chunk.
+ *
+ * PNG stores it zlib-compressed, so the profile's own text - "Display P3" and
+ * the rest - is not in the file's bytes anywhere. The classifier read only the
+ * raw bytes and parsed colorants only for JPEG, so a Display P3 PNG came back
+ * `embedded-icc-unclassified`, and `colorExportDecision` refuses that outright:
+ * the file imported and could never be exported. A screenshot taken on any
+ * wide-gamut Mac or iPhone is exactly that file.
+ *
+ * The chunk is a null-terminated profile name, a compression-method byte
+ * (0 is the only one PNG defines), then the zlib stream.
+ */
+export async function extractPngIcc(bytes) {
+  const chunk = pngChunk(bytes, 'iCCP');
+  if (!chunk) return null;
+  const nul = chunk.indexOf(0);
+  if (nul < 0 || nul + 2 > chunk.length || chunk[nul + 1] !== 0) return null;
+  const deflated = chunk.subarray(nul + 2);
+  if (!deflated.length || typeof DecompressionStream !== 'function') return null;
+  try {
+    const stream = new Blob([deflated]).stream().pipeThrough(new DecompressionStream('deflate'));
+    const profile = new Uint8Array(await new Response(stream).arrayBuffer());
+    return profile.length >= 132 ? profile : null;
+  } catch {
+    return null;   // truncated or not actually zlib: no profile, not a crash
+  }
+}
+
 export async function inspectColorMetadata(blob, colorTransform = null) {
   if (!blob?.slice) return { profile: 'unknown', embedded: false, hdrSignaled: false, delivery: COLOR_PIPELINE.deliverySpace };
   const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
@@ -384,13 +435,15 @@ export async function inspectColorMetadata(blob, colorTransform = null) {
   const mime = String(blob.type || '').toLowerCase();
   const radiance = parseRadianceHeader(bytes);
   const jpegIcc = /jpe?g/.test(mime) ? extractJpegIcc(bytes) : null;
-  const matrixProfile = classifyIccRgbColorants(readIccRgbColorants(jpegIcc));
-  const embedded = Boolean(jpegIcc) || /ICC_PROFILE|iCCP|\bICCP\b/.test(text);
+  // Whichever container it arrived in, the profile decides the colour.
+  const iccProfile = jpegIcc || await extractPngIcc(bytes);
+  const matrixProfile = classifyIccRgbColorants(readIccRgbColorants(iccProfile));
+  const embedded = Boolean(iccProfile) || /ICC_PROFILE|iCCP|\bICCP\b/.test(text);
   const explicitSrgb = /\bsRGB\b/.test(text);
   const p3 = /Display[ _-]?P3|DCI[ _-]?P3/i.test(text);
   const adobeRgb = /Adobe[ _-]?RGB/i.test(text);
   const cmyk = /prtrCMYK|COLOR_REP\s+["']?CMYK|\bCMYK_(?:C|M|Y|K)\b/i.test(text);
-  const hdrSignaled = detectHdrSignal(bytes, { radiance, iccProfile: jpegIcc });
+  const hdrSignaled = detectHdrSignal(bytes, { radiance, iccProfile });
   let profile = 'untagged-srgb-fallback';
   if (radiance) profile = 'bt2020-linear';
   else if (cmyk) profile = 'cmyk';

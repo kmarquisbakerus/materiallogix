@@ -503,6 +503,18 @@ try {
         x.fillStyle = '#c04030'; x.fillRect(0, 0, 120, 90);
         return c.convertToBlob({ type: 'image/png' });
       };
+      // A wide-gamut PNG is what a screenshot on any recent Mac or iPhone is.
+      // Its ICC profile is zlib-compressed inside the `iCCP` chunk, so nothing
+      // in the file's bytes says "Display P3" - the classifier called it
+      // `embedded-icc-unclassified`, and `colorExportDecision` refuses that
+      // outright. The file imported and could never be exported.
+      const pngP3 = await make('display-p3');
+      const { inspectColorMetadata, colorExportDecision } = await import('./js/color-management.js');
+      const meta = await inspectColorMetadata(pngP3);
+      const managed = await decodeColorManagedBlob(pngP3);
+      const after = await inspectColorMetadata(pngP3, managed?.colorTransform);
+      const wideGamut = { profile: meta.profile, decision: colorExportDecision(after) };
+
       const out = {};
       for (const [label, space] of [['p3', 'display-p3'], ['srgb', null]]) {
         const blob = await make(space);
@@ -517,8 +529,14 @@ try {
           }
         }
       }
-      return out;
+      return { ...out, wideGamut };
     });
+    const wide = result.wideGamut;
+    delete result.wideGamut;
+    ok('a wide-gamut PNG is recognised, not filed as unclassified',
+      wide.profile === 'display-p3', `classified ${wide.profile}`);
+    ok('and it can actually be delivered', wide.decision.allowed === true,
+      `${wide.decision.allowed} — ${wide.decision.reason}`);
     const threw = Object.entries(result).filter(([, value]) => String(value).startsWith('THREW'));
     ok('the colour decoder runs instead of throwing', threw.length === 0,
       threw.length ? threw.map(([k, v]) => `${k} ${v}`).join('; ') : Object.entries(result).map(([k, v]) => `${k}=${v}`).join(' '));
