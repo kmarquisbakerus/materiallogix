@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { PRODUCTS } from '../studio/js/pricing.js';
 import { performancePlan, planDuration, wordBudgetForSeconds } from '../studio/js/voice.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from '../studio/js/house-voices.js';
 import { auditVoiceProfiles, voiceReferenceConsent, VOICE_ACCEPTANCE_SCRIPT } from '../studio/js/voice-quality.js';
-import { supportedVoiceReference, voiceSampleLimits, voiceMethod, FINE_TUNE_MINIMUM_SECONDS } from '../studio/js/voice-reference.js';
+import { supportedVoiceReference, voiceSampleLimits, voiceMethod, FINE_TUNE_MINIMUM_SECONDS, VOICE_LADDER_PLANS } from '../studio/js/voice-reference.js';
 
 test('a script becomes segments with a word count and a readable duration', () => {
   const plan = performancePlan('Hello there. This is the second sentence, and it runs a little longer.');
@@ -109,4 +110,44 @@ test('sample limits and method follow the plan, and fine tuning has a floor', ()
   const long = voiceMethod('full', FINE_TUNE_MINIMUM_SECONDS + 60);
   assert.ok(brief, 'a short sample still yields a method');
   assert.ok(long, 'a long sample yields a method');
+});
+
+test('every plan on the price list has a rung on the voice ladder', () => {
+  // The Pro tiers were added to the price list and never added to the ladder,
+  // so they fell through to the fallback: a $39 Pro Studio customer could not
+  // train a voice at all while a $15 Single Studio customer could.
+  for (const product of PRODUCTS) {
+    assert.ok(VOICE_LADDER_PLANS.includes(product.plan),
+      `${product.plan} is sold but has no rung on the voice ladder`);
+  }
+});
+
+test('a rung is never worse than the one beneath it', () => {
+  const rungs = ['preview', 'voice_starter', 'single', 'single_pro'];
+  for (let i = 1; i < rungs.length; i += 1) {
+    const below = voiceSampleLimits(rungs[i - 1]);
+    const here = voiceSampleLimits(rungs[i]);
+    assert.ok(here.maximumSeconds >= below.maximumSeconds,
+      `${rungs[i]} accepts less audio than ${rungs[i - 1]}`);
+    if (below.method === 'train') assert.equal(here.method, 'train', `${rungs[i]} lost training`);
+  }
+  // The Pro tiers must be able to train, which is what they are sold on.
+  for (const plan of ['single_pro', 'pro', 'full']) {
+    assert.equal(voiceSampleLimits(plan).method, 'train', plan);
+    assert.equal(voiceMethod(plan, 30 * 60), 'train', `${plan} cannot train on thirty minutes`);
+  }
+  assert.ok(voiceSampleLimits('pro').maximumSeconds >= voiceSampleLimits('single').maximumSeconds,
+    'Pro Studio must not accept less audio than Single Studio');
+});
+
+test('an unlicensed voice never gets what a paid one bought', () => {
+  // The fallback used to be Voice Starter's limits, so a free preview received
+  // exactly what the cheapest paid tier was sold.
+  const starter = voiceSampleLimits('voice_starter');
+  for (const plan of [undefined, null, '', 'not_a_plan', 'suspended:pro', 'suspended:voice_starter']) {
+    const limits = voiceSampleLimits(plan);
+    assert.equal(limits.method, 'prompt', String(plan));
+    assert.ok(limits.maximumSeconds < starter.maximumSeconds,
+      `${plan} may submit as much audio as a paying Voice Starter customer`);
+  }
 });
