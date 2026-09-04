@@ -19,6 +19,28 @@ export async function mintLicence(plan = 'full', selectedProduct = null) {
   return { key: `ML1.${b64u(bytes)}.${b64u(new Uint8Array(signature))}`, jwk: { kty: jwk.kty, x: jwk.x, y: jwk.y, crv: jwk.crv } };
 }
 
+/**
+ * Lines Chromium reports on the error channel that are not errors.
+ *
+ * The offline and bridge-refusal stages deliberately provoke failed requests,
+ * and native libraries print their own banners through the same channel: the
+ * face-detection engine's TensorFlow Lite backend announces itself as `INFO:`
+ * on a CPU that selects the XNNPACK delegate, which is every CI runner and
+ * almost no developer machine. That line failed the whole suite while all 62
+ * checks passed.
+ *
+ * The list is deliberately exact. Anything broader would hide the console
+ * errors this suite exists to catch.
+ */
+const BENIGN_CONSOLE = [
+  /ERR_CONNECTION/, /ERR_TUNNEL/, /Failed to load resource/,
+  /^INFO: Created TensorFlow Lite XNNPACK delegate for CPU\.$/
+];
+
+export function isBenignConsoleLine(text) {
+  return BENIGN_CONSOLE.some(pattern => pattern.test(String(text).trim()));
+}
+
 /** A browser context with billing stubbed and, optionally, a licence installed. */
 export async function studioContext(browser, { licence = null, features = {}, authenticated = true, checkoutLicenceKey = null, comfyBase = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 1600, height: 1100 }, acceptDownloads: true });
@@ -120,7 +142,7 @@ export async function studioContext(browser, { licence = null, features = {}, au
   page.on('pageerror', error => errors.push(`PAGEERROR: ${error.message.split('\n')[0]}`));
   page.on('console', message => {
     const text = message.text();
-    if (message.type() === 'error' && !/ERR_CONNECTION|ERR_TUNNEL|Failed to load resource/.test(text)) errors.push(`CONSOLE: ${text.slice(0, 150)}`);
+    if (message.type() === 'error' && !isBenignConsoleLine(text)) errors.push(`CONSOLE: ${text.slice(0, 150)}`);
   });
   page.on('download', download => downloads.push(download.suggestedFilename()));
   handle.page = page;

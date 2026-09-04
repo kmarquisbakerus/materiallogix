@@ -143,3 +143,25 @@ test('redeeming a claim strips only the claim from the address bar', () => {
   assert.match(source, /AbortSignal\.timeout/,
     'an unanswered fulfilment lookup must not hold the page open forever');
 });
+
+test('the journey ignores only the console lines that are provably not errors', async () => {
+  // A native library banner on the error channel - the face-detection engine's
+  // TensorFlow Lite backend announcing itself on a CPU that picks the XNNPACK
+  // delegate, which is every CI runner - failed the whole browser suite while
+  // all 62 of its checks passed. The remedy has to stay narrow: a broad filter
+  // here would hide the console errors that suite exists to catch.
+  const { isBenignConsoleLine } = await import('./browser/harness.mjs');
+  for (const benign of [
+    'INFO: Created TensorFlow Lite XNNPACK delegate for CPU.',
+    'Failed to load resource: net::ERR_CONNECTION_REFUSED',
+    'net::ERR_TUNNEL_CONNECTION_FAILED'
+  ]) assert.equal(isBenignConsoleLine(benign), true, benign);
+
+  for (const real of [
+    'Uncaught TypeError: x is not a function',
+    'TypeError: Cannot read properties of null',
+    'Refused to connect to https://evil.example',
+    'INFO: Created TensorFlow Lite XNNPACK delegate for CPU. Uncaught TypeError',
+    'Uncaught (in promise) Error: license_required'
+  ]) assert.equal(isBenignConsoleLine(real), false, real);
+});
