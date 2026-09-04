@@ -109,6 +109,21 @@ try {
   ok('the photo imported and was analysed', await page.evaluate(() => !!window.__cros.state.assets[0]?.auto),
     await page.evaluate(() => { const a = window.__cros.state.assets[0]; return `${a.width}x${a.height}, sharpness ${a.auto?.sharpness}, ${a.auto?.color?.profile}`; }));
   ok('an ordinary photograph is not blocked as HDR', await page.evaluate(() => window.__cros.issueCount(window.__cros.state.assets[0]).block === 0));
+  {
+    // The workspace tells every customer their photos are checked for faces,
+    // hands and bodies. That check loaded MediaPipe from a CDN and returned
+    // null when it could not - silently, on every offline session - while
+    // 21 MB of verified runtime and models sat precached in the install,
+    // called by nothing. No CDN is reachable from this suite, so this is the
+    // offline case, and it must produce a named engine rather than nothing.
+    const people = await page.evaluate(() => {
+      const asset = window.__cros.state.assets[0];
+      return { engine: asset?.geometry?.engine ?? null, status: asset?.peopleReview?.status ?? null };
+    });
+    ok('the people check runs with no network, and says which engine ran',
+      people.engine === 'human-candidate-local' && people.status === 'complete',
+      `engine ${people.engine}, status ${people.status}`);
+  }
   await page.evaluate(() => { const s = window.__cros.state;
     for (const id of s.project.surfaces) { window.__cros.ensurePlacement(s.assets[0], id); window.__cros.decidePlacement(s.assets[0], id, 'approved'); } });
   await settle(page, 1000);
