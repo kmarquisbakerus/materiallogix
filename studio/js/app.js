@@ -93,11 +93,33 @@ function normalizePlacementFill(placement) {
 // ---------------------------------------------------------------------------
 // small helpers
 
+/**
+ * The one region that announces. A live region has to be in the document
+ * BEFORE its text changes: a node inserted already holding its message is
+ * frequently not announced at all, which is what every toast did - including
+ * the ones that are the product's only report of a failure.
+ */
+function announcer() {
+  let region = document.getElementById('a11yAnnouncer');
+  if (!region) {
+    region = el('div', { id: 'a11yAnnouncer', className: 'sr-only' });
+    region.setAttribute('aria-live', 'polite');
+    region.setAttribute('aria-atomic', 'true');
+    document.body.append(region);
+  }
+  return region;
+}
+
 function toast(msg, bad = false) {
   document.querySelectorAll('.toast').forEach(t => t.remove());
   const t = el('div', { className: 'toast' + (bad ? ' bad' : ''), textContent: msg, role: 'status' });
-  t.setAttribute('aria-live', bad ? 'assertive' : 'polite');
   document.body.append(t);
+  // Clearing first makes the same message twice a second announcement rather
+  // than a no-op, which matters when a retry fails the same way.
+  const region = announcer();
+  region.setAttribute('aria-live', bad ? 'assertive' : 'polite');
+  region.textContent = '';
+  setTimeout(() => { region.textContent = msg; }, 60);
   setTimeout(() => t.remove(), bad ? 7000 : 2600);
 }
 
@@ -572,10 +594,18 @@ async function importFiles(fileList) {
       if (!(measured.width && measured.height)) {
         await store.deleteAsset(asset.id).catch(() => {});
         blocked += 1;
+        // Advice that does not fit the file is worse than none: a 0-byte or
+        // truncated file was being told to reduce its dimensions. Size is the
+        // one thing that separates "too big for the browser" from "not really
+        // a picture", so let it choose.
+        const oversized = asset.kind === 'image' && sourceFile.size > 24 * 1024 * 1024;
         const why = measured.reason || (asset.kind === 'video'
           ? 'No frame could be decoded from it.'
-          : 'The browser could not decode it — very large photographs can exceed its limit.');
-        lastBlockedMessage = `${sourceFile.name} was not imported. ${why} ${asset.kind === 'video' ? 'Convert it' : 'Reduce its dimensions'} and re-import.`;
+          : 'The browser could not read any pixels from it.');
+        const advice = asset.kind === 'video' ? 'Convert it and re-import.'
+          : oversized ? 'Very large photographs can exceed the browser\u2019s limit \u2014 reduce its dimensions and re-import.'
+            : 'Check it opens elsewhere, then re-import.';
+        lastBlockedMessage = `${sourceFile.name} was not imported. ${why} ${advice}`;
         status.textContent = lastBlockedMessage;
         continue;
       }
@@ -4508,6 +4538,9 @@ if (['localhost', '127.0.0.1', '::1'].includes(location.hostname) && new URLSear
 }
 
 wire();
+// Stand the live region up before anything can need it, so even the first
+// message lands in a region that was already in the accessibility tree.
+announcer();
 boot().catch(error => {
   console.error(error);
   const viewport = $('#viewport') || document.body;

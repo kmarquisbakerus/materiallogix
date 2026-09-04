@@ -1012,6 +1012,13 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
   .review .review-rail-toggle { bottom: auto; }
 }
 
+/* Off-screen but still in the accessibility tree. `display:none` and
+   `visibility:hidden` both remove a live region from it entirely. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important;
     animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

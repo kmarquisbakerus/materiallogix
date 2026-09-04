@@ -339,9 +339,13 @@ test('a file the browser cannot decode is refused, whatever kind it is', () => {
     'the decode guard is video-only again');
   assert.match(app, /if \(!\(measured\.width && measured\.height\)\) \{/,
     'anything without pixels must be refused');
-  // And the reason has to fit what was imported.
-  assert.match(app, /very large photographs can exceed its limit/);
+  // And the advice has to fit the file: a 0-byte or truncated image was being
+  // told to reduce its dimensions.
   assert.match(app, /No frame could be decoded from it\./);
+  assert.match(app, /const oversized = asset\.kind === 'image' && sourceFile\.size > /,
+    'only a large file should be told it is too large');
+  assert.match(app, /Check it opens elsewhere, then re-import\./);
+  assert.match(app, /reduce its dimensions and re-import\./);
 });
 
 test('a decode cache bounded by count is bounded by the customer camera', () => {
@@ -404,4 +408,26 @@ test('the two controls that undo a purchase ask, or check, before they act', () 
   assert.match(app, /btn\('Deactivate on this device', 'btn sm', \(\) => dialog\('Remove this licence from this device\?'/);
   assert.match(app, /btn\('Keep it', 'btn', closeDialog\)/, 'the customer needs a way out of the dialog');
   assert.match(app, /Your projects and files stay where they are\./, 'say what is not being deleted');
+});
+
+test('the only channel a failure has is announced, not just drawn', () => {
+  // A live region must exist in the document before its text changes. Every
+  // toast was a fresh node inserted already holding its message, which is
+  // frequently not announced at all — on the product's only report of a
+  // failure, including the one that says an import was refused.
+  assert.match(app, /function announcer\(\)/, 'there must be one persistent region');
+  assert.match(app, /region\.setAttribute\('aria-live'/);
+  assert.match(app, /region\.textContent = '';/, 'clearing first re-announces a repeated message');
+  assert.match(app, /setTimeout\(\(\) => \{ region\.textContent = msg; \}, \d+\);/);
+  // The toast node itself no longer pretends to be the live region.
+  const body = /function toast\(msg, bad = false\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';
+  assert.ok(body, 'toast() moved');
+  assert.ok(!/t\.setAttribute\('aria-live'/.test(body),
+    'the transient node must not carry the live region any more');
+  assert.match(read('studio/css/app.css'), /\.sr-only \{[\s\S]*?clip-path: inset\(50%\)/,
+    'the region must stay in the accessibility tree, not be display:none');
+  // Standing it up at boot means even the first message lands in a region the
+  // reader was already watching. Driven in a browser: regionExistedFirst true.
+  assert.match(app, /wire\(\);\n[\s\S]{0,180}?announcer\(\);/,
+    'the region must exist before the first message, not be made by it');
 });
