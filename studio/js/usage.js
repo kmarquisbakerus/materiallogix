@@ -219,13 +219,13 @@ document.querySelector('#autoDisable').onclick = async () => {
 function renderUnavailable(reason) {
   status.textContent = `Usage is unavailable: ${reason}. Sign in through the MaterialLogix account gateway.`;
   const emptyState = message => `<p class="note">${message}</p>`;
-  cards.innerHTML = `<p class="note" style="grid-column:1/-1">Allowance and balance are held by the service, so none of them can be shown right now.</p>`;
+  cards.innerHTML = `<p class="note" style="grid-column:1/-1">Allowance and balance are held by the service and could not be read.</p>`;
   document.querySelector('#planSummary').textContent = 'Your plan could not be read, so billing cannot be managed from here until this page loads.';
   document.querySelector('#walletBalance').textContent = 'Wallet balance unavailable — this page shows server-verified amounts only.';
   document.querySelector('#cloudPhotoPricing').textContent = 'Cloud Photo pricing is quoted by the service and could not be read. Local Photo editing and generation on this computer do not use cloud wallet funds.';
-  document.querySelector('#usageBreakdown').innerHTML = emptyState('No usage could be read for this period.');
-  document.querySelector('#walletTransactions').innerHTML = emptyState('No wallet transactions could be read.');
-  table.innerHTML = emptyState('No production activity could be read.');
+  document.querySelector('#usageBreakdown').innerHTML = emptyState('Usage for this period could not be read.');
+  document.querySelector('#walletTransactions').innerHTML = emptyState('Wallet transactions could not be read.');
+  table.innerHTML = emptyState('Production activity could not be read.');
   for (const id of ['#billingPortal', '#walletRefill', '#autoSetup', '#autoEnable']) {
     document.querySelector(id).disabled = true;
   }
