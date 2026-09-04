@@ -165,3 +165,29 @@ test('the journey ignores only the console lines that are provably not errors', 
     'Uncaught (in promise) Error: license_required'
   ]) assert.equal(isBenignConsoleLine(real), false, real);
 });
+
+test('a Studio left open notices it has gone stale, wherever it is running', () => {
+  // "The hosted app is always current, so it skips" was true of a fresh load
+  // and false of what customers do, which is leave the tab open. After a
+  // deploy the page keeps its old modules while the refreshed service worker
+  // serves new ones to any later dynamic import - two versions in one page,
+  // with nothing on screen to say so.
+  const nav = read('studio/js/studio-nav.js');
+  assert.ok(!/if \(location\.hostname === 'materiallogix\.com'\) return;/.test(nav),
+    'the hosted app must not skip the update check');
+  assert.match(nav, /checkForUpdates\(\)/, 'the check must still run');
+  // Hosted, the remedy is a reload; installed, it is a download. Offering a
+  // download to somebody already on the site sends them hunting an installer.
+  assert.match(nav, /location\.reload\(\)/);
+  assert.match(nav, /HOSTED \? 'Reload' : 'Get the update'/);
+  // The stamp is still never trusted into markup.
+  assert.match(nav, /const semver = \/\^\\d\+\\\.\\d\+\\\.\\d\+\$\//);
+  assert.ok(!/\.innerHTML\s*=|insertAdjacentHTML/.test(nav),
+    'a fetched version string must never reach innerHTML');
+
+  const stamp = JSON.parse(read('studio/version.json'));
+  assert.match(stamp.version, /^\d+\.\d+\.\d+$/, 'the live stamp must be strict semver or the bar never shows');
+  assert.match(stamp.minimum, /^\d+\.\d+\.\d+$/);
+  assert.match(read('studio/js/app-version.js'), new RegExp(`APP_VERSION = '${stamp.version}'`),
+    'the shipped version and the published stamp must agree, or every fresh load claims to be stale');
+});
