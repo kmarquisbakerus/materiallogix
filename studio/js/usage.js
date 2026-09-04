@@ -33,6 +33,18 @@ const activityLabel = value => ({
   contact_sheet: 'Contact sheet', upload: 'Local processing job', cloud_submission: 'Cloud package'
 }[value] || String(value || 'Activity').replaceAll('_', ' '));
 const statusLabel = value => ({ settled: 'Used', voided: 'Returned', authorized: 'Reserved', release_pending: 'Release pending' }[value] || String(value || 'Unknown'));
+const entryTypeLabel = value => ({
+  refill: 'Wallet refill', auto_refill: 'Automatic refill', promotional_grant: 'Included Video time added',
+  spend: 'Cloud job', hold: 'Reserved', release: 'Returned', refund: 'Refund', adjustment: 'Account adjustment'
+}[value] || String(value || 'Activity').replaceAll('_', ' '));
+// The service keeps the billing period as `YYYY-MM`. Customers read months.
+const periodLabel = value => {
+  const parts = /^(\d{4})-(\d{2})$/.exec(String(value ?? ''));
+  return parts
+    ? new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+      .format(new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, 1)))
+    : String(value ?? '');
+};
 const resultLabel = item => item.status === 'voided'
   ? `Returned${item.void_reason ? ` · ${String(item.void_reason).replaceAll('_', ' ')}` : ''}`
   : item.status === 'authorized' ? 'Held temporarily until the operation finishes or is released'
@@ -81,7 +93,7 @@ async function load() {
   const cloudPhotoLabel = cloudPhoto.priceReady
     ? `${money(cloudPhoto.minimumCentsPerImage)} minimum · ${money(cloudPhoto.retailCentsPerMegapixel)}/MP`
     : 'Unavailable pending benchmark and price approval';
-  status.textContent = data.period ? `${data.period} · server-verified` : 'Current period · server-verified';
+  status.textContent = data.period ? `${periodLabel(data.period)} · server-verified` : 'Current period · server-verified';
   // A field the service does not send must cost its own card, not the page.
   // This is the only screen a customer has for what they were charged.
   const whole = value => (Number.isFinite(Number(value)) ? Number(value).toLocaleString() : '—');
@@ -98,11 +110,11 @@ async function load() {
   ].join('');
   document.querySelector('#walletBalance').textContent = `Included Video: ${videoTime(includedVideoSeconds)} remaining (resets; no rollover) · Purchased wallet: ${money(wallet.balanceCents)}, about ${videoTime(purchasedVideoSeconds)} at the current rate · hard stop at $0.00`;
   document.querySelector('#cloudPhotoPricing').textContent = cloudPhoto.priceReady
-    ? `Cloud Photo generation is quoted separately before every job: ${money(cloudPhoto.minimumCentsPerImage)} minimum per image and ${money(cloudPhoto.retailCentsPerMegapixel)} per megapixel, up to ${Number(cloudPhoto.maxVariations)} variation${Number(cloudPhoto.maxVariations) === 1 ? '' : 's'}. ${cloudPhoto.executionAvailable ? 'Execution is available.' : 'Execution remains unavailable until provider and quality acceptance pass.'} Local Photo editing and generation on this computer do not use cloud wallet funds.`
+    ? `Cloud Photo generation is quoted separately before every job: ${money(cloudPhoto.minimumCentsPerImage)} minimum per image and ${money(cloudPhoto.retailCentsPerMegapixel)} per megapixel, up to ${count(cloudPhoto.maxVariations, 'variation')}. ${cloudPhoto.executionAvailable ? 'Execution is available.' : 'Execution remains unavailable until provider and quality acceptance pass.'} Local Photo editing and generation on this computer do not use cloud wallet funds.`
     : 'Cloud Photo generation is unavailable until its measured provider cost, customer price, rights, and output quality are accepted. Local Photo editing and generation on this computer do not use cloud wallet funds.';
-  const tx = (wallet.recent || []).map(item => `<tr><td>${safe(item.entry_type)}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
+  const tx = (wallet.recent || []).map(item => `<tr><td>${safe(entryTypeLabel(item.entry_type))}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
   document.querySelector('#walletTransactions').innerHTML = `<table class="usage-table"><thead><tr><th>Activity</th><th>Amount</th><th>Time</th></tr></thead><tbody>${tx || '<tr><td colspan="3">No wallet transactions.</td></tr>'}</tbody></table>`;
-  const promoTx = (wallet.promotionalRecent || []).map(item => `<tr><td>${safe(item.entry_type)}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
+  const promoTx = (wallet.promotionalRecent || []).map(item => `<tr><td>${safe(entryTypeLabel(item.entry_type))}</td><td>${money(item.amount_cents)}</td><td>${new Date(Number(item.created_at) * 1000).toLocaleString()}</td></tr>`).join('');
   document.querySelector('#walletTransactions').insertAdjacentHTML('afterbegin', `<p class="note">Included Video time is a promotional plan benefit, not cash or a transferable wallet balance. It expires at the next paid-period boundary and is used before purchased wallet funds.</p><table class="usage-table"><thead><tr><th>Included-time activity</th><th>Value</th><th>Time</th></tr></thead><tbody>${promoTx || '<tr><td colspan="3">No included Video-time activity.</td></tr>'}</tbody></table>`);
   renderPlan(data.license);
   const settings = auto.settings || {};
@@ -198,4 +210,25 @@ document.querySelector('#autoDisable').onclick = async () => {
   } catch (error) { walletStatus.textContent = `Could not disable automatic top-up: ${readableServiceError(error)}.`; }
 };
 
-load().catch(error => { status.textContent = `Usage is unavailable: ${readableServiceError(error)}. Sign in through the MaterialLogix account gateway.`; });
+// A failed load used to set the status line and stop, leaving three "Loading…"
+// strings over four empty sections while every billing control kept the markup
+// default of enabled — a page about money that says nothing and still offers to
+// take some. Nothing here is knowable without the service, so say so in each
+// box that would have been filled and put the money controls out of reach until
+// a load succeeds.
+function renderUnavailable(reason) {
+  status.textContent = `Usage is unavailable: ${reason}. Sign in through the MaterialLogix account gateway.`;
+  const emptyState = message => `<p class="note">${message}</p>`;
+  cards.innerHTML = `<p class="note" style="grid-column:1/-1">Allowance and balance are held by the service, so none of them can be shown right now.</p>`;
+  document.querySelector('#planSummary').textContent = 'Your plan could not be read, so billing cannot be managed from here until this page loads.';
+  document.querySelector('#walletBalance').textContent = 'Wallet balance unavailable — this page shows server-verified amounts only.';
+  document.querySelector('#cloudPhotoPricing').textContent = 'Cloud Photo pricing is quoted by the service and could not be read. Local Photo editing and generation on this computer do not use cloud wallet funds.';
+  document.querySelector('#usageBreakdown').innerHTML = emptyState('No usage could be read for this period.');
+  document.querySelector('#walletTransactions').innerHTML = emptyState('No wallet transactions could be read.');
+  table.innerHTML = emptyState('No production activity could be read.');
+  for (const id of ['#billingPortal', '#walletRefill', '#autoSetup', '#autoEnable']) {
+    document.querySelector(id).disabled = true;
+  }
+}
+
+load().catch(error => renderUnavailable(readableServiceError(error)));
