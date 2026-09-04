@@ -412,3 +412,46 @@ scale.
 **Do not detect this by text-searching licences for "European Union".** The
 LTX-2.x Community License contains the phrase in a consumer-protection savings
 clause and would false-positive.
+
+## One defect, found seven times
+
+Seven separate defects in this session had a single cause: **a tier was declared
+in the price list and forgotten in a table somewhere else**, so it fell through
+to whatever the fallback happened to be. Every one gave a paying customer less
+than they bought, and every one was silent.
+
+| What fell through | What the customer got |
+| --- | --- |
+| Upscale model list | a free preview could pick the licensed 4x model |
+| Preview word cap | an unlicensed preview read a script of any length |
+| Composite voice packs | a free preview outranked a paying Voice Starter |
+| Personal voice profiles | a free preview kept unlimited ones; Starter kept one |
+| Video watermark rules | an unlicensed render returned a clean MP4 |
+| Lane export descriptors | prose no renderer could act on |
+| **Voice ladder** | **a $39 Pro Studio customer could not train a voice; a $15 Single Studio customer could** |
+
+The cause is structural, not careless. The Pro tiers were added to `pricing.js`
+and to nothing else, and nothing anywhere asked whether a tier that appears in
+`PRODUCTS` appears in the tables that decide what it receives.
+
+`tests/tiers.test.mjs` asks that question of the code rather than assuming it.
+For every plan the price list sells, on every product, it reads what the tier
+actually receives - units, cloud credit, voice profiles, reference audio,
+composite packs, script length, upscale models, watermarking - and holds four
+rules:
+
+1. **No paid tier receives less than the free preview.**
+2. **A Pro tier is never worse than the tier it upgrades** (`single_pro` against
+   `single`, `pro` against `full`).
+3. **A covered Studio is never delivered watermarked.** That is the whole point
+   of paying, and a tier missing from the lane table used to fall through to the
+   free lane, which stamps everything.
+4. **A suspended licence falls to the free tier, never through it.**
+
+Verified against three separate reintroductions - removing the `single_pro`
+rung from the voice ladder, dropping `pro` from the cloud-credit table, and
+removing `pro` from `laneFor` - each of which the suite catches in two to four
+places.
+
+This is the check that would have caught all seven, and it is the one to run
+first when a tier is added.
