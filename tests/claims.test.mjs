@@ -212,3 +212,24 @@ test('the draft contract wording is in the repository and out of the site', () =
   assert.ok(notTheSite.test('/legal/drafts/CONTRACT_WORDING.md'),
     'the Worker would serve the draft');
 });
+
+test('a subject can be told what consent was taken, and have it erased', () => {
+  // The consent records are held on the device and nowhere else, so an export
+  // that asks only the server hands back everything except the records a
+  // subject is most likely to be asking for — and a deletion that erases the
+  // server leaves them in place, which is not deletion. Driven end to end:
+  // 2 recorded, 2 exported (Ada, Grace), 2 erased, 0 remaining.
+  const privacy = read('studio/js/privacy.js');
+  assert.match(privacy, /import \{ allConsents, forgetConsents \} from '\.\/store\.js';/,
+    'the rights paths must reach the store that holds the records');
+  assert.match(privacy, /consentRecordsOnThisDevice: consents \?\? 'could not be read'/,
+    'the export must carry the device records');
+  assert.match(privacy, /erased \+= await forgetConsents\(subject\)/,
+    'deletion must erase them, not only ask the server');
+  // A silently incomplete export is worse than one that refuses.
+  assert.match(privacy, /consent records on this device could not be read/,
+    'a failure to read the records must be reported to the subject');
+  // And the customer is told before confirming that local records go too.
+  assert.match(privacy, /consent records held on this device will be erased/,
+    'the confirmation must say what it erases');
+});

@@ -3,6 +3,8 @@ import { downloadBlob } from './download.js';
 
 const API = apiUrl('/api/privacy/preferences');
 const DIAGNOSTIC_API = apiUrl('/api/diagnostics/event');
+import { allConsents, forgetConsents } from './store.js';
+
 const PRIVACY_EXPORT_API = apiUrl('/api/privacy/export');
 const PRIVACY_REQUEST_API = apiUrl('/api/privacy/request');
 const APP_VERSION = '0.1.0';
@@ -253,9 +255,25 @@ function installPrivacyDialog(initial) {
     exportButton.disabled = true;
     try {
       const accountData = await privacyAccountRequest(PRIVACY_EXPORT_API);
-      downloadBlob(new Blob([JSON.stringify(accountData, null, 2)], { type: 'application/json' }),
+      // The consent taken for a face or a voice is recorded on this device and
+      // nowhere else, so an export that asks only the server hands back
+      // everything except the records a subject is most likely to be asking
+      // for. A failure to read them is reported rather than quietly omitted -
+      // an export that is silently incomplete is worse than one that refuses.
+      let consents;
+      try {
+        consents = await allConsents();
+      } catch (error) {
+        status.textContent = `Your account data is ready, but the consent records on this device could not be read (${error.message}).`;
+      }
+      downloadBlob(new Blob([JSON.stringify({
+        ...accountData,
+        consentRecordsOnThisDevice: consents ?? 'could not be read'
+      }, null, 2)], { type: 'application/json' }),
         `materiallogix-account-data-${new Date().toISOString().slice(0, 10)}.json`);
-      status.textContent = 'Your account data download is ready.';
+      if (consents) {
+        status.textContent = `Your account data download is ready, including ${consents.length} consent record${consents.length === 1 ? '' : 's'} held on this device.`;
+      }
     } catch {
       status.textContent = 'We could not prepare your account data. Try again.';
     } finally {
@@ -264,13 +282,24 @@ function installPrivacyDialog(initial) {
   };
   const deletionButton = dialog.querySelector('#privacyDelete');
   if (deletionButton) deletionButton.onclick = async () => {
-    const confirmed = window.confirm('Request deletion of your MaterialLogix account? Optional diagnostics and profile data will be removed now. Billing, licensing, fraud-prevention, and security records may be retained when legally required.');
+    const confirmed = window.confirm('Request deletion of your MaterialLogix account? Optional diagnostics and profile data will be removed now, and the consent records held on this device will be erased. Billing, licensing, fraud-prevention, and security records may be retained when legally required.');
     if (!confirmed) return;
     status.textContent = 'Submitting your deletion request…';
     deletionButton.disabled = true;
     try {
       await privacyAccountRequest(PRIVACY_REQUEST_API, 'POST', { requestType: 'deletion', confirm: true });
-      status.textContent = 'Deletion request received. Optional diagnostics and profile data have been withdrawn.';
+      // Erasing what is on the server and leaving the device's own consent
+      // records in place is not deletion. Subjects are erased one at a time
+      // because that is the shape the store is keyed on.
+      let erased = 0;
+      try {
+        for (const subject of new Set((await allConsents()).map(record => record.subject))) {
+          erased += await forgetConsents(subject);
+        }
+      } catch { /* reported below rather than silently claimed */ }
+      status.textContent = erased
+        ? `Deletion request received. Optional diagnostics and profile data have been withdrawn, and ${erased} consent record${erased === 1 ? '' : 's'} on this device were erased.`
+        : 'Deletion request received. Optional diagnostics and profile data have been withdrawn.';
     } catch {
       status.textContent = 'We could not submit the deletion request. Try again.';
       deletionButton.disabled = false;
