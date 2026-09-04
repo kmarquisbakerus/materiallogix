@@ -229,23 +229,73 @@ export function loadImage(url) {
   });
 }
 
-/** Grabs a still from a video at `time` seconds for crop preview and export. */
+// Finite, and past the end of anything anyone will import. Seeking here makes
+// the browser walk a stream-muxed file and report the length its header omits.
+const DURATION_PROBE_SECONDS = 1e101;
+// A file that has produced neither a frame nor an error by now never will.
+const FRAME_TIMEOUT_MS = 20000;
+
+/**
+ * Grabs a still from a video at `time` seconds for crop preview and export.
+ *
+ * Every exit goes through `settle`, and every handler body through `guard`,
+ * because a throw inside a media event handler unwinds into the browser's
+ * event loop rather than into the caller's `await`: the caller's try/catch
+ * never runs and the import waits on a promise that can no longer settle.
+ */
 export function grabVideoFrame(url, time = 0) {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'auto';
     video.muted = true;
-    video.onloadeddata = () => {
-      video.currentTime = Math.min(time, Math.max(0, video.duration - 0.05));
+
+    let done = false;
+    let probingDuration = false;
+    let timer = 0;
+    const settle = act => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      video.onloadeddata = video.onseeked = video.onerror = null;
+      act();
     };
-    video.onseeked = () => {
+    const fail = message => settle(() => reject(new Error(message)));
+    const guard = fn => { try { fn(); } catch (error) { fail(error?.message || 'The browser refused to seek this video.'); } };
+    timer = setTimeout(() => fail(`This video produced no frame within ${Math.round(FRAME_TIMEOUT_MS / 1000)} seconds.`), FRAME_TIMEOUT_MS);
+
+    // The last frame of a container is not always decodable, and the target
+    // has to be finite whatever the caller asked for.
+    const targetTime = () => {
+      const wanted = Number(time);
+      return Math.min(Number.isFinite(wanted) && wanted > 0 ? wanted : 0, Math.max(0, video.duration - 0.05));
+    };
+    const capture = () => {
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.getContext('2d').drawImage(video, 0, 0);
-      resolve({ canvas, width: video.videoWidth, height: video.videoHeight, duration: video.duration });
+      settle(() => resolve({ canvas, width: video.videoWidth, height: video.videoHeight, duration: video.duration }));
     };
-    video.onerror = () => reject(new Error('Could not decode video'));
+
+    video.onloadeddata = () => guard(() => {
+      if (Number.isFinite(video.duration)) return void (video.currentTime = targetTime());
+      // Anything muxed as a stream — a browser recorder, a screen capture, an
+      // action camera — writes no duration into its header, so `duration` is
+      // Infinity until the file has been walked. One seek past the end walks it.
+      probingDuration = true;
+      video.currentTime = DURATION_PROBE_SECONDS;
+    });
+    video.onseeked = () => guard(() => {
+      if (!probingDuration) return capture();
+      probingDuration = false;
+      if (!Number.isFinite(video.duration)) return fail('This video carries no duration the browser can read.');
+      const target = targetTime();
+      // The probe already parked on the last frame; only seek again if the
+      // caller wanted a different one.
+      if (Math.abs(video.currentTime - target) > 0.01) return void (video.currentTime = target);
+      capture();
+    });
+    video.onerror = () => fail('This video could not be read by the browser.');
     video.src = url;
   });
 }

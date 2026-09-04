@@ -126,11 +126,86 @@ const btn = (label, cls = 'btn', onclick) => {
 /** Names a control whose visible label is a glyph. */
 const aria = (node, label) => { node.setAttribute('aria-label', label); node.title = label; return node; };
 
+/** A toggle's state. The `on` class is a background tint, which is nothing at
+ * all to a screen reader and very little to a colour-blind reviewer. */
+const pressed = (node, on) => { node.classList.toggle('on', !!on); node.setAttribute('aria-pressed', String(!!on)); return node; };
+
 /** Close a fragment so two messages read as two sentences, never a run-on. */
 const sentence = text => {
   const trimmed = String(text ?? '').trim();
   return !trimmed || /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 };
+
+// Why `colorExportDecision` refused a delivery, in the words pre-flight uses
+// and the words the failed export uses — they have to be the same words, or
+// the gate and the refusal read as two different products.
+const COLOR_EXPORT_BLOCKS = Object.freeze({
+  color_profile_unknown: {
+    reason: 'its colour profile has not been read',
+    message: 'The colour profile of this asset has not been read, so it cannot be delivered as sRGB.',
+    fix: 'Run the automated checks on it. If they cannot read the file, convert it and re-import.'
+  },
+  hdr_tone_map_required: {
+    reason: 'HDR colour was signalled and no accepted tone map was applied',
+    message: 'HDR color signaling was detected, but no accepted tone map was applied.',
+    fix: 'Convert through the approved HDR-to-sRGB delivery path before export.'
+  },
+  display_p3_conversion_unverified: {
+    reason: 'the accepted Display P3 to sRGB conversion did not complete',
+    message: 'Display P3 was detected, but this decode did not complete the accepted sRGB conversion.',
+    fix: 'Re-open the source in a supported browser or convert it to embedded sRGB.'
+  },
+  adobe_rgb_bundling_license_and_fixture_required: {
+    reason: 'its wide-gamut profile licence and conversion fixture are not accepted',
+    message: 'This wide-gamut source cannot be delivered until the profile license and encoded conversion fixture are accepted.',
+    fix: 'Convert to embedded sRGB through a verified color-managed workflow, then re-import.'
+  },
+  cmyk_conversion_unaccepted: {
+    reason: 'no accepted conversion exists for its CMYK profile',
+    message: 'A CMYK source profile was detected, but no accepted conversion is available.',
+    fix: 'Convert to sRGB through a verified color-managed workflow, then re-import.'
+  },
+  embedded_profile_unclassified: {
+    reason: 'its embedded colour profile could not be classified safely',
+    message: 'The embedded color profile could not be classified safely.',
+    fix: 'Convert to embedded sRGB through a verified color-managed workflow, then re-import.'
+  }
+});
+
+// Codes only the delivery and billing paths raise. `service-error.js` covers
+// transport and the shared API vocabulary; these are the ones it has never
+// been given a sentence for.
+const DELIVERY_CODES = Object.freeze({
+  authorization_required: 'this download needs a connection so the usage can be confirmed',
+  online_authorization_required: 'this download needs a connection so the usage can be confirmed',
+  authorization_failed: 'the usage for this download could not be confirmed',
+  billing_request_failed: 'the billing service did not answer',
+  license_required: 'no licence is active on this computer',
+  usage_already_settled: 'this usage was already finalized'
+});
+
+/**
+ * A failure as a fragment that reads after "… was not downloaded: ".
+ *
+ * The moment a delivery fails is the moment a paying customer has one sentence
+ * to go on, so no path to the screen may carry a raw code.
+ */
+function deliveryReason(error) {
+  const raw = String(error?.message ?? error ?? '').trim();
+  // Own keys only: a message of "constructor" must not resolve to one.
+  if (Object.hasOwn(DELIVERY_CODES, raw)) return DELIVERY_CODES[raw];
+  if (raw.startsWith('color_export_blocked:')) {
+    // `color_export_blocked:<filename>:<reason>`, and a filename may itself
+    // contain a colon, so the reason is taken from the end.
+    const rest = raw.slice('color_export_blocked:'.length);
+    const cut = rest.lastIndexOf(':');
+    const filename = cut > 0 ? rest.slice(0, cut) : rest;
+    const code = cut > 0 ? rest.slice(cut + 1) : '';
+    const block = Object.hasOwn(COLOR_EXPORT_BLOCKS, code) ? COLOR_EXPORT_BLOCKS[code] : null;
+    return `${filename} cannot be delivered because ${block ? block.reason : 'its colour could not be accepted'}`;
+  }
+  return readableServiceError(error);
+}
 
 const svgEl = (tag, attrs = {}, ...kids) => {
   const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -138,6 +213,46 @@ const svgEl = (tag, attrs = {}, ...kids) => {
   for (const kid of kids) node.append(kid);
   return node;
 };
+
+// --- keyboard focus across a re-render -------------------------------------
+// `replaceChildren` destroys the node the customer is standing on and the
+// browser drops focus to <body>: twelve tabs back to "Next →" after every
+// press of "Next →". The rebuilt tree shares no nodes with the old one, so the
+// control is found again by what it is rather than by identity.
+
+const FOCUS_SCOPES = ['#main', '#sidebar'];
+const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+
+/** Enough of a control's identity to recognise its replacement. */
+function focusSignature(node) {
+  if (node.id) return `#${node.id}`;
+  // Deliberately not the class list: a toggle changes class on activation, and
+  // the whole point is to find the control again after it was toggled.
+  const label = node.getAttribute('aria-label') || node.name || node.title
+    || (node.textContent || '').trim().slice(0, 60);
+  return [node.tagName, node.type || '', label].join('|');
+}
+
+const focusablesIn = scope => [...($(scope)?.querySelectorAll(FOCUSABLE) || [])];
+
+function captureFocus() {
+  const node = document.activeElement;
+  if (!node || node === document.body || $('#dlg').open) return null;
+  const scope = FOCUS_SCOPES.find(sel => node.closest(sel));
+  if (!scope) return null;
+  const signature = focusSignature(node);
+  // Sliders and unlabelled fields all sign the same; the ordinal separates them.
+  const nth = focusablesIn(scope).filter(n => focusSignature(n) === signature).indexOf(node);
+  return { scope, signature, nth };
+}
+
+function restoreFocus(mark) {
+  // Only ever put focus back where this render took it from: anything else on
+  // screen already has it for a reason.
+  const now = document.activeElement;
+  if (!mark || (now && now !== document.body && now !== document.documentElement)) return;
+  focusablesIn(mark.scope).filter(n => focusSignature(n) === mark.signature)[mark.nth]?.focus({ preventScroll: true });
+}
 
 const pendingSaves = new Map();
 function scheduleSave(key, save) {
@@ -246,7 +361,9 @@ async function decode(asset) {
       let t = asset.video.posterTime;
       let frame = await grabVideoFrame(url, t ?? 0);
       if (t == null) {
-        t = frame.duration > 1 ? +(frame.duration * 0.3).toFixed(2) : 0;
+        // A poster time is seconds into the clip, so it has to be a finite
+        // number: a container that reports no length gets frame zero.
+        t = Number.isFinite(frame.duration) && frame.duration > 1 ? +(frame.duration * 0.3).toFixed(2) : 0;
         if (t > 0) frame = await grabVideoFrame(url, t);
         asset.video.posterTime = t;
         await store.saveAsset(asset);
@@ -264,11 +381,15 @@ async function decode(asset) {
   } catch {
     return null;
   }
-  if (!asset.width && d.w) {
-    asset.width = d.w; asset.height = d.h;
-    if (d.duration) asset.duration = d.duration;
-    await store.saveAsset(asset);
+  let repaired = false;
+  if (!asset.width && d.w) { asset.width = d.w; asset.height = d.h; repaired = true; }
+  // A clip imported before its container's length could be read carries no
+  // usable duration on its record, and trim, pricing and the plan all read it
+  // from there. Decoding is the moment the real length is known.
+  if (Number.isFinite(d.duration) && d.duration > 0 && !(asset.duration > 0)) {
+    asset.duration = d.duration; repaired = true;
   }
+  if (repaired) await store.saveAsset(asset);
   state.decoded.set(asset.id, d);
   if (state.decoded.size > DECODE_CACHE) state.decoded.delete(state.decoded.keys().next().value);
   return d;
@@ -279,8 +400,9 @@ async function runAnalysis(asset, { quiet = false } = {}) {
   if (!d) { if (!quiet) toast(`Could not decode ${asset.filename}.`, true); return null; }
   const blob = await store.getBlob(asset.id);
   asset.auto = await analyzeAsset(d.source, d.w, d.h, blob, d.colorTransform || null);
-  if (asset.kind === 'video' && (d.duration || asset.duration) > 0) {
-    const duration = d.duration || asset.duration;
+  const clipSeconds = d.duration || asset.duration;
+  if (asset.kind === 'video' && Number.isFinite(clipSeconds) && clipSeconds > 0) {
+    const duration = clipSeconds;
     const url = await store.objectUrl(asset.id);
     const count = Math.min(9, Math.max(5, Math.ceil(duration / 4)));
     const samples = [];
@@ -337,7 +459,7 @@ async function analyzeAll() {
   } catch (error) {
     closeDialog();
     render();
-    toast(error?.message || 'Analysis stopped early. Already-analysed assets kept their results.', true);
+    toast(error?.message ? sentence(deliveryReason(error)) : 'Analysis stopped early. Already-analysed assets kept their results.', true);
     return;
   }
   status.textContent = `Done. ${count(pending.length, 'asset')} analysed.`;
@@ -347,18 +469,20 @@ async function analyzeAll() {
 // ---------------------------------------------------------------------------
 // import
 
+// `reason` is why nothing could be measured, so the import can say so instead
+// of storing a row that renders a blank stage forever.
 async function probe(file, url) {
   try {
     if (file.type.startsWith('video')) {
       const { width, height, duration } = await grabVideoFrame(url, 0);
-      return { width, height, duration };
+      return { width, height, duration: Number.isFinite(duration) ? duration : 0, reason: '' };
     }
     const managed = await decodeColorManagedBlob(file);
-    if (managed) return { width: managed.w, height: managed.h, duration: 0 };
+    if (managed) return { width: managed.w, height: managed.h, duration: 0, reason: '' };
     const img = await loadImage(url);
-    return { width: img.naturalWidth, height: img.naturalHeight, duration: 0 };
-  } catch {
-    return { width: 0, height: 0, duration: 0 };
+    return { width: img.naturalWidth, height: img.naturalHeight, duration: 0, reason: '' };
+  } catch (error) {
+    return { width: 0, height: 0, duration: 0, reason: sentence(error?.message || 'this browser could not read it') };
   }
 }
 
@@ -401,9 +525,20 @@ async function importFiles(fileList) {
       }
       await store.addAsset(asset, file);
       const url = await store.objectUrl(asset.id);
-      Object.assign(asset, rawImport?.ok && rawImport.width && rawImport.height
-        ? { width: rawImport.width, height: rawImport.height, duration: 0 }
-        : await probe(file, url));
+      const measured = rawImport?.ok && rawImport.width && rawImport.height
+        ? { width: rawImport.width, height: rawImport.height, duration: 0, reason: '' }
+        : await probe(file, url);
+      // A clip that yields no frame cannot be reviewed, cropped or exported.
+      // Keeping it means a library row with a blank stage forever, so it is
+      // refused here, with the reason, rather than stored and forgotten.
+      if (asset.kind === 'video' && !(measured.width && measured.height)) {
+        await store.deleteAsset(asset.id).catch(() => {});
+        blocked += 1;
+        lastBlockedMessage = `${sourceFile.name} was not imported. ${measured.reason || 'No frame could be decoded from it.'} Convert it and re-import.`;
+        status.textContent = lastBlockedMessage;
+        continue;
+      }
+      Object.assign(asset, { width: measured.width, height: measured.height, duration: measured.duration });
       const sourceLabel = rawImport?.ok ? `camera RAW from ${sourceFile.name}` : (file.type || 'unknown type');
       log(asset, `imported (${sourceLabel}, ${(sourceFile.size / 1048576).toFixed(1)} MB)`, state.reviewer);
       await store.saveAsset(asset);
@@ -419,7 +554,7 @@ async function importFiles(fileList) {
     closeDialog();
     state.assets = await store.listAssets(state.project.id).catch(() => state.assets);
     render();
-    toast(error?.message || 'Import failed. Files already imported are safe in the library.', true);
+    toast(error?.message ? sentence(deliveryReason(error)) : 'Import failed. Files already imported are safe in the library.', true);
     return;
   }
   state.assets = await store.listAssets(state.project.id);
@@ -621,7 +756,7 @@ function generatePanel() {
             // Fill. This was the one generative path that reserved nothing, so
             // a visitor with no licence at all generated without limit.
             const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
-            if (!authorization.ok) throw new Error(readableServiceError(authorization.reason || 'authorization_required'));
+            if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');
             reserved = authorization.authorization.id;
             const startedAt = Date.now();
             const tick = () => {
@@ -668,7 +803,7 @@ function generatePanel() {
         toast(`Created ${count} candidate${count === 1 ? '' : 's'}.`);
       } catch (err) {
         const release = reserved ? await releaseUsage(reserved, 'render_failed') : null;
-        status.textContent = `Failed: ${sentence(err.message)}${release ? ` ${release.message}` : ''}`;
+        status.textContent = `Failed: ${sentence(deliveryReason(err))}${release ? ` ${release.message}` : ''}`;
       } finally {
         if (ticker) clearInterval(ticker);
         go.disabled = false;
@@ -796,7 +931,7 @@ function localToolsPanel() {
             toast('Video tools are ready.');
           } catch (error) {
             install.disabled = false;
-            message.textContent = `Setup stopped safely: ${error.message}`;
+            message.textContent = `Setup stopped safely: ${sentence(deliveryReason(error))}`;
           }
         });
         install.disabled = true;
@@ -1101,7 +1236,7 @@ async function backupProject() {
     toast(`Recovery file saved with ${count(entries.length - 1, 'media file')}.${withheld
       ? ` ${count(withheld, 'file')} created in Studio stayed out — activate a licence to include them.` : ''}`);
   } catch (error) {
-    toast(error?.message || 'The recovery file could not be created. Nothing was saved.', true);
+    toast(error?.message ? sentence(deliveryReason(error)) : 'The recovery file could not be created. Nothing was saved.', true);
   }
 }
 
@@ -1131,7 +1266,7 @@ async function restoreProject(file) {
     await boot(projectId);
     toast(`Recovered ${count(backup.assets.length, 'media file')} and all project decisions.`);
   } catch (error) {
-    toast(`Recovery failed: ${error.message}`, true);
+    toast(`Recovery failed: ${sentence(deliveryReason(error))}`, true);
   }
 }
 
@@ -1573,7 +1708,7 @@ function healAt(asset, decoded, nx, ny) {
       maskCoverage: Math.PI * r * r * (decoded.w / decoded.h)
     });
   } catch (error) {
-    toast(error.message, true);
+    toast(sentence(deliveryReason(error)), true);
     return;
   }
   mutate(asset, `healed a spot (${(spec.maskCoverage * 100).toFixed(2)}% of frame)`, () => {
@@ -1657,11 +1792,17 @@ async function paintCompare() {
 // ---------------------------------------------------------------------------
 // rail
 
+// Blocking and warning used to differ only in the fill of a 5px dot, and the
+// two colours are 1.09:1 apart in luminance — the distinction is pure hue, so
+// it survives neither deuteranopia nor a screen reader. The word carries it.
+const ISSUE_LEVELS = Object.freeze({ block: 'Blocking', warn: 'Warning', info: 'Note' });
+
 function issueList(items, emptyText) {
   if (!items.length) return el('p', { className: 'hint', style: 'margin:0' }, emptyText);
   return el('div', {}, ...items.map(i => el('div', { className: 'issue ' + i.level },
-    el('span', { className: 'dot' }),
+    el('span', { className: 'dot', 'aria-hidden': 'true' }),
     el('div', {},
+      el('span', { className: 'where' }, `${ISSUE_LEVELS[i.level] || i.level} — `),
       i.surface ? el('span', { className: 'where' }, i.surface + ' — ') : null,
       el('span', { className: 'msg' }, i.message),
       i.fix ? el('span', { className: 'fix' }, i.fix) : null))));
@@ -1739,7 +1880,7 @@ function placementCard(asset, surface) {
 
   const decide = el('div', { className: 'decide' });
   for (const d of ['approved', 'revise', 'denied']) {
-    const b = el('button', { className: p.decision === d ? 'on' : '', dataset: { d } }, d[0].toUpperCase() + d.slice(1));
+    const b = pressed(el('button', { dataset: { d } }, d[0].toUpperCase() + d.slice(1)), p.decision === d);
     b.onclick = () => decidePlacement(asset, surface.id, d);
     decide.append(b);
   }
@@ -1806,10 +1947,9 @@ function qaBlock(asset) {
       for (const v of ['pass', 'fail', 'na']) {
         const label = v === 'na' ? 'N/A' : v === 'pass' ? 'Pass' : 'Fix';
         const description = v === 'na' ? 'Not applicable' : v === 'pass' ? 'Pass this check' : 'Needs work';
-        const b = el('button', {
-          className: asset.qa[c.id] === v ? 'on' : '', title: description,
-          ariaLabel: `${c.label}: ${description}`, dataset: { v }
-        }, label);
+        const b = pressed(el('button', {
+          title: description, ariaLabel: `${c.label}: ${description}`, dataset: { v }
+        }, label), asset.qa[c.id] === v);
         b.onclick = () => {
           mutate(asset, `${c.label}: ${asset.qa[c.id] === v ? 'cleared' : v}`, () => {
             if (asset.qa[c.id] === v) delete asset.qa[c.id]; else asset.qa[c.id] = v;
@@ -1882,7 +2022,7 @@ function videoBlock(asset) {
 
   const stars = el('div', { className: 'stars' });
   for (let i = 1; i <= 5; i++) {
-    const b = el('button', { className: i <= v.believability ? 'on' : '' }, '★');
+    const b = pressed(el('button', {}, '★'), i <= v.believability);
     b.setAttribute('aria-label', `Naturalism rating ${i} of 5`);
     b.onclick = () => { mutate(asset, `naturalism ${i}/5`, () => { v.believability = v.believability === i ? 0 : i; }); renderReview(); };
     stars.append(b);
@@ -2006,7 +2146,7 @@ window.addEventListener('materiallogix:cancel-job', event => {
   const jobId = String(event.detail?.id || '');
   if (jobId) cancelLocalVideoJob(jobId).catch(error => {
     localVideoActivity({ id: jobId, status: 'failed', progress: 100,
-      detail: `Stop failed safely · ${error.message}` });
+      detail: `Stop failed safely · ${sentence(deliveryReason(error))}` });
   });
 });
 window.dispatchEvent(new Event('materiallogix:cancel-ready'));
@@ -2063,7 +2203,7 @@ async function reviewCloudVideoRender(asset) {
   // The cloud render carries the same delivery rules as the local one, so a
   // licence cannot be bypassed by sending the job to our GPUs instead.
   try { plan = videoRenderPlan(asset, lane, engine); }
-  catch (error) { return toast(error.message, true); }
+  catch (error) { return toast(sentence(deliveryReason(error)), true); }
   const quote = quoteCloudJob({ kind: 'video', durationSeconds: plan.outputSeconds });
   // What the licence includes is known here; what remains this period is the
   // server's to report, so the split is never guessed on this side.
@@ -2104,8 +2244,8 @@ async function reviewCloudVideoRender(asset) {
       });
       toast('Complete package uploaded. Cloud rendering has started.');
     } catch (error) {
-      cloudActivity({ id: activityId, status: 'failed', progress: 100, detail: error.message });
-      toast('Cloud render was not started: ' + error.message, true);
+      cloudActivity({ id: activityId, status: 'failed', progress: 100, detail: sentence(deliveryReason(error)) });
+      toast(`Cloud render was not started: ${sentence(deliveryReason(error))}`, true);
     }
   });
   continueButton.disabled = true;
@@ -2151,7 +2291,7 @@ async function startVideoRender(asset) {
   if (engine.blocked) return toast(engine.notice, true);
   let plan;
   try { plan = videoRenderPlan(asset, lane, engine); }
-  catch (error) { return toast(error.message, true); }
+  catch (error) { return toast(sentence(deliveryReason(error)), true); }
   // An engine that cannot mark the file must not be handed an unmarked one.
   if (requiresWatermark(lane, 'video') && !bridge.video?.watermark) {
     return toast('This device cannot add the preview watermark that an unlicensed render requires. Activate a Video plan, or update the Video pack.', true);
@@ -2176,7 +2316,7 @@ async function startVideoRender(asset) {
     quantity: exportUnits('video', { seconds: plan.outputSeconds }), operationId: jobId });
   if (!authorization.ok) {
     localVideoJobs.delete(jobId);
-    return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+    return toast(`Online render authorization failed: ${sentence(deliveryReason(authorization.reason || 'authorization_required'))}`, true);
   }
   try {
     await busy(async () => {
@@ -2216,8 +2356,8 @@ async function startVideoRender(asset) {
     const cancelled = localVideoJobs.get(jobId)?.cancelRequested || error.name === 'AbortError';
     const release = await releaseUsage(authorization.authorization.id, cancelled ? 'user_cancelled' : 'render_failed');
     localVideoActivity({ id: jobId, status: cancelled ? 'cancelled' : 'failed', progress: 100,
-      detail: cancelled ? `Stopped locally · ${release.message}` : `${error.message} · ${release.message}` });
-    if (!cancelled) toast(`Video render failed: ${error.message}. ${release.message}`, true);
+      detail: cancelled ? `Stopped locally · ${release.message}` : `${sentence(deliveryReason(error))} ${release.message}` });
+    if (!cancelled) toast(`Video render failed: ${sentence(deliveryReason(error))} ${release.message}`, true);
   } finally {
     localVideoJobs.delete(jobId);
   }
@@ -2490,7 +2630,7 @@ function metaBlock(asset) {
   const wrap = el('div', { className: 'block' });
   const stars = el('div', { className: 'stars', style: 'margin-bottom:10px' });
   for (let i = 1; i <= 5; i++) {
-    const b = el('button', { className: i <= (asset.rating || 0) ? 'on' : '', type: 'button', title: `${i} star${i > 1 ? 's' : ''}` }, '★');
+    const b = pressed(el('button', { type: 'button', title: `${i} star${i > 1 ? 's' : ''}` }, '★'), i <= (asset.rating || 0));
     b.onclick = () => {
       mutate(asset, `rated ${asset.rating === i ? 0 : i}/5`, () => {
         asset.rating = asset.rating === i ? 0 : i;
@@ -2503,7 +2643,7 @@ function metaBlock(asset) {
 
   const statuses = el('div', { className: 'statusrow' });
   for (const s of ASSET_STATUSES) {
-    const b = el('button', { className: asset.status === s.id ? 'on' : '', title: s.hint, dataset: { s: s.id } }, s.label);
+    const b = pressed(el('button', { title: s.hint, dataset: { s: s.id } }, s.label), asset.status === s.id);
     b.onclick = () => {
       if (s.id === 'rejected' || s.id === 'needs-new-generation') return rejectionDialog(asset, s);
       mutate(asset, `status → ${s.label}`, () => { asset.status = s.id; });
@@ -2731,12 +2871,13 @@ async function generativeFillDialog(asset) {
     for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) selected += pixels[i] / 255;
     return selected / (selectionMask.width * selectionMask.height);
   };
-  const outlineButton = btn('Outline', 'btn sm on', () => {
-    selectionState.tool = 'outline'; outlineButton.classList.add('on'); brushButton.classList.remove('on');
+  const outlineButton = btn('Outline', 'btn sm', () => {
+    selectionState.tool = 'outline'; pressed(outlineButton, true); pressed(brushButton, false);
   });
   const brushButton = btn('Brush', 'btn sm', () => {
-    selectionState.tool = 'brush'; brushButton.classList.add('on'); outlineButton.classList.remove('on');
+    selectionState.tool = 'brush'; pressed(brushButton, true); pressed(outlineButton, false);
   });
+  pressed(outlineButton, true); pressed(brushButton, false);
   const selectionActions = el('div', { className: 'fill-selection-actions' }, outlineButton, brushButton,
     btn('Undo', 'btn sm', () => {
       if (selectionState.tool === 'brush' && selectionState.strokes.length) selectionState.strokes.pop();
@@ -2792,7 +2933,7 @@ async function generativeFillDialog(asset) {
     const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
     if (!authorization.ok) {
       run.disabled = false;
-      status.textContent = `Generative Fill authorization failed: ${readableServiceError(authorization.reason || 'authorization_required')}.`;
+      status.textContent = `Generative Fill authorization failed: ${sentence(deliveryReason(authorization.reason || 'authorization_required'))}`;
       return;
     }
     try {
@@ -2850,7 +2991,7 @@ async function generativeFillDialog(asset) {
         : 'Generative Fill Beta candidate created and flagged for boundary review.', fillBoundaryQuality?.status !== 'pass');
     } catch (err) {
       const release = await releaseUsage(authorization.authorization.id, 'render_failed');
-      status.textContent = `Failed: ${sentence(err.message)} ${release.message}`;
+      status.textContent = `Failed: ${sentence(deliveryReason(err))} ${release.message}`;
     }
     finally { run.disabled = false; }
   });
@@ -2863,7 +3004,7 @@ function editingBlock(asset) {
   const wrap = el('div', { className: 'block editor-block' });
   const modes = el('div', { className: 'seg editor-mode', role: 'group', ariaLabel: 'Editing mode' });
   for (const [value, label] of [['guided', 'Guided'], ['advanced', 'Advanced']]) {
-    const b = el('button', { className: edit.mode === value ? 'on' : '', type: 'button' }, label);
+    const b = pressed(el('button', { type: 'button' }, label), edit.mode === value);
     b.onclick = () => {
       mutate(asset, `editor mode → ${label}`, () => { edit.mode = value; });
       renderReview();
@@ -3359,7 +3500,7 @@ function directionWizard() {
   const paint = () => {
     for (const btnEl of presets.children) {
       const pr = SURFACE_PRESETS.find(x => x.id === btnEl.dataset.id);
-      btnEl.classList.toggle('on', pr.surfaces.every(id => state.project.surfaces.includes(id)));
+      pressed(btnEl, pr.surfaces.every(id => state.project.surfaces.includes(id)));
     }
   };
   for (const pr of SURFACE_PRESETS) {
@@ -3438,7 +3579,7 @@ async function upscaleAsset(asset) {
        const model = pick.value;
        closeDialog();
        const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
-       if (!authorization.ok) return toast(`Online upscale authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+       if (!authorization.ok) return toast(`Online upscale authorization failed: ${sentence(deliveryReason(authorization.reason || 'authorization_required'))}`, true);
        let completedEngine = '';
        try {
          await busy(async () => {
@@ -3468,7 +3609,7 @@ async function upscaleAsset(asset) {
          toast('Enhanced photo added to Library.');
        } catch (err) {
          const release = await releaseUsage(authorization.authorization.id, 'render_failed');
-         toast(`Upscale failed: ${sentence(err.message)} ${release.message}`, true);
+         toast(`Upscale failed: ${sentence(deliveryReason(err))} ${release.message}`, true);
        }
      })]);
 }
@@ -3481,7 +3622,7 @@ function fixBlock(asset) {
 
   const grid = el('div', { className: 'fixgrid' });
   for (const f of FIX_PRESETS) {
-    const bEl = el('button', { className: has(f.id) ? 'on' : '', type: 'button' }, f.label);
+    const bEl = pressed(el('button', { type: 'button' }, f.label), has(f.id));
     bEl.onclick = () => {
       mutate(asset, `${has(f.id) ? 'cleared fix' : 'marked fix'}: ${f.label}`, () => {
         if (has(f.id)) asset.fixes = asset.fixes.filter(x => x.id !== f.id);
@@ -3525,6 +3666,12 @@ function fixBlock(asset) {
 }
 
 function renderReview() {
+  const focus = captureFocus();
+  renderReviewBody();
+  restoreFocus(focus);
+}
+
+function renderReviewBody() {
   const main = $('#main');
   const assets = visibleAssets();
 
@@ -3590,7 +3737,7 @@ function renderReview() {
     (() => {
       const seg = el('div', { className: 'seg' });
       for (const [v, label] of [['source', 'Full source'], ['placement', 'Placement'], ['compare', 'Compare']]) {
-        const b = el('button', { className: state.view === v ? 'on' : '' }, label);
+        const b = pressed(el('button', {}, label), state.view === v);
         b.onclick = () => { state.view = v; renderReview(); };
         seg.append(b);
       }
@@ -3638,7 +3785,7 @@ function stageTools(asset, surface, surfaces) {
   const p = ensurePlacement(asset, surface.id);
   const fills = el('div', { className: 'seg' });
   for (const [v, label] of [['crop', 'Crop'], ['blur', 'Blur fill'], ['contain', 'Letterbox']]) {
-    const b = el('button', { className: p.fill === v ? 'on' : '' }, label);
+    const b = pressed(el('button', {}, label), p.fill === v);
     b.onclick = () => {
       mutate(asset, `${surface.label} fill → ${label}`, () => {
         p.fill = v;
@@ -3650,12 +3797,12 @@ function stageTools(asset, surface, surfaces) {
     };
     fills.append(b);
   }
-  const loupeBtn = btn('Loupe', 'btn sm' + (state.loupe ? ' on' : ''), () => {
+  const loupeBtn = pressed(btn('Loupe', 'btn sm', () => {
     state.loupe = !state.loupe;
     if (!state.loupe) removeLoupe();
     renderReview();
-  });
-  const thirdsBtn = btn('Thirds', 'btn sm' + (state.thirds ? ' on' : ''), () => { state.thirds = !state.thirds; renderReview(); });
+  }), state.loupe);
+  const thirdsBtn = pressed(btn('Thirds', 'btn sm', () => { state.thirds = !state.thirds; renderReview(); }), state.thirds);
   const zoomOutBtn = btn('Zoom out', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1 / 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); });
   const zoomInBtn = btn('Zoom in', 'btn sm', () => { p.crop = zoomCrop(p.crop, 1.15); touchAsset(asset); paintStage(); renderIssuesOnly(); });
   const resetBtn = btn('Reset view', 'btn sm', () => {
@@ -3703,20 +3850,62 @@ function renderCounters() {
     cell('Blocking', blocks, blocks > 0));
 }
 
-function preflightDialog(onProceed) {
+/**
+ * Pre-flight, plus the refusal it could not see on its own.
+ *
+ * `buildPackage` stops on `colorExportDecision`, which asks a different
+ * question from the colour issues `assetIssues` raises: an asset that was never
+ * analysed has no profile at all, so pre-flight reported it as a note and the
+ * export then refused it. A gate that green-lights an export the next step
+ * refuses is worse than no gate.
+ */
+function preflightResult() {
   const result = preflight(state.project, state.assets);
+  const alreadyBlocked = new Set(result.items.filter(i => i.level === 'block').map(i => i.assetId));
+  const refusals = [];
+  const seen = new Set();
+  for (const { asset } of approvedPairs(state.assets)) {
+    if (seen.has(asset.id) || alreadyBlocked.has(asset.id)) continue;
+    seen.add(asset.id);
+    const decision = colorExportDecision(asset.auto?.color || {});
+    if (decision.allowed) continue;
+    const block = Object.hasOwn(COLOR_EXPORT_BLOCKS, decision.reason) ? COLOR_EXPORT_BLOCKS[decision.reason] : null;
+    refusals.push({
+      level: 'block',
+      code: `color-export-${String(decision.reason).replaceAll('_', '-')}`,
+      message: block?.message || `This asset cannot be delivered as sRGB: ${readableServiceError(decision.reason)}.`,
+      fix: block?.fix || 'Convert it and re-import.',
+      asset: asset.filename,
+      assetId: asset.id
+    });
+  }
+  // Blocking reads first, the way preflight() already orders its own items.
+  return {
+    items: [...refusals, ...result.items],
+    blocks: result.blocks + refusals.length,
+    warns: result.warns,
+    refusals
+  };
+}
+
+function preflightDialog(onProceed) {
+  const result = preflightResult();
   const body = el('div', {});
   body.append(el('p', { className: 'hint' },
     result.blocks
       ? `${count(result.blocks, 'blocking issue')} and ${count(result.warns, 'warning')}. Blocking issues are the ones that get an ad rejected or a client angry.`
       : `No blocking issues. ${count(result.warns, 'warning')} to look at.`));
+  if (result.refusals.length) {
+    body.append(el('p', { className: 'hint' },
+      `${count(result.refusals.length, 'asset')} cannot be delivered until the colour is accepted. This is the one thing "Export anyway" cannot get past — the export itself refuses it.`));
+  }
   body.append(issueList(result.items.slice(0, 60), 'Everything checks out.'));
   if (result.items.length > 60) body.append(el('p', { className: 'hint' }, `…and ${result.items.length - 60} more, all listed in the package.`));
 
   const override = el('input', { type: 'checkbox' });
   const proceed = btn(result.blocks ? 'Export anyway' : 'Export package', 'btn primary', () => { closeDialog(); onProceed(); });
   proceed.disabled = result.blocks > 0;
-  override.onchange = () => { proceed.disabled = result.blocks > 0 && !override.checked; };
+  override.onchange = () => { proceed.disabled = result.refusals.length > 0 || (result.blocks > 0 && !override.checked); };
 
   dialog('Pre-flight', body, [
     result.blocks ? el('label', { className: 'toggle' }, override, 'I accept the blocking issues') : null,
@@ -3760,12 +3949,15 @@ async function openPrintDelivery() {
       : currentPlan.quality === 'review'
         ? `Review recommended at ${currentPlan.effectivePpi} effective PPI.`
         : `Source is too small at ${currentPlan.effectivePpi} effective PPI.`;
-    summary.replaceChildren(
+    // `el()` drops a null child; replaceChildren stringifies one, and the word
+    // "null" was rendering in the dialog on every allowed photo.
+    summary.replaceChildren(...[
       el('p', {}, `${currentPlan.pixelWidth} × ${currentPlan.pixelHeight} px · ${currentPlan.ppi} PPI · sRGB JPEG`),
       el('p', { className: 'hint', style: 'margin-top:6px' },
         `${qualityText}${currentPlan.bleedInches ? ' Includes 0.125 in bleed.' : ''}`),
       !color.allowed ? el('p', { style: 'color:var(--bad);margin-top:6px' },
-        'This photo needs an accepted sRGB conversion before print delivery.') : null);
+        'This photo needs an accepted sRGB conversion before print delivery.') : null
+    ].filter(Boolean));
     download.disabled = !currentPlan.canExport || !color.allowed;
     // Name the blocker that actually applies; the summary above already says
     // which one it is, and two different explanations read as a fault.
@@ -3807,7 +3999,7 @@ async function openPrintDelivery() {
       status.textContent = `Downloaded ${currentPlan.pixelWidth} × ${currentPlan.pixelHeight} px at ${currentPlan.ppi} PPI.`;
     } catch (error) {
       const release = authorizationId ? await releaseUsage(authorizationId, 'print_export_failed') : null;
-      status.textContent = `Print was not downloaded: ${error.message}.${release ? ` ${release.message}` : ''}`;
+      status.textContent = `Print was not downloaded: ${sentence(deliveryReason(error))}${release ? ` ${release.message}` : ''}`;
       status.style.color = 'var(--bad)';
     } finally {
       download.disabled = !currentPlan?.canExport || !printColorDecision(asset.auto?.color || {}).allowed;
@@ -3899,14 +4091,14 @@ async function doExport(exportOpts = {}) {
       }
     } catch (err) {
       const release = authorizationId ? await releaseUsage(authorizationId, 'export_failed') : null;
-      status.textContent = `Export was not downloaded: ${err.message}.${release ? ` ${release.message}` : ''}`;
+      status.textContent = `Export was not downloaded: ${sentence(deliveryReason(err))}${release ? ` ${release.message}` : ''}`;
       status.style.color = 'var(--bad)';
     }
   });
 }
 
 function preflightMarkdown() {
-  const r = preflight(state.project, state.assets);
+  const r = preflightResult();
   const L = ['# Pre-flight report', '', `Generated ${new Date().toLocaleString()}.`, '',
     `- Blocking: ${r.blocks}`, `- Warnings: ${r.warns}`, ''];
   if (!r.items.length) L.push('_Nothing flagged._');
@@ -3940,7 +4132,7 @@ async function exportClientPage() {
     status.textContent = `Done — ${(blob.size / 1048576).toFixed(1)} MB, ${count(pairs.length, 'placement')}.`;
   } catch (err) {
     const release = authorization?.ok ? await releaseUsage(authorization.authorization.id, 'export_failed') : null;
-    status.textContent = `Not downloaded: ${err.message}.${release ? ` ${release.message}` : ''}`;
+    status.textContent = `Not downloaded: ${sentence(deliveryReason(err))}${release ? ` ${release.message}` : ''}`;
     status.style.color = 'var(--bad)';
   }
 }
@@ -3953,7 +4145,7 @@ async function importVerdict(file) {
     render();
     toast(`Applied ${count(applied, 'client decision')}${missing ? `, ${missing} skipped (asset not in this project)` : ''}.`);
   } catch (err) {
-    toast('Could not read that file: ' + err.message, true);
+    toast(`Could not read that file: ${sentence(deliveryReason(err))}`, true);
   }
 }
 
@@ -4000,14 +4192,14 @@ async function exportContactSheet() {
     if (!b) return toast('Contact sheet rendering failed before authorization.', true);
     const evidenceHash = await blobEvidenceHash(b);
     const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'contact_sheet', quantity: pairs.length, operationId: evidenceHash });
-    if (!authorization.ok) return toast(`Online export authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+    if (!authorization.ok) return toast(`Online export authorization failed: ${sentence(deliveryReason(authorization.reason || 'authorization_required'))}`, true);
     try {
       await settleOutboundBeforeDelivery(authorization.authorization.id, evidenceHash,
         () => downloadBlob(b, `${slug(state.project.name)}-contact-sheet.png`));
       toast('Contact sheet saved.');
     } catch (error) {
       const release = await releaseUsage(authorization.authorization.id, 'export_failed');
-      toast(`Contact sheet was not downloaded: ${error.message}. ${release.message}`, true);
+      toast(`Contact sheet was not downloaded: ${sentence(deliveryReason(error))} ${release.message}`, true);
     }
   }, 'image/png');
 }
@@ -4056,10 +4248,12 @@ function undo() {
 // ---------------------------------------------------------------------------
 
 function render() {
+  const focus = captureFocus();
   renderSidebar();
   renderCounters();
-  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === state.mode));
+  document.querySelectorAll('#modeSeg button').forEach(b => pressed(b, b.dataset.mode === state.mode));
   if (state.mode === 'board') renderBoard(); else renderReview();
+  restoreFocus(focus);
 }
 
 /** Editing works best on the dark surface: the workspace defaults to dark
@@ -4172,6 +4366,11 @@ function wire() {
   });
 
   window.addEventListener('keydown', e => {
+    // A modal owns every key while it is open, Escape first of all. This guard
+    // used to sit below the sidebar branch, so Escape collapsed the panel
+    // behind the dialog and called preventDefault() on the dialog's own cancel
+    // — the dismiss gesture silently failed on the most-used path.
+    if ($('#dlg').open) return;
     if (e.key === 'Escape' && !settingsPanel.classList.contains('closed')) {
       settingsPanel.classList.remove('open');
       settingsPanel.classList.add('closed');
@@ -4181,7 +4380,6 @@ function wire() {
       return;
     }
     if (e.target.matches('input, textarea, select')) return;
-    if ($('#dlg').open) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); return undo(); }
     const asset = currentAsset();
     const assets = visibleAssets();
@@ -4230,7 +4428,7 @@ function wire() {
 if (['localhost', '127.0.0.1', '::1'].includes(location.hostname) && new URLSearchParams(location.search).has('dev')) {
   window.__cros = {
     state, render, importFiles, runAnalysis, reframeAll, decidePlacement,
-    preflight: () => preflight(state.project, state.assets),
+    preflight: () => preflightResult(),
     issueCount, visibleAssets, ensurePlacement, generativeFillDialog, backupProject
   };
 }
