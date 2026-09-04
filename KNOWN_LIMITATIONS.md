@@ -331,8 +331,21 @@ Three products, three protections. Two of them worked; the third did not exist.
 The free lane had always declared its video export as "proof only (visual +
 audible watermark, 720p)". That was a sentence in a config object, and nothing
 read it. `videoRenderPlan` built its options without consulting a licence at
-all, and `renderEditedVideo` had no `covers()` check, so an unlicensed customer
-could render a finished, unmarked, full-resolution video.
+all, and `renderEditedVideo` had no `covers()` check.
+
+**Correction to an earlier reading of this.** It was first written up here as
+"an unlicensed customer could render a finished, unmarked video". That was
+wrong, and wrong in the direction of alarm: `authorizeOutbound` returns
+`license_required` when there is no licence key, so an anonymous user never
+reaches the renderer. The exposure is narrower and more specific - **a licence
+that does not cover video**: a Photo-only or Voice-only Single Studio, a Voice
+Starter, a suspended licence of any tier. Those hold a key, so they clear
+authorization, and the client never checked coverage before rendering.
+
+The fix is the same either way, because the lane already resolves those cases
+to `LANES.free`. But the description mattered, and the first one came from
+reading the render function without tracing the authorization path in front of
+it. `tests/tiers.test.mjs` now pins the real case.
 
 The lane's export descriptors are structured instructions now, not prose, and
 the render plan carries them to the engine. Both callers - the local render and

@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 import {
-  ENGINE_LICENCES, EU_MEMBER_STATES, HUNYUAN_EXCLUDED, VIDEO_ENGINE_PREFERENCE, engineAllowedIn, videoEngineFor, engineNoticeFor, usableCountry, videoEnginesAvailableIn, unrestrictedEngineIn, engineProvenance, STANDARD_VIDEO_ENGINE, PRO_VIDEO_ENGINE
+  ENGINE_LICENCES, EU_MEMBER_STATES, HUNYUAN_EXCLUDED, VIDEO_ENGINE_PREFERENCE, engineAllowedIn, videoEngineFor, engineNoticeFor, usableCountry, videoEnginesAvailableIn, unrestrictedEngineIn, engineProvenance, STANDARD_VIDEO_ENGINE, PRO_VIDEO_ENGINE, engineChoice, engineChoiceLabel
 } from '../studio/js/model-licence.js';
 
 // Tencent Hunyuan Community License §1(l): "'Territory' shall mean the
@@ -157,4 +157,62 @@ test('the site marks the Pro engine claim wherever it makes it', () => {
   assert.match(note, /European Union, the United Kingdom and South Korea/, 'the note names no territory');
   assert.match(note, /same engine every other plan uses/, 'the note does not say what they get instead');
   assert.match(note, /which engine produced a file/, 'the note does not promise provenance');
+});
+
+test('the switch is offered in the Territory and cannot be turned on outside it', () => {
+  // Inside: a Pro customer chooses, and the choice is honoured both ways.
+  for (const country of ['US', 'CA', 'BR', 'JP', 'NO']) {
+    const dflt = engineChoice(country, { pro: true });
+    assert.equal(dflt.offered, true, `${country}: no switch offered`);
+    assert.equal(dflt.locked, false);
+    assert.equal(dflt.chosen, PRO_VIDEO_ENGINE, `${country}: Pro does not default to the Pro engine`);
+    const opted = engineChoice(country, { pro: true, preference: STANDARD_VIDEO_ENGINE });
+    assert.equal(opted.chosen, STANDARD_VIDEO_ENGINE, `${country}: opting out was ignored`);
+    assert.equal(opted.engine.excludedTerritories.length, 0, `${country}: opting out still restricted`);
+    // Opting out and back in must return the Pro engine, not stick.
+    assert.equal(engineChoice(country, { pro: true, preference: PRO_VIDEO_ENGINE }).chosen, PRO_VIDEO_ENGINE);
+  }
+});
+
+test('no preference can turn the Pro engine on where it is not licensed', () => {
+  // The lock is the licence, not a disabled control. Every one of these is an
+  // attempt to route around the switch by passing a preference directly.
+  const attempts = [PRO_VIDEO_ENGINE, 'hunyuan', 'HUNYUAN', ' hunyuan ', 'pro', true, 1, {}, ['hunyuan']];
+  for (const country of [...EU_MEMBER_STATES, 'GB', 'KR']) {
+    for (const preference of attempts) {
+      const choice = engineChoice(country, { pro: true, preference });
+      assert.equal(choice.engine.id, STANDARD_VIDEO_ENGINE,
+        `${country} got the Pro engine by asking for it as ${JSON.stringify(preference)}`);
+      assert.equal(choice.locked, true, `${country}: the switch is not locked`);
+      assert.equal(choice.offered, false, `${country}: the switch is still offered`);
+      assert.deepEqual([...choice.engine.excludedTerritories], [],
+        `${country} was served an engine with a territorial condition`);
+    }
+  }
+});
+
+test('a standard plan has no switch, and an unknown region has no render', () => {
+  for (const country of ['US', 'DE']) {
+    const choice = engineChoice(country, { pro: false, preference: PRO_VIDEO_ENGINE });
+    assert.equal(choice.offered, false, 'a standard plan was offered the Pro engine');
+    assert.equal(choice.engine.id, STANDARD_VIDEO_ENGINE);
+    assert.equal(engineChoiceLabel(choice), '', 'a standard plan is shown a switch it does not have');
+  }
+  for (const bad of [null, '', 'ZZ', 'QM', 'nonsense']) {
+    const choice = engineChoice(bad, { pro: true });
+    assert.equal(choice.blocked, true, `${bad} was allowed to render`);
+    assert.equal(choice.engine, null);
+    assert.match(engineChoiceLabel(choice), /could not confirm your region/);
+  }
+});
+
+test('the switch says what it does, in both positions', () => {
+  const pro = engineChoiceLabel(engineChoice('US', { pro: true }));
+  const std = engineChoiceLabel(engineChoice('US', { pro: true, preference: STANDARD_VIDEO_ENGINE }));
+  assert.match(pro, /European Union, the United Kingdom and South Korea/, 'the Pro position hides the restriction');
+  assert.match(std, /no territorial restriction/, 'the standard position hides its advantage');
+  assert.notEqual(pro, std);
+  const locked = engineChoiceLabel(engineChoice('DE', { pro: true }));
+  assert.match(locked, /not licensed in your region/);
+  assert.match(locked, /no territorial restriction/, 'a locked customer is not told what they do get');
 });

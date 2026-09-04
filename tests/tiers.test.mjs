@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PRODUCTS, MONTHLY_UNITS, includedCloudCents, voiceProfileLimit, laneFor,
-  allowsMultiSourceVoicePack, scriptAllowance, upscaleModelsForLane, requiresWatermark
+  allowsMultiSourceVoicePack, scriptAllowance, upscaleModelsForLane, requiresWatermark, deliveryRulesFor
 } from '../studio/js/pricing.js';
 import { voiceSampleLimits } from '../studio/js/voice-reference.js';
 import { covers } from '../studio/js/license.js';
@@ -107,5 +107,38 @@ test('a suspended licence falls to the free tier, never through it', () => {
       assert.equal(suspended.upscalers, free.upscalers, `${where}: not on the free lane`);
       assert.equal(suspended.watermarked, true, `${where}: delivers clean files`);
     }
+  }
+});
+
+test('the real video-watermark exposure is a wrong-product licence, not an anonymous user', () => {
+  // I first described this as "an unlicensed user can render a clean video".
+  // That was wrong, and wrong in the direction of alarm: authorizeOutbound
+  // returns license_required with no key, so an anonymous user never reaches
+  // the renderer. The exposure is a licence that does not cover video - a
+  // Photo-only Single Studio, a Voice Starter, a suspended Pro. Those hold a
+  // key, so they clear authorization, and the client never checked coverage.
+  const holdsKey = license => license !== null;
+  const wrongProduct = [
+    { plan: 'single', selected_product: 'photo' },
+    { plan: 'single', selected_product: 'voice' },
+    { plan: 'single_pro', selected_product: 'photo' },
+    { plan: 'voice_starter', selected_product: 'voice' },
+    { plan: 'suspended:pro' },
+    { plan: 'suspended:full' }
+  ];
+  for (const license of wrongProduct) {
+    assert.equal(holdsKey(license), true, 'this case is only interesting because it clears authorization');
+    assert.equal(covers(license, 'video'), false, `${license.plan} unexpectedly covers video`);
+    assert.equal(requiresWatermark(laneFor(license, 'video'), 'video'), true,
+      `${license.plan}/${license.selected_product} renders video unmarked`);
+    const rules = deliveryRulesFor(laneFor(license, 'video'), 'video');
+    assert.equal(rules.watermark.visual, true);
+    assert.equal(rules.watermark.audible, true);
+    assert.equal(rules.maxHeight, 720);
+  }
+  // And a licence that does cover video is never marked, or nobody would pay.
+  for (const license of [{ plan: 'single', selected_product: 'video' }, { plan: 'full' }, { plan: 'pro' }]) {
+    assert.equal(covers(license, 'video'), true);
+    assert.equal(requiresWatermark(laneFor(license, 'video'), 'video'), false);
   }
 });

@@ -116,6 +116,52 @@ export function videoEngineFor(countryCode, { pro = false } = {}) {
   return null;
 }
 
+export const ENGINE_PREFERENCE_KEY = 'cros:videoEngine';
+
+/**
+ * The engine switch, and whether the customer may touch it.
+ *
+ * Inside the Territory a Pro customer chooses: the Pro Motion Engine, or the
+ * standard one that carries no territorial condition on their finished work.
+ * Outside it the switch is locked to standard and cannot be turned on - not
+ * disabled in the interface and honoured elsewhere, but resolved to standard
+ * here, so no caller can route around it by passing a preference.
+ *
+ * A standard-plan customer has no switch because they have no second engine.
+ */
+export function engineChoice(countryCode, { pro = false, preference = null } = {}) {
+  const country = usableCountry(countryCode);
+  if (!country) {
+    return { engine: null, offered: false, locked: true, chosen: null, blocked: true,
+      reason: 'region_unknown' };
+  }
+  const standard = ENGINE_LICENCES[STANDARD_VIDEO_ENGINE];
+  if (!pro) {
+    return { engine: standard, offered: false, locked: true, chosen: STANDARD_VIDEO_ENGINE,
+      blocked: false, reason: 'not_a_pro_plan' };
+  }
+  if (!engineAllowedIn(PRO_VIDEO_ENGINE, country)) {
+    // The lock is the licence, not a preference we could be talked out of.
+    return { engine: standard, offered: false, locked: true, chosen: STANDARD_VIDEO_ENGINE,
+      blocked: false, reason: 'not_licensed_here' };
+  }
+  const wants = preference === STANDARD_VIDEO_ENGINE ? STANDARD_VIDEO_ENGINE : PRO_VIDEO_ENGINE;
+  return { engine: ENGINE_LICENCES[wants], offered: true, locked: false, chosen: wants,
+    blocked: false, reason: '' };
+}
+
+/** What the switch should say, for the customer looking at it. */
+export function engineChoiceLabel(choice) {
+  if (choice.blocked) return 'We could not confirm your region, so video cannot render yet.';
+  if (choice.reason === 'not_a_pro_plan') return '';
+  if (choice.reason === 'not_licensed_here') {
+    return 'The Pro Motion Engine is not licensed in your region. Your video renders on the standard engine, and the result carries no territorial restriction.';
+  }
+  return choice.chosen === PRO_VIDEO_ENGINE
+    ? 'Pro Motion Engine. Its publisher licenses the result for use outside the European Union, the United Kingdom and South Korea.'
+    : 'Standard engine. Slower on complex motion, and the result carries no territorial restriction.';
+}
+
 /**
  * Every engine this customer may choose between, best first.
  *
