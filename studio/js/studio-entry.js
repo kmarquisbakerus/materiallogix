@@ -136,6 +136,12 @@ function preserveDemo(path) {
   return target.href;
 }
 
+// Which Studio the workspace should greet you as. Session-scoped on purpose:
+// it describes this arrival, not a saved preference.
+function startsAs(kind) {
+  try { sessionStorage.setItem('mlx:start-product', kind); } catch { /* unavailable */ }
+}
+
 function workspaceUrl() {
   const target = new URL(location.href);
   target.hash = 'workspace';
@@ -145,6 +151,11 @@ function workspaceUrl() {
 
 function openProject(projectId, product = 'photo') {
   localStorage.setItem('cros:project', projectId);
+  // The workspace decides which Studio's start page to draw from this stamp.
+  // Only enterWorkspace used to write it, so every starter - and every recent
+  // project - arrived with the stamp of whatever was opened last, and a Video
+  // project was greeted by the Photo start page.
+  startsAs(product);
   if (product === 'voice') {
     const target = new URL(preserveDemo('voice.html'));
     target.searchParams.set('project', projectId);
@@ -155,14 +166,19 @@ function openProject(projectId, product = 'photo') {
   location.reload();
 }
 
-async function createStarter(product, starter) {
-  const project = makeStarterProject(product.id, starter.id);
+/**
+ * Create the project a starter describes and open it in that starter's Studio.
+ * Exported so the landing can be checked per starter rather than per Studio.
+ */
+export async function startStarter(productId, starterId) {
+  const project = makeStarterProject(productId, starterId);
   await saveProject(project);
-  openProject(project.id, product.id);
+  openProject(project.id, project.starter.product);
+  return project;
 }
 
 function enterWorkspace(kind) {
-  try { sessionStorage.setItem('mlx:start-product', kind); } catch { /* unavailable */ }
+  startsAs(kind);
   if (kind === 'voice') {
     // Leave the entrance up while the browser navigates - closing it first
     // flashes the workspace for a beat before the Voice page arrives.
@@ -216,7 +232,7 @@ function starterList(product, state) {
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
     } else {
-      button.addEventListener('click', () => createStarter(product, starter));
+      button.addEventListener('click', () => startStarter(product.id, starter.id));
     }
     list.append(button);
   }

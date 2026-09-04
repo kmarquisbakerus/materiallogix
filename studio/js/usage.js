@@ -143,6 +143,10 @@ document.querySelector('#walletRefill').onclick = async () => {
   walletStatus.textContent = 'Creating secure Stripe Checkout…';
   try {
     const result = await api('/api/wallet/checkout', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ amountCents }) });
+    // A 200 with no `url` navigated to /studio/undefined - the 404 page - and
+    // the customer lost the page they were on with no message. checkout.js
+    // guards the same shape; the two wallet paths did not.
+    if (!result?.url) throw new Error('checkout_unavailable');
     location.assign(result.url);
   } catch (error) { walletStatus.textContent = `Refill unavailable: ${readableServiceError(error)}.`; }
 };
@@ -151,6 +155,7 @@ document.querySelector('#autoSetup').onclick = async () => {
   walletStatus.textContent = 'Opening Stripe to save a payment method securely…';
   try {
     const result = await api('/api/wallet/auto-topup/setup', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    if (!result?.url) throw new Error('checkout_unavailable');
     location.assign(result.url);
   } catch (error) { walletStatus.textContent = `Payment-method setup unavailable: ${readableServiceError(error)}.`; }
 };

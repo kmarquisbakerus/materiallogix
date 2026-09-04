@@ -159,6 +159,7 @@ import { authorizeOutbound, settleOutbound, stagePendingUsageRelease, voidOutbou
 import { bridgeFetch } from './js/generate.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
 import { voiceReferenceConsent } from './js/voice-quality.js';
+import { readableServiceError } from './js/service-error.js';
 import { ensureGuardianAck } from './js/capture-guidance.js';
 import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from './js/voice-reference.js';
 import { voiceGuidance } from './js/capture-guidance.js';
@@ -247,13 +248,17 @@ async function checkEngine() {
         setup.textContent = 'Setting up Voice… this can take a while';
         try {
           const res = await fetch(BRIDGE + '/engines/voice/install', { method: 'POST' });
-          const out = await res.json();
-          if (!res.ok) throw new Error(out.error || 'setup failed');
+          // A failed install answers with whatever the bridge managed to write,
+          // and decoding an empty body threw inside `json()` before the status
+          // was ever read: the customer got "Failed to execute 'json' on
+          // 'Response'" where the reason belonged.
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || `bridge_${res.status}`);
           await checkEngine();
         } catch (error) {
           setup.disabled = false;
           setup.textContent = 'Voice setup did not finish — try again';
-          $('#engineState').textContent = String(error.message || error);
+          $('#engineState').textContent = `Voice setup did not finish: ${readableServiceError(error)}.`;
         }
       };
       $('#engineState').after(setup);

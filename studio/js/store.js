@@ -120,52 +120,108 @@ export function requestPersistentStorage() {
 }
 
 /**
- * Whether this file will fit, before we try to write it and lose the import.
- * Keeps a working margin back: a database that is exactly full cannot be
- * compacted, and cannot even delete cleanly on some engines.
+ * The working margin held back from the quota.
+ *
+ * A database that is exactly full cannot be compacted, and cannot even delete
+ * cleanly on some engines, so some of the quota has to stay unspent. A flat
+ * 256 MB was that margin, which is fine on a desktop and ruinous on a phone:
+ * against the 300 MB origin quota a phone browser hands out it reserved 86% of
+ * the space, so no file of any size could be imported. A share of the quota
+ * scales with the device; the floor keeps the margin real on a tiny quota and
+ * the ceiling stops it growing without limit on a large one.
  */
-export const STORAGE_HEADROOM_BYTES = 256 * 1024 * 1024;
+export const STORAGE_HEADROOM_FRACTION = 0.1;
+export const STORAGE_HEADROOM_MIN_BYTES = 8 * 1024 * 1024;
+export const STORAGE_HEADROOM_MAX_BYTES = 256 * 1024 * 1024;
 
+export function storageHeadroom(quota) {
+  const total = Math.max(0, Number(quota) || 0);
+  return Math.min(STORAGE_HEADROOM_MAX_BYTES,
+    Math.max(STORAGE_HEADROOM_MIN_BYTES, Math.round(total * STORAGE_HEADROOM_FRACTION)));
+}
+
+/** Whether this file will fit, before we try to write it and lose the import. */
 export async function roomFor(bytes) {
   const size = Math.max(0, Number(bytes) || 0);
   const estimate = await usage();
   // A browser that will not report cannot be second-guessed; let the write
   // decide, and let addAsset turn the failure into a sentence.
-  if (!estimate || !estimate.quota) return { known: false, fits: true, freeBytes: null, needBytes: size };
+  if (!estimate || !estimate.quota) {
+    return { known: false, fits: true, freeBytes: null, needBytes: size, headroomBytes: 0 };
+  }
   const free = Math.max(0, estimate.quota - estimate.used);
+  const headroom = storageHeadroom(estimate.quota);
   return {
     known: true,
-    fits: free >= size + STORAGE_HEADROOM_BYTES,
+    fits: free >= size + headroom,
     freeBytes: free,
-    needBytes: size + STORAGE_HEADROOM_BYTES
+    // What the customer is asked to make room for is their file. The margin is
+    // ours and belongs in the comparison, not in the sentence - quoting the sum
+    // described a 20 KB thumbnail as needing a quarter of a gigabyte.
+    needBytes: size,
+    headroomBytes: headroom
   };
 }
 
-const gb = bytes => `${(bytes / 1073741824).toFixed(bytes < 1073741824 ? 2 : 1)} GB`;
+// Sizes a customer can act on. Everything in gigabytes turned a 20 KB file into
+// "0.00 GB" and 50 MB of free space into "0.05 GB".
+const humanSize = bytes => {
+  const n = Math.max(0, Math.round(Number(bytes) || 0));
+  if (n >= 1073741824) return `${(n / 1073741824).toFixed(1)} GB`;
+  if (n >= 1048576) return `${Math.round(n / 1048576)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} bytes`;
+};
+
+/**
+ * What a refused import says.
+ *
+ * It names the file the customer chose, not that file plus our own reserve: a
+ * 20 KB thumbnail used to be reported as needing 0.25 GB. `room` is the
+ * pre-check that refused it; when the write itself is what failed there is no
+ * trustworthy figure to quote - the estimate said there was space and the
+ * engine disagreed - so the sentence stays general rather than telling the
+ * customer they have gigabytes free while refusing them. `Delete a project` is
+ * named because that is the delete the product actually offers.
+ */
+function storageFullSentence(file, room) {
+  if (!room?.known) {
+    return 'This browser is out of room for the project. Delete a project you no longer need, or open the Studio on a computer with more free space.';
+  }
+  // "0 bytes left, and 10 MB of that reserved" is not a sentence, so what is
+  // left and what is held back are said together.
+  const left = room.freeBytes <= 0
+    ? 'the browser has no room left for the project'
+    : room.freeBytes > room.headroomBytes
+      ? `the browser has ${humanSize(room.freeBytes)} left for the project, and ${humanSize(room.headroomBytes)} of that stays reserved so the project can still be tidied up`
+      : `the browser has ${humanSize(room.freeBytes)} left for the project, and all of it has to stay free so the project can still be tidied up`;
+  return `This ${humanSize(file)} file does not fit: ${left}. Delete a project you no longer need, or free space on the drive.`;
+}
 
 export class StorageFullError extends Error {
-  constructor(freeBytes, needBytes) {
-    super(freeBytes === null
-      ? 'This browser is out of room for the project. Remove an asset you no longer need, or open the Studio on a computer with more free space.'
-      : `This file needs about ${gb(needBytes)} and the browser has ${gb(freeBytes)} left for the project. Remove an asset you no longer need, or free space on the drive.`);
+  constructor(fileBytes, room = null) {
+    const file = Math.max(0, Number(fileBytes) || 0);
+    super(storageFullSentence(file, room));
     this.name = 'StorageFullError';
     this.code = 'storage_full';
-    this.freeBytes = freeBytes;
-    this.needBytes = needBytes;
+    this.fileBytes = file;
+    this.freeBytes = room?.known ? room.freeBytes : null;
+    this.needBytes = file;
   }
 }
 
 export async function addAsset(asset, file) {
   // Ask once, on the first thing worth keeping.
   requestPersistentStorage();
-  const room = await roomFor(file?.size || 0);
-  if (room.known && !room.fits) throw new StorageFullError(room.freeBytes, room.needBytes);
+  const size = file?.size || 0;
+  const room = await roomFor(size);
+  if (room.known && !room.fits) throw new StorageFullError(size, room);
   try {
     await tx('blobs', 'readwrite', s => s.put(file, asset.id));
   } catch (error) {
     // A raw QuotaExceededError reaches the customer as "QuotaExceededError".
     if (error?.name === 'QuotaExceededError' || error?.code === 22) {
-      throw new StorageFullError(room.freeBytes, room.needBytes);
+      throw new StorageFullError(size);
     }
     throw error;
   }

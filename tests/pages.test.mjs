@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { count, nounFor } from '../studio/js/plural.js';
+import { readableServiceError } from '../studio/js/service-error.js';
 import { performancePlan, planDuration } from '../studio/js/voice.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,7 +44,7 @@ class Element {
   removeAttribute(name) { delete this[name]; }
   replaceChildren(...nodes) { this.children = nodes; this.text = nodes.map(node => node.textContent).join(''); }
   append(...nodes) { this.children.push(...nodes); }
-  after() { /* the setup button's placement is asserted against the markup */ }
+  after(...nodes) { this.next = nodes; }
   remove() { /* detached */ }
   querySelectorAll() { return []; }
 }
@@ -151,6 +152,30 @@ test('the Usage page names the billing period and the wallet activity in words',
   assert.match($('#cloudPhotoPricing').textContent, /up to 1 variation\./);
 });
 
+test('a wallet redirect with no destination is refused instead of navigating to a 404', async () => {
+  // Against a 200 that carries no `url`, both wallet buttons called
+  // `location.assign(undefined)` and landed the customer on /studio/undefined —
+  // the 404 page — losing the page they were on with no message.
+  const { $, document } = fakeDocument();
+  for (const [selector, value] of [['#walletAmount', '10.00'], ['#autoThreshold', '5.00'],
+    ['#autoRefill', '10.00'], ['#autoCap', '50.00']]) $(selector).value = value;
+  const assigned = [];
+  globalThis.document = document;
+  globalThis.confirm = () => true;
+  globalThis.location = { assign: url => assigned.push(url) };
+  globalThis.fetch = async () => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => ({ ok: true }) });
+
+  await import('../studio/js/usage.js?case=noredirect');
+  await settle();
+
+  await $('#walletRefill').onclick();
+  assert.deepEqual(assigned, [], 'a body with no url must not be navigated to');
+  assert.match($('#walletStatus').textContent, /Refill unavailable: checkout unavailable\./);
+  await $('#autoSetup').onclick();
+  assert.deepEqual(assigned, []);
+  assert.match($('#walletStatus').textContent, /Payment-method setup unavailable: checkout unavailable\./);
+});
+
 // ── Voice: the reason for a disabled primary ─────────────────────────────────
 
 test('the reason Render voice is disabled sits beside the button, not in the More menu', () => {
@@ -161,29 +186,49 @@ test('the reason Render voice is disabled sits beside the button, not in the Mor
   assert.match(renderBlock, /id="engineState"/, 'the reason must render with the control it blocks');
 });
 
-test('an uninstalled voice engine disables Render voice and states why on the button', async () => {
-  const { $ } = fakeDocument();
-  const health = voice => async () => ({ ok: true, json: async () => ({ voice }) });
-  const build = new Function('$', 'document', 'fetch', 'BRIDGE', 'rebuildVoiceOptions', `
+/** `checkEngine` as the page ships it, over a bridge that answers `reply`. */
+const buildCheckEngine = (($, reply) => new Function(
+  '$', 'document', 'fetch', 'BRIDGE', 'rebuildVoiceOptions', 'readableServiceError', `
     let engineReady = false;
     let knownVoicePacks = [];
     ${pageFunction('checkEngine')}
     return checkEngine;
-  `);
+  `)($, fakeDocument().document, reply, 'http://127.0.0.1:8189', () => {}, readableServiceError));
 
-  const missing = build($, fakeDocument().document, health({ available: false, packs: [] }),
-    'http://127.0.0.1:8189', () => {});
+test('an uninstalled voice engine disables Render voice and states why on the button', async () => {
+  const { $ } = fakeDocument();
+  const health = voice => async () => ({ ok: true, json: async () => ({ voice }) });
+
+  const missing = buildCheckEngine($, health({ available: false, packs: [] }));
   await missing();
   assert.equal($('#render').disabled, true);
   assert.match($('#engineState').textContent, /Local voice engine is not installed/);
   assert.equal($('#render').title, $('#engineState').textContent,
     'a disabled primary with no tooltip and no adjacent message is a dead end');
 
-  const installed = build($, fakeDocument().document, health({ available: true, warm: true, packs: [] }),
-    'http://127.0.0.1:8189', () => {});
+  const installed = buildCheckEngine($, health({ available: true, warm: true, packs: [] }));
   await installed();
   assert.equal($('#render').disabled, false);
   assert.equal($('#render').title, undefined, 'a working button carries no excuse');
+});
+
+test('a voice install that fails states the reason, not a DOM exception', () => {
+  // The reason now renders on the main surface, so what this path writes there
+  // is read by every customer who presses the one remedy the page offers. A
+  // failed install with an empty body threw inside `json()`, and the raw
+  // "Failed to execute 'json' on 'Response'" went on screen.
+  const { $ } = fakeDocument();
+  const empty = { ok: false, status: 503, json: async () => { throw new SyntaxError('Unexpected end of JSON input'); } };
+  const checkEngine = buildCheckEngine($, async url =>
+    (String(url).endsWith('/health') ? { ok: true, json: async () => ({ voice: { available: false, packs: [] } }) } : empty));
+  return checkEngine().then(async () => {
+    const [setup] = $('#engineState').next;
+    assert.equal(setup.textContent, 'Set up Voice on this computer');
+    await setup.onclick();
+    assert.doesNotMatch($('#engineState').textContent, /Failed to execute|SyntaxError|\bJSON\b/);
+    assert.equal($('#engineState').textContent, 'Voice setup did not finish: bridge 503.');
+    assert.equal(setup.disabled, false, 'the remedy stays pressable after it fails');
+  });
 });
 
 // ── Voice: the fit-to-video readout ──────────────────────────────────────────
