@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor,
   EXPORT_PRODUCTS, exportPrice, UNIT_PRICE, CLOUD_CREDIT, includedCloudCents, applyCloudCredit,
-  walletTopUpCents, quoteCloudJob, planLabel, RENDER_PRICES
+  walletTopUpCents, quoteCloudJob, planLabel, RENDER_PRICES, stripeCatalogue
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
@@ -226,10 +226,10 @@ test('included cloud credit spends on every cloud job that exists', () => {
   // It used to be video-only, which was useless to a customer who bought
   // Photo. It must not swing the other way and promise cloud voice, which has
   // no endpoint to spend it on.
-  assert.deepEqual([...CLOUD_CREDIT.spendableOn].sort(), ['image', 'video']);
+  assert.deepEqual([...CLOUD_CREDIT.spendableOn].sort(), ['image', 'video', 'voice']);
   for (const kind of CLOUD_CREDIT.spendableOn) {
-    const rate = kind === 'image' ? CLOUD_PRICING.imageUpscale : CLOUD_PRICING.videoUpscale;
-    assert.equal(rate.available, true, `credit is offered for ${kind}, which is not available`);
+    const quote = quoteCloudJob({ kind, durationSeconds: 60, imageCount: 1 });
+    assert.ok(quote.amountCents > 0, `credit is offered for ${kind}, which has no price`);
   }
   const advertised = Number(/\$(\d+) of cloud credit each paid period/.exec(site)?.[1]);
   assert.ok(advertised, 'the site no longer states an included cloud credit');
@@ -406,4 +406,50 @@ test('the site quotes the ladder, not a number of its own', () => {
   const floor = Math.min(...Object.values(RENDER_PRICES).map(rate => rate.local));
   assert.equal(PAY_PER_EXPORT.price, floor);
   assert.equal(Number(/Exports from \$([0-9.]+)\./.exec(site)?.[1]), floor, 'the advertised floor is not the cheapest thing sold');
+});
+
+// ── the catalogue Stripe has to carry ───────────────────────────────────────
+
+test('every SKU the client can send is in the catalogue, and priced', () => {
+  const rows = stripeCatalogue();
+  const skus = rows.map(row => row.sku);
+  assert.equal(new Set(skus).size, skus.length, 'a SKU is listed twice');
+
+  // checkout.js builds `${planId}_${termId}`; the catalogue must carry that
+  // exact string for every plan and term the site offers.
+  for (const product of PRODUCTS) {
+    for (const term of TERMS) {
+      const amount = price(product.id, term.id);
+      const row = rows.find(item => item.sku === `${product.id}_${term.id}`);
+      if (!amount) {
+        assert.equal(row, undefined, `${product.id}_${term.id} is not sold but is in the catalogue`);
+        continue;
+      }
+      assert.ok(row, `${product.id}_${term.id} can be checked out but is not in the catalogue`);
+      assert.equal(row.amountCents, Math.round(amount.total * 100));
+      assert.equal(row.intervalMonths, term.months);
+    }
+  }
+  for (const item of EXPORT_PRODUCTS) {
+    const row = rows.find(entry => entry.sku === item.id);
+    assert.ok(row, `${item.id} is offered on the free card but is not in the catalogue`);
+    assert.equal(row.amountCents, Math.round(item.price * 100));
+  }
+  const wallet = rows.find(row => row.sku === 'wallet_topup');
+  assert.equal(wallet.minimumCents, Math.round(CLOUD_PRICING.minimumRefill * 100));
+  assert.equal(wallet.maximumCents, Math.round(CLOUD_PRICING.maximumRefill * 100));
+  for (const row of rows) {
+    assert.ok(row.amountCents === null || Number.isInteger(row.amountCents), `${row.sku} has a non-integer amount`);
+  }
+});
+
+test('a term a plan is not sold on has no price and no button', () => {
+  // price() returned an object with an undefined total, which is truthy: the
+  // checkout button stayed enabled on Voice Starter's yearly tab and would have
+  // sent Stripe a `voice_starter_yearly` SKU that does not exist.
+  assert.equal(price('voice_starter', 'quarterly'), null);
+  assert.equal(price('voice_starter', 'yearly'), null);
+  assert.ok(price('voice_starter', 'monthly'));
+  const checkout = readFileSync(resolve(ROOT, 'studio/js/checkout.js'), 'utf8');
+  assert.match(checkout, /button\.disabled = !amount/, 'the button must disable when there is no price');
 });

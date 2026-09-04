@@ -63,6 +63,11 @@ export function price(productId, termId) {
   const t = TERMS.find(x => x.id === termId);
   if (!p || !t) return null;
   const total = p.totals[termId];
+  // A plan that is not sold on this term has no price on it. This used to
+  // return an object with an undefined total, which is truthy: the checkout
+  // button stayed enabled on Voice Starter's yearly tab and would have sent
+  // Stripe a `voice_starter_yearly` SKU that does not exist.
+  if (!Number.isFinite(total)) return null;
   const baseline = p.monthly * t.months;
   const savings = baseline - total;
   return { total, perMonth: +(total / t.months).toFixed(2), months: t.months,
@@ -88,6 +93,9 @@ export const MONTHLY_UNITS = { voice_starter: 30, single: 500, single_pro: 500, 
 // four because it is four times the work.
 export const UNIT_PRICE = 2.99;
 
+// Declared once so the meter and the policy comment cannot drift apart.
+export const UNITS_PER_VIDEO_MINUTE = 4;
+
 /**
  * What one finished thing costs, by where it is made. This is the whole price
  * ladder in one place: everything else on this page reads it.
@@ -102,14 +110,15 @@ export const UNIT_PRICE = 2.99;
  *      the Pro top-up discount. A cheaper no-plan price would pay customers to
  *      cancel.
  *
- * Voice has no cloud price because it has no cloud endpoint: voice runs
- * entirely on the customer's machine. Pricing a cloud minute we cannot render
- * would be selling something that does not exist.
+ * Every product can be sent to the cloud, so every product has both prices. The
+ * cloud lanes stay `available: false` until each has a measured cost and a live
+ * endpoint - built and priced, switched on by the server, the same way the
+ * sign-in providers wait on their developer accounts.
  */
 export const RENDER_PRICES = Object.freeze({
   photo: Object.freeze({ local: 2.99, cloud: 3.99, per: 'image' }),
   video: Object.freeze({ local: 4.99, cloud: 5.99, per: 'minute' }),
-  voice: Object.freeze({ local: 2.99, cloud: null, per: 'minute' })
+  voice: Object.freeze({ local: 2.99, cloud: 3.99, per: 'minute' })
 });
 
 // Price is a separate decision from metering. A one-off video minute is sold at
@@ -191,9 +200,14 @@ export const CLOUD_PRICING = {
   // $0.10 - less than a plain photo export - which paid a customer to route
   // work through our GPUs.
   imageUpscale: { price: RENDER_PRICES.photo.cloud, unit: 'image', estimatedCost: 0.01, available: true },
-  // Voice has no cloud endpoint. It stays declared and unavailable rather than
-  // priced, so nothing offers a minute we cannot render.
-  voiceRender: { price: null, unit: 'minute', estimatedCost: null, available: false },
+  // Cloud voice, so a long script does not tie up the customer's machine.
+  // Synthesis is a tiny GPU job; almost all of its cost is pod lifecycle, which
+  // the video measurement puts at about a fifth of $1.31. Derived, not
+  // measured - see CLOUD_VOICE.
+  voiceRender: { price: RENDER_PRICES.voice.cloud, unit: 'output minute', estimatedCost: 0.30, available: false },
+  // Conditioning a voice profile is the heavy one: a fine-tune over up to
+  // thirty minutes of reference audio, which is what runs long on a CPU.
+  voiceTraining: { price: 4.99, unit: 'voice profile', estimatedCost: 0.60, available: false },
   // Measured at $1.31 per output minute for native 4K on a community RTX 4090
   // pool at $0.34/hr - see MEASURED_VIDEO_COST for what that measurement is
   // worth.
@@ -203,6 +217,29 @@ export const CLOUD_PRICING = {
   prepaidOnly: true,
   autoCharge: 'optional-explicit-opt-in'
 };
+
+/**
+ * What the cloud voice figures rest on, recorded so nobody quotes a margin they
+ * do not have. Neither number is measured. Both are derived from the one cloud
+ * measurement that exists - $1.31 per 4K output minute, of which roughly a
+ * fifth is fixed pod lifecycle - on the reasoning that synthesis is a far
+ * lighter job than 4K video generation and conditioning is a heavier one.
+ *
+ * Training is included rather than billed for the profiles a plan already
+ * bought: a customer who paid for five voice clones should not be charged five
+ * more times to make them usable. Beyond that allowance it is a wallet job.
+ */
+export const CLOUD_VOICE = Object.freeze({
+  renderCostBasis: 'derived from pod lifecycle, not measured',
+  trainingCostBasis: 'derived from a 30-minute fine-tune at $0.34/hr, not measured',
+  costsConfirmed: false,
+  trainingIncludedPerPeriod: 'one conditioning run for each voice profile the plan includes'
+});
+
+/** Cloud conditioning runs included this period: one per profile the plan buys. */
+export function includedVoiceTrainings(license) {
+  return voiceProfileLimit(license);
+}
 
 export const CLOUD_BILLING_INCREMENT_SECONDS = 10;
 
@@ -270,8 +307,8 @@ export const CLOUD_VIDEO = {
 // customer who bought Photo has no use for credit that only buys video.
 export const CLOUD_CREDIT = Object.freeze({
   includedCents: Object.freeze({ voice_starter: 0, single: 2000, single_pro: 2000, full: 2000, pro: 2000 }),
-  // Credit spends on the cloud jobs that exist. Voice is not one of them.
-  spendableOn: Object.freeze(['image', 'video']),
+  // Credit spends on any cloud job.
+  spendableOn: Object.freeze(['image', 'voice', 'video']),
   freeUpscalePlans: Object.freeze(['pro']),
   walletDiscount: Object.freeze({ pro: 0.2 })
 });
@@ -356,6 +393,35 @@ export const VOICE_STARTER_LANE = Object.freeze({
   packs: 1,
   clientLinks: 0
 });
+
+/**
+ * Units one delivery spends out of a plan's monthly allowance.
+ *
+ * The unit policy has always said four units to a minute of video, but the
+ * export authorized `quantity: pairs.length` - one unit per placement, whatever
+ * its length. A ten-minute cut billed the same as a still. Duration is the
+ * whole point of the video unit, so it has to reach the meter.
+ *
+ * Photo bills per crop. Voice and video bill per whole minute, rounded up once
+ * per file, never per frame or per clip.
+ */
+export function exportUnits(product, { items = 1, seconds = 0 } = {}) {
+  const files = Math.max(1, Math.ceil(Number(items) || 1));
+  if (product === 'photo') return files;
+  const minutes = Math.max(1, Math.ceil(Math.max(0, Number(seconds) || 0) / 60));
+  if (product === 'voice') return minutes * files;
+  if (product === 'video') return UNITS_PER_VIDEO_MINUTE * minutes * files;
+  return files;
+}
+
+/** Units for a set of approved placements, each of which renders its own file. */
+export function unitsForDeliveries(deliveries = []) {
+  let total = 0;
+  for (const item of deliveries) {
+    total += exportUnits(item?.kind || 'photo', { items: 1, seconds: item?.seconds || 0 });
+  }
+  return Math.max(1, total);
+}
 
 /**
  * How many personal voice profiles a licence may keep on the device.
@@ -467,3 +533,57 @@ export function planRemaining(license) {
 
 // Back-compat alias.
 export const liteRemaining = planRemaining;
+
+// ---------------------------------------------------------------------------
+// The catalogue Stripe has to carry.
+//
+// Every SKU the client can send to /api/checkout/session, generated from the
+// same declarations the site renders, so the payment processor and the page a
+// customer read cannot disagree. A SKU the service does not recognise is a
+// checkout that fails after the customer has clicked.
+//
+// Cloud jobs are not here: they are metered against the prepaid wallet, and the
+// only Stripe product behind them is the top-up itself.
+
+export function stripeCatalogue() {
+  const rows = [];
+  for (const product of PRODUCTS) {
+    for (const term of TERMS) {
+      const amount = price(product.id, term.id);
+      if (!amount) continue;
+      rows.push({
+        sku: `${product.id}_${term.id}`,
+        kind: 'subscription',
+        name: `${product.name} — ${term.label}`,
+        amountCents: Math.round(amount.total * 100),
+        intervalMonths: term.months,
+        plan: product.plan,
+        selectedProduct: product.selectedProduct
+      });
+    }
+  }
+  for (const item of EXPORT_PRODUCTS) {
+    rows.push({
+      sku: item.id,
+      kind: 'one_time',
+      name: item.label,
+      amountCents: Math.round(item.price * 100),
+      intervalMonths: 0,
+      plan: null,
+      selectedProduct: item.product
+    });
+  }
+  rows.push({
+    sku: 'wallet_topup',
+    kind: 'customer_chosen_amount',
+    name: 'Prepaid cloud wallet top-up',
+    amountCents: null,
+    minimumCents: Math.round(CLOUD_PRICING.minimumRefill * 100),
+    maximumCents: Math.round(CLOUD_PRICING.maximumRefill * 100),
+    intervalMonths: 0,
+    plan: null,
+    selectedProduct: null
+  });
+  return rows;
+}
+

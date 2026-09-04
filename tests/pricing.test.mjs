@@ -6,7 +6,8 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
-  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit
+  CLOUD_VIDEO, CLOUD_VOICE, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit,
+  exportUnits, unitsForDeliveries, UNITS_PER_VIDEO_MINUTE
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
@@ -52,11 +53,20 @@ test('an image job bills per image, at the declared rate', () => {
   assert.equal(quoteCloudJob({ kind: 'image', imageCount: 0 }).blocks, 1, 'a job is never free by rounding to zero');
 });
 
-test('a service with no cloud endpoint is refused, not priced', () => {
-  // Voice runs entirely on the customer's machine. Quoting a cloud minute
-  // would sell a render there is nothing to run.
-  assert.equal(CLOUD_PRICING.voiceRender.available, false);
-  assert.throws(() => quoteCloudJob({ kind: 'voice', durationSeconds: 60 }), /no cloud voice service/);
+test('a cloud lane is priced and built before it is switched on', () => {
+  // Every product can be sent to the cloud, and every cloud lane stays off
+  // until it has a measured cost and a live endpoint - built and priced,
+  // switched on by the server, never by shipping.
+  for (const key of ['imageUpscale', 'voiceRender', 'voiceTraining', 'videoUpscale']) {
+    const rate = CLOUD_PRICING[key];
+    assert.ok(rate, `${key} is missing`);
+    assert.ok(Number.isFinite(rate.price) && rate.price > 0, `${key} has no price`);
+    assert.ok(Number.isFinite(rate.estimatedCost), `${key} has no cost to price against`);
+  }
+  assert.equal(CLOUD_VOICE.costsConfirmed, false,
+    'if the voice costs have been measured, say so here and re-price against them');
+  assert.equal(CLOUD_PRICING.voiceRender.available, false, 'no endpoint yet');
+  assert.equal(CLOUD_PRICING.voiceTraining.available, false, 'no endpoint yet');
 });
 
 test('a quote is never negative or NaN, whatever it is handed', () => {
@@ -83,10 +93,6 @@ test('wallet cents convert only into time the customer can actually spend', () =
 test('the cloud price of a job always covers its estimated cost', () => {
   for (const [key, rate] of Object.entries(CLOUD_PRICING)) {
     if (!rate || typeof rate !== 'object' || !('available' in rate)) continue;
-    if (!rate.available) {
-      assert.equal(rate.price, null, `${key} is unavailable but still carries a price`);
-      continue;
-    }
     assert.ok(Number.isFinite(rate.estimatedCost), `${key} has no cost to price against`);
     assert.ok(rate.price > rate.estimatedCost, `${key} is sold below its estimated cost`);
   }
@@ -237,4 +243,38 @@ test('a free preview never gets more than a paying tier', () => {
     assert.ok(PRODUCTS.some(product => product.name.startsWith(name[1].trim())),
       `the page offers an upgrade to "${name[1].trim()}", which is not a plan we sell`);
   }
+});
+
+test('a delivery spends units by what it actually is', () => {
+  // The export authorized `quantity: pairs.length` - one unit per placement,
+  // whatever its length - so a ten-minute cut billed the same as a still.
+  // Duration is the whole point of the video unit.
+  assert.equal(exportUnits('photo'), 1);
+  assert.equal(exportUnits('photo', { items: 5 }), 5);
+  assert.equal(exportUnits('voice', { seconds: 30 }), 1, 'a part minute bills a whole one');
+  assert.equal(exportUnits('voice', { seconds: 90 }), 2);
+  assert.equal(exportUnits('video', { seconds: 30 }), UNITS_PER_VIDEO_MINUTE);
+  assert.equal(exportUnits('video', { seconds: 600 }), UNITS_PER_VIDEO_MINUTE * 10);
+  assert.ok(exportUnits('video', { seconds: 600 }) > exportUnits('video', { seconds: 60 }),
+    'a longer cut must cost more than a shorter one');
+  assert.equal(exportUnits('video', { seconds: 0 }), UNITS_PER_VIDEO_MINUTE, 'a job is never free by rounding to zero');
+
+  assert.equal(unitsForDeliveries([{ kind: 'photo' }, { kind: 'photo' }]), 2);
+  assert.equal(unitsForDeliveries([{ kind: 'video', seconds: 600 }]), UNITS_PER_VIDEO_MINUTE * 10);
+  assert.equal(unitsForDeliveries([]), 1, 'an empty package still bills something');
+  const mixed = unitsForDeliveries([{ kind: 'photo' }, { kind: 'video', seconds: 120 }]);
+  assert.equal(mixed, 1 + UNITS_PER_VIDEO_MINUTE * 2);
+
+  // And the export has to use it, not the placement count.
+  const source = read('studio/js/app.js');
+  assert.match(source, /quantity: unitsForDeliveries\(/, 'the campaign export must bill by what it renders');
+  assert.match(source, /seconds: pair\.asset\.duration/, 'the export must pass each clip its duration');
+  // A contact sheet and a review page are one photo artifact per placement, so
+  // those two do bill by count. The clean and proof packages must not.
+  const packageCall = /artifactKind: exportOpts\.proof[\s\S]{0,220}?\}\);/.exec(source)?.[0] || '';
+  assert.ok(packageCall, 'the campaign export authorization moved');
+  assert.match(packageCall, /unitsForDeliveries\(/, 'the package must bill by what it renders');
+  assert.ok(!/quantity: pairs\.length/.test(packageCall), 'the package must not bill per placement');
+  assert.equal((source.match(/artifactKind: 'client_review', quantity: pairs\.length/g) || []).length, 1);
+  assert.equal((source.match(/artifactKind: 'contact_sheet', quantity: pairs\.length/g) || []).length, 1);
 });

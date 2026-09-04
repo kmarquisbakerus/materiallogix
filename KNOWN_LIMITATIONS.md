@@ -55,7 +55,7 @@ Starter allowance, or the premium voice rate.
 | | On the customer's machine | In the cloud |
 | --- | --- | --- |
 | One clean photo | **$2.99** | **$3.99** |
-| One clean minute of audio | **$2.99** | no cloud voice endpoint |
+| One clean minute of audio | **$2.99** | **$3.99** |
 | One clean minute of video | **$4.99** | **$5.99** |
 
 Two rules hold it together, both tested:
@@ -68,11 +68,26 @@ Two rules hold it together, both tested:
    does better, through its included credit and the Pro top-up discount. A
    cheaper no-plan price would pay customers to cancel.
 
-Voice has no cloud price because it has no cloud endpoint - voice runs entirely
-on the customer's machine. `voiceRender` is declared `available: false` with a
-null price, `quoteCloudJob` refuses it, and the wallet no longer offers minutes
-of it. Included credit therefore spends on photo and video only, and the site
-says so.
+Every product can be sent to the cloud, so every product carries both prices.
+Cloud voice has two jobs, not one:
+
+| Cloud voice job | Price | Why |
+| --- | --- | --- |
+| Render a script | **$3.99** / output minute | so a long script does not tie up the customer's machine |
+| Condition a voice profile | **$4.99** / profile | the heavy one - a fine-tune over up to thirty minutes of reference audio |
+
+**Conditioning is included for the profiles a plan already bought** - one run
+each per paid period. A customer who paid for five voice clones should not be
+charged five more times to make them usable. Beyond that allowance it is a
+wallet job like any other.
+
+Neither voice cost is measured. Both are derived from the one cloud measurement
+that exists ($1.31 per 4K output minute, about a fifth of it fixed pod
+lifecycle) on the reasoning that synthesis is a far lighter job than 4K video
+and conditioning a heavier one. `CLOUD_VOICE.costsConfirmed` is `false` and both
+lanes are `available: false`: built and priced, switched on by the server when
+the endpoints exist, the same way the sign-in providers wait on their developer
+accounts.
 
 ### A video minute has two prices, because it has two costs
 
@@ -199,3 +214,34 @@ The rest of the Pro lane still cannot be walled, because it does not exist:
 
 A Pro licence today therefore renders exactly like its standard tier. Do not
 sell the Pro plans until the engines behind those first three rows exist.
+
+## Metering
+
+The unit policy has always said four units to a minute of video. The campaign
+export authorized `quantity: pairs.length` - one unit per placement, whatever
+its length - so **a ten-minute cut billed the same as a still**. Duration is the
+whole point of the video unit, and it never reached the meter.
+
+`exportUnits()` and `unitsForDeliveries()` are the policy in code now: a photo
+crop is one unit, a voice minute is one, a video minute is four, and each
+approved placement renders its own file and pays for its own length. The
+contact sheet and the client review page still bill per placement, which is
+correct - they are one photo artifact each.
+
+## The catalogue Stripe has to carry
+
+`stripeCatalogue()` generates every SKU the client can send to
+`/api/checkout/session` from the same declarations the site renders, so the
+payment processor and the page a customer read cannot disagree. 29 SKUs: 26
+subscription rows (`<plan>_<term>`), three one-time exports, and the
+customer-chosen wallet top-up with its range.
+
+Building it found a live defect. `price()` returned an object with an undefined
+total for a term a plan is not sold on, and an object is truthy - so the
+checkout button stayed enabled on Voice Starter's yearly tab and would have
+sent Stripe a `voice_starter_yearly` SKU that does not exist. It returns `null`
+now, and a test fails the build if a SKU the client can send is missing from the
+catalogue or priced differently in it.
+
+Cloud jobs are deliberately absent from the catalogue: they meter against the
+prepaid wallet, and the only Stripe product behind them is the top-up.

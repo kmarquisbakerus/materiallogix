@@ -39,7 +39,7 @@ import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecisio
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
 import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel,
-  laneFor, upscaleModelsForLane, LANES } from './pricing.js';
+  laneFor, upscaleModelsForLane, LANES, unitsForDeliveries } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
 import { pricingUrl } from './site-links.js';
@@ -2029,7 +2029,7 @@ async function reviewCloudVideoRender(asset) {
   dialog('Review cloud render', el('div', {},
     el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds.`),
     el('p', { className: 'hint' }, includedCredit
-      ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo or video. It is used before your wallet; the server settles the actual amount.`
+      ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo, video or voice. It is used before your wallet; the server settles the actual amount.`
       : 'This job is paid from your prepaid wallet. The server settles the actual amount.'),
     el('label', { className: 'checkline' }, consent,
       el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are scheduled for deletion within 24 hours.'))),
@@ -3734,10 +3734,15 @@ async function doExport(exportOpts = {}) {
           bar.style.width = `${(done / total) * 100}%`;
         }, extra, exportOpts));
       const evidenceHash = await blobEvidenceHash(blob);
+      // Each approved placement renders its own file, and a video file costs by
+      // its length. Billing `pairs.length` charged a ten-minute cut the same as
+      // a still.
       const authorization = await authorizeOutbound({
         product,
         artifactKind: exportOpts.proof ? 'proof_export' : 'clean_export',
-        quantity: pairs.length,
+        quantity: unitsForDeliveries(pairs.map(pair => ({
+          kind: pair.asset.kind, seconds: pair.asset.duration || 0
+        }))),
         operationId: evidenceHash
       });
       if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');

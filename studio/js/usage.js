@@ -162,7 +162,7 @@ function renderPlan(license) {
   const creditCents = includedCloudCents(license);
   const parts = [`Current plan: ${planLabel(plan)}.`];
   if (units) parts.push(`${units.toLocaleString()} production units each month.`);
-  if (creditCents) parts.push(`${money(creditCents)} of cloud credit each paid period, spendable on photo or video.`);
+  if (creditCents) parts.push(`${money(creditCents)} of cloud credit each paid period, spendable on photo, video or voice.`);
   parts.push(plan
     ? 'Manage billing opens the secure Stripe portal, where you can change your payment method, switch term, or cancel.'
     : 'Activate a licence in the Studio to manage billing here.');
