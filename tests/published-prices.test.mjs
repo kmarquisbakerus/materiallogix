@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
-  PRODUCTS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor,
+  PRODUCTS, TERMS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor,
   EXPORT_PRODUCTS, exportPrice, UNIT_PRICE, CLOUD_CREDIT, includedCloudCents, applyCloudCredit,
   walletTopUpCents, quoteCloudJob, planLabel
 } from '../studio/js/pricing.js';
@@ -13,17 +13,28 @@ import { covers } from '../studio/js/license.js';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const site = readFileSync(resolve(ROOT, 'index.html'), 'utf8');
 
-/** The plan cards as the site actually renders them, name and prices. */
-function publishedPlans() {
+const pricingSection = () => {
   const section = site.slice(site.indexOf('<section class="pricing"'));
-  const pricing = section.slice(0, section.indexOf('</section>'));
-  const plans = [];
-  for (const card of pricing.matchAll(/<article class="plan[^"]*">([\s\S]*?)<\/article>/g)) {
-    const name = /<h3>(.*?)<\/h3>/.exec(card[1])?.[1];
-    const amounts = [...card[1].matchAll(/<div class="price[^"]*">\s*\$([0-9]+)/g)].map(m => Number(m[1]));
-    if (name) plans.push({ name, amounts });
+  return section.slice(0, section.indexOf('</section>'));
+};
+
+/** The card headings, in the order a customer reads them. */
+const publishedCards = () => [...pricingSection().matchAll(/<article class="plan[^"]*">[\s\S]*?<h3>(.*?)<\/h3>/g)]
+  .map(match => match[1]);
+
+/**
+ * Every price the site puts on screen, keyed by the plan and term it is for.
+ * Cards carry more than one plan now - a Standard/Pro switch inside the card -
+ * so a price has to say which plan it belongs to rather than be inferred from
+ * the heading above it.
+ */
+function publishedPrices() {
+  const prices = {};
+  for (const match of pricingSection().matchAll(
+    /<div class="price[^"]*"\s+data-plan="([a-z_]+)"\s+data-term="([a-z]+)"[^>]*>\s*\$([0-9]+)/g)) {
+    prices[`${match[1]}:${match[2]}`] = Number(match[3]);
   }
-  return plans;
+  return prices;
 }
 
 // The site is what a customer has been promised. If these disagree, the
@@ -36,24 +47,41 @@ const EXPECTED = {
   'Pro Studio': { monthly: 39, quarterly: 104, yearly: 366 }
 };
 
-test('the site still advertises exactly the plans the code prices', () => {
-  const published = publishedPlans().map(p => p.name).filter(name => name !== 'Free Preview');
-  assert.deepEqual(published.sort(), Object.keys(EXPECTED).sort());
+test('the pricing table is four cards, and every plan lives in one of them', () => {
+  // Six cards wrapped 4+2 into a ragged second row. The Pro tiers now ride a
+  // switch inside the card they upgrade, so the table is one clean row.
+  assert.deepEqual(publishedCards(), ['Free Preview', 'Voice Starter', 'Single Studio', 'Full Studio']);
+  const plans = new Set(Object.keys(publishedPrices()).map(key => key.split(':')[0]));
+  for (const plan of ['single', 'single_pro', 'full', 'pro']) {
+    assert.ok(plans.has(plan), `${plan} lost its price when the cards merged`);
+  }
 });
 
 test('every published price matches what the code would charge', () => {
+  const published = publishedPrices();
   for (const [name, terms] of Object.entries(EXPECTED)) {
-    const card = publishedPlans().find(p => p.name === name);
-    assert.ok(card, `${name} is no longer on the site`);
-    const advertised = [...new Set(card.amounts)];
-    for (const amount of Object.values(terms)) {
-      assert.ok(advertised.includes(amount), `${name} advertises ${advertised.join('/')}, code says ${amount}`);
-    }
     const product = PRODUCTS.find(p => p.name === name || p.name.startsWith(`${name} —`));
     assert.ok(product, `${name} has no product in pricing.js`);
     for (const [term, total] of Object.entries(terms)) {
       assert.equal(product.totals[term], total, `${name} ${term}`);
       assert.equal(price(product.id, term).total, total, `${name} ${term} through price()`);
+      const shown = published[`${product.plan}:${term}`];
+      assert.equal(shown, total, `${name} ${term}: the site shows ${shown}, the code charges ${total}`);
+    }
+  }
+});
+
+test('every plan and term the code sells is on the page', () => {
+  // A price the code will charge but the site never shows is a price nobody
+  // agreed to. Voice Starter is the one deliberate exception: monthly only.
+  const published = publishedPrices();
+  for (const product of PRODUCTS) {
+    for (const term of TERMS) {
+      const total = price(product.id, term.id)?.total;
+      if (!total) continue;
+      if (product.plan === 'voice_starter' && term.id !== 'monthly') continue;
+      assert.equal(published[`${product.plan}:${term.id}`], total,
+        `${product.name} on ${term.id} is priced at ${total} and shown as ${published[`${product.plan}:${term.id}`]}`);
     }
   }
 });
@@ -116,15 +144,19 @@ test('the retired second pricing source is gone', async () => {
   await assert.rejects(() => import('../studio/js/pricing-catalog.js'), /Cannot find module|ERR_MODULE_NOT_FOUND/);
 });
 
-test('every plan the site advertises can actually be bought', () => {
-  // Two Pro tiers were advertised with no checkout button at all.
+test('every card on the page is wired to checkout', () => {
+  // Two Pro tiers were once advertised with no checkout button at all. The
+  // plan a button buys is now resolved from the card's switches at runtime, so
+  // the journey proves the six combinations; this holds the wiring in place.
   const checkout = readFileSync(resolve(ROOT, 'checkout-site.js'), 'utf8');
-  const wired = new Set([...checkout.matchAll(/checkoutPlan:\s*'([a-z_]+)'/g)].map(m => m[1]));
-  for (const plan of ['voice_starter', 'single_photo', 'single_pro_photo', 'full', 'pro']) {
-    assert.ok(wired.has(plan), `${plan} has no way to buy it`);
+  for (const name of publishedCards()) {
+    assert.match(checkout, new RegExp(`card\\('${name}'\\)`), `${name} is never looked up on the page`);
   }
-  for (const name of Object.keys(EXPECTED)) {
-    assert.match(checkout, new RegExp(`card\\('${name}'\\)|'${name}'`), `${name} is never looked up on the page`);
+  for (const family of ['single_pro_\\$\\{product\\}', 'single_\\$\\{product\\}']) {
+    assert.match(checkout, new RegExp(family), 'the Single Studio button no longer builds its plan from the switches');
+  }
+  for (const plan of ['voice_starter', 'full', 'pro']) {
+    assert.match(checkout, new RegExp(`plan: '${plan}'|checkoutPlan: '${plan}'`), `${plan} has no way to buy it`);
   }
 });
 

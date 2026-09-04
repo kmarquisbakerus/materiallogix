@@ -19,8 +19,6 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     .commerce-toolbar p{margin:0;max-width:50ch;color:var(--muted);font-size:12px}
     .checkout-cta{width:100%;margin-top:16px;white-space:normal;text-align:center}
     .checkout-cta+.checkout-cta{margin-top:8px}
-    .single-checkout{display:none}
-    #sp-photo:checked~.single-checkout-photo,#sp-video:checked~.single-checkout-video,#sp-voice:checked~.single-checkout-voice{display:flex}
     .commerce-purchase{display:grid;gap:12px;margin:18px 0 0;padding:18px;border:1px solid var(--hair);border-radius:14px;background:rgba(255,255,255,.48)}
     .commerce-promo{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;max-width:420px;font-size:12px;font-weight:700;color:var(--ink-2)}
     .commerce-consent{display:flex;align-items:flex-start;gap:10px;color:var(--ink-2);font-size:12px;line-height:1.5}
@@ -59,72 +57,45 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
   }
   addButton(card('Voice Starter'), { checkoutPlan: 'voice_starter' }, 'Choose Voice Starter');
 
-  const single = card('Single Studio');
-  if (single) {
-    const picker = single.querySelector('.picker');
-    const panelPlans = [
-      ['photo', 'single_photo', 'Choose Single Studio — Photo'],
-      ['video', 'single_video', 'Choose Single Studio — Video'],
-      ['voice', 'single_voice', 'Choose Single Studio — Voice']
-    ];
-    let attached = 0;
-    if (picker) {
-      for (const [kind, plan, label] of panelPlans) {
-        const button = addButton(picker, { checkoutPlan: plan }, label);
-        if (button) {
-          button.classList.add('single-checkout', `single-checkout-${kind}`);
-          attached += 1;
-        }
-      }
-    }
-    if (!attached) {
-      const productSelect = document.createElement('select');
-      productSelect.setAttribute('aria-label', 'Single Studio product');
-      productSelect.innerHTML = '<option value="single_photo">Photo</option><option value="single_video">Video</option><option value="single_voice">Voice</option>';
-      productSelect.style.cssText = 'width:100%;min-height:44px;margin-top:16px;border:1px solid var(--hair);border-radius:10px;background:var(--card);color:var(--ink);padding:0 12px;font:inherit';
-      single.append(productSelect);
-      const button = addButton(single, { checkoutPlan: 'single_photo' }, 'Choose Single Studio — Photo');
-      productSelect.addEventListener('change', () => {
-        button.dataset.checkoutPlan = productSelect.value;
-        button.textContent = `Choose Single Studio — ${productSelect.options[productSelect.selectedIndex].text}`;
-      });
-    }
-  }
+  // A card now carries its own switches - Standard/Pro, and on Single Studio the
+  // Studio itself - so one button per card follows them rather than a button
+  // per combination sitting hidden behind CSS.
+  const checkedId = (cardEl, names) => names.find(name => cardEl.querySelector(`#${name}`)?.checked);
 
-  // A Pro tier is one Studio at its best, so it needs the same product choice
-  // the standard Single Studio card offers.
-  const proSingle = card('Single Studio Pro');
-  if (proSingle && !proSingle.querySelector('[data-checkout-plan]')) {
-    const productSelect = document.createElement('select');
-    productSelect.setAttribute('aria-label', 'Single Studio Pro product');
-    productSelect.innerHTML = '<option value="single_pro_photo">Photo</option><option value="single_pro_video">Video</option><option value="single_pro_voice">Voice</option>';
-    productSelect.style.cssText = 'width:100%;min-height:44px;margin-top:16px;border:1px solid var(--hair);border-radius:10px;background:var(--card);color:var(--ink);padding:0 12px;font:inherit';
-    proSingle.append(productSelect);
-    const button = addButton(proSingle, { checkoutPlan: 'single_pro_photo' }, 'Choose Single Studio Pro — Photo');
-    productSelect.addEventListener('change', () => {
-      button.dataset.checkoutPlan = productSelect.value;
-      button.textContent = `Choose Single Studio Pro — ${productSelect.options[productSelect.selectedIndex].text}`;
-    });
-  }
+  const wireCard = (cardEl, resolve) => {
+    if (!cardEl) return;
+    const first = resolve(cardEl);
+    const button = addButton(cardEl, { checkoutPlan: first.plan }, first.label);
+    if (!button) return;
+    button.dataset.label = first.label;
+    const sync = () => {
+      const next = resolve(cardEl);
+      button.dataset.checkoutPlan = next.plan;
+      button.dataset.label = next.label;
+      button.textContent = next.label;
+      // checkout.js decides which terms a plan can be bought on.
+      globalThis.dispatchEvent(new CustomEvent('materiallogix:checkout-buttons-changed'));
+    };
+    for (const input of cardEl.querySelectorAll('.tier-radio, .prod-radio')) {
+      input.addEventListener('change', sync);
+    }
+    sync();
+  };
 
-  addButton(card('Full Studio'), { checkoutPlan: 'full' }, 'Choose Full Studio');
-  addButton(card('Pro Studio'), { checkoutPlan: 'pro' }, 'Choose Pro Studio');
+  wireCard(card('Single Studio'), cardEl => {
+    const product = (checkedId(cardEl, ['sp-photo', 'sp-video', 'sp-voice']) || 'sp-photo').slice(3);
+    const pro = checkedId(cardEl, ['ss-pro']) === 'ss-pro';
+    const named = product[0].toUpperCase() + product.slice(1);
+    return pro
+      ? { plan: `single_pro_${product}`, label: `Choose Single Studio Pro \u2014 ${named}` }
+      : { plan: `single_${product}`, label: `Choose Single Studio \u2014 ${named}` };
+  });
+
+  wireCard(card('Full Studio'), cardEl => (checkedId(cardEl, ['fs-pro']) === 'fs-pro'
+    ? { plan: 'pro', label: 'Choose Pro Studio' }
+    : { plan: 'full', label: 'Choose Full Studio' }));
 
   const plansContainer = pricing.querySelector('.plans');
-  if (plansContainer && !document.querySelector('#billingTerm')) {
-    const toolbar = document.createElement('div');
-    toolbar.className = 'commerce-toolbar';
-    toolbar.innerHTML = `
-      <label>Billing term
-        <select id="billingTerm">
-          <option value="monthly">Month-to-month</option>
-          <option value="quarterly">3 months</option>
-          <option value="yearly">Annual</option>
-        </select>
-      </label>
-      <p>Choose a term, select the Studio you need, then continue to secure Stripe Checkout. The final total appears before payment.</p>`;
-    plansContainer.before(toolbar);
-  }
 
   let purchase = pricing.querySelector('.commerce-purchase');
   if (!purchase) {
@@ -162,5 +133,5 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     purchase.append(status);
   }
 
-  await import('/studio/js/checkout.js?v=20260902');
+  await import('/studio/js/checkout.js?v=20260903');
 }

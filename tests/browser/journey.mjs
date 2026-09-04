@@ -403,6 +403,71 @@ try {
   }
 
   // ── Offline ──────────────────────────────────────────────────────────────
+  // ── The pricing table ────────────────────────────────────────────────────
+  step('Read the pricing table and pick a plan');
+  {
+    const shop = await studioContext(browser, {});
+    const page = shop.page;
+    await page.goto('http://127.0.0.1:8099/index.html', { waitUntil: 'domcontentloaded' });
+    await page.addScriptTag({ type: 'module', url: 'http://127.0.0.1:8099/checkout-site.js' });
+    await settle(page, 1200);
+
+    const cards = await page.evaluate(() => [...document.querySelectorAll('#pricing .plan h3')].map(h => h.textContent.trim()));
+    ok('the table is four cards, one clean row', cards.length === 4, cards.join(', '));
+
+    // Flip every switch and read back what the button would buy and what the
+    // customer is looking at while it says so.
+    const offer = (cardName, ids) => page.evaluate(({ cardName, ids }) => {
+      const card = [...document.querySelectorAll('#pricing .plan')]
+        .find(node => node.querySelector('h3')?.textContent.trim() === cardName);
+      for (const id of ids) {
+        const input = card.querySelector(`#${id}`);
+        if (input) { input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true })); }
+      }
+      const button = card.querySelector('[data-checkout-plan]');
+      const price = [...card.querySelectorAll('.price')].find(node => node.offsetParent !== null);
+      return { plan: button?.dataset.checkoutPlan, label: button?.textContent.trim(),
+        disabled: !!button?.disabled, price: price?.textContent.replace(/\s+/g, ' ').trim() || '' };
+    }, { cardName, ids });
+
+    const combos = [
+      ['Single Studio', ['ss-std', 'sp-photo'], 'single_photo', '$15'],
+      ['Single Studio', ['ss-std', 'sp-video'], 'single_video', '$15'],
+      ['Single Studio', ['ss-std', 'sp-voice'], 'single_voice', '$15'],
+      ['Single Studio', ['ss-pro', 'sp-photo'], 'single_pro_photo', '$25'],
+      ['Single Studio', ['ss-pro', 'sp-video'], 'single_pro_video', '$25'],
+      ['Single Studio', ['ss-pro', 'sp-voice'], 'single_pro_voice', '$25'],
+      ['Full Studio', ['fs-std'], 'full', '$29'],
+      ['Full Studio', ['fs-pro'], 'pro', '$39']
+    ];
+    const wrong = [];
+    for (const [cardName, ids, expectedPlan, expectedPrice] of combos) {
+      const got = await offer(cardName, ids);
+      if (got.plan !== expectedPlan || !got.price.startsWith(expectedPrice)) {
+        wrong.push(`${ids.join('+')} -> ${got.plan} at ${got.price}, expected ${expectedPlan} at ${expectedPrice}`);
+      }
+    }
+    ok('every switch buys the plan whose price is on screen', wrong.length === 0,
+      wrong.length ? wrong.join(' | ') : `${combos.length} combinations`);
+
+    // One control decides the term. A second one used to change the price on
+    // screen without changing the plan bought.
+    const yearly = await page.evaluate(() => {
+      const input = document.querySelector('#term-y');
+      input.checked = true; input.dispatchEvent(new Event('change', { bubbles: true }));
+      const card = [...document.querySelectorAll('#pricing .plan')]
+        .find(node => node.querySelector('h3')?.textContent.trim() === 'Full Studio');
+      const price = [...card.querySelectorAll('.price')].find(node => node.offsetParent !== null);
+      return { shown: price?.textContent.replace(/\s+/g, ' ').trim(), controls: document.querySelectorAll('#billingTerm').length };
+    });
+    ok('the term switch is the only term control, and it moves the price',
+      yearly.shown?.startsWith('$366') && yearly.controls === 0,
+      `${yearly.shown} | ${yearly.controls} duplicate term selects`);
+
+    allErrors.push(...shop.errors);
+    await shop.context.close();
+  }
+
   step('Work offline');
   {
     const installed = await studioContext(browser, { licence });
