@@ -98,6 +98,15 @@
 :root[data-theme="light"] .stage-tools,
 :root[data-theme="light"] .toast { background: var(--panel); }
 
+/* The same reasoning in dark, where it was only ever applied to light. Of the
+   four surfaces, three were already opaque there; the sidebar was not -
+   rgba(16, 16, 17, 0.66) with a backdrop blur, floating over the customer's
+   photograph, so its ink was measured against the picture. It is opaque now.
+   The selector matches the light rule's specificity on purpose: written
+   plainly it loses to the glass declaration above and changes nothing at all,
+   which is how the first attempt at this "passed" while doing nothing. */
+:root:not([data-theme="light"]) aside.sidebar { background: var(--panel); }
+
 * { box-sizing: border-box; }
 /* Native widgets the theme cannot reach - the date and month pickers, the
    field a rule misses - otherwise keep the UA's light chrome under dark ink. */

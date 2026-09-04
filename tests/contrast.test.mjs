@@ -207,3 +207,22 @@ test('the pricing radios that choose a Studio have a name and a ring that shows'
   const ring = contrast(colour(marketing['--gold']), colour(marketing['--paper']));
   assert.ok(ring >= 3, `the focus ring is ${ring.toFixed(2)}:1 against the page, below 3:1`);
 });
+
+test('no text surface borrows the customer photograph for its background', () => {
+  // The chrome floats over .stage, which is showing the imported picture, so a
+  // translucent surface has its ink measured against whatever the photograph
+  // happens to be. Light theme was given an opaque ground for exactly this
+  // reason and dark was not: three of the four surfaces were already opaque
+  // there, but aside.sidebar stayed rgba(16, 16, 17, 0.66) behind a blur.
+  const css = read('studio/css/app.css');
+  assert.match(css, /:root:not\(\[data-theme="light"\]\) aside\.sidebar \{ background: var\(--panel\); \}/,
+    'the dark sidebar is translucent again');
+  // Specificity is the whole trick: written as a bare `aside.sidebar` this
+  // rule loses to the glass declaration and silently does nothing.
+  const bare = /\n\s*aside\.sidebar,\s*\n\s*\.rail,/.test(css);
+  assert.ok(!bare, 'a bare selector here is outranked by the glass rule and changes nothing');
+  // And --panel is a real colour, not another translucent token.
+  const dark = /:root \{[\s\S]*?--panel: (#[0-9a-f]{6})/i.exec(css);
+  assert.ok(dark, '--panel must be defined for the dark theme');
+  assert.match(dark[1], /^#[0-9a-f]{6}$/i, 'an opaque ground cannot be an rgba token');
+});
