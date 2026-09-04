@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { LANES } from '../studio/js/pricing.js';
+import { proofSurface } from '../studio/js/crop.js';
 import {
   slug, approvedPairs, decisionsJson, decisionsMarkdown, filenameMapCsv,
   altTextMarkdown, retouchListMarkdown, rejectedRecord, teamNotes, cropsJson, videoNotes
@@ -194,4 +196,19 @@ test('a print JPEG carries its resolution so a lab prints it at the right size',
     0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9]);
   const stamped = setJpegDensity(jpeg, 300);
   assert.deepEqual(readJpegDensity(stamped), { units: 'ppi', x: 300, y: 300 });
+});
+
+test('the proof cap in the renderer and the one in the lane are the same number', () => {
+  // crop.js caps a proof at 960px on its longest edge; LANES.free.imageExport
+  // declares 960 as well. Neither reads the other, so they can drift into
+  // disagreeing about what a proof is - the same shape of split that let the
+  // video watermark be declared in the lane and applied nowhere.
+  const declared = LANES.free.imageExport.maxEdge;
+  const surface = { id: 'test', label: 'Test', w: 4000, h: 2000 };
+  const proof = proofSurface(surface);
+  assert.equal(Math.max(proof.w, proof.h), declared,
+    `the renderer caps a proof at ${Math.max(proof.w, proof.h)}px, the lane says ${declared}px`);
+  assert.equal(LANES.paid.imageExport.maxEdge, null, 'a paid export is not capped');
+  // Aspect ratio survives the cap; a squashed proof is a useless proof.
+  assert.equal(Math.round((proof.w / proof.h) * 100), Math.round((surface.w / surface.h) * 100));
 });
