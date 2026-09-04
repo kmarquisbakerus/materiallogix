@@ -56,8 +56,23 @@ export const ENGINE_LICENCES = Object.freeze({
   })
 });
 
-// Best engine first. A customer gets the first one their territory allows.
-export const VIDEO_ENGINE_PREFERENCE = Object.freeze(['hunyuan', 'wan']);
+/**
+ * Which engine belongs to which lane.
+ *
+ * The standard and free lanes run Wan 2.2, which is Apache-2.0 and carries no
+ * territorial condition. HunyuanVideo *is* the Pro Motion Engine - the thing
+ * the Pro tiers are sold on - and it is the one with the licensed territory.
+ *
+ * That containment matters: most customers never touch the restricted engine,
+ * so the restriction reaches only Pro renders, and a Pro customer in an
+ * excluded territory falls back to the same engine everybody else uses rather
+ * than losing video altogether.
+ */
+export const STANDARD_VIDEO_ENGINE = 'wan';
+export const PRO_VIDEO_ENGINE = 'hunyuan';
+
+// Best first, for the places that just want the list.
+export const VIDEO_ENGINE_PREFERENCE = Object.freeze([PRO_VIDEO_ENGINE, STANDARD_VIDEO_ENGINE]);
 
 const upper = value => String(value ?? '').trim().toUpperCase();
 
@@ -92,10 +107,12 @@ export function engineAllowedIn(engineId, countryCode) {
  * them. Never silently downgrades quality without saying which engine ran:
  * callers must record `engine` on the output so provenance stays honest.
  */
-export function videoEngineFor(countryCode) {
-  for (const id of VIDEO_ENGINE_PREFERENCE) {
-    if (engineAllowedIn(id, countryCode)) return ENGINE_LICENCES[id];
-  }
+export function videoEngineFor(countryCode, { pro = false } = {}) {
+  const wanted = pro ? PRO_VIDEO_ENGINE : STANDARD_VIDEO_ENGINE;
+  if (engineAllowedIn(wanted, countryCode)) return ENGINE_LICENCES[wanted];
+  // A Pro customer in an excluded territory drops to the standard engine, not
+  // to nothing. Losing the upgrade is a fair outcome; losing video is not.
+  if (engineAllowedIn(STANDARD_VIDEO_ENGINE, countryCode)) return ENGINE_LICENCES[STANDARD_VIDEO_ENGINE];
   return null;
 }
 
@@ -136,21 +153,23 @@ export function engineProvenance(engineId) {
  * Why a render was refused or rerouted, in words a customer can act on. Never
  * names the licence holder's terms as the customer's fault.
  */
-export function engineNoticeFor(countryCode) {
+export function engineNoticeFor(countryCode, { pro = false } = {}) {
   const country = usableCountry(countryCode);
   if (!country) {
     return { engine: null, rerouted: false, blocked: true,
       message: 'We could not confirm your region, and the video engine is licensed by region. Reconnect so we can check, and the render will continue.' };
   }
-  const chosen = videoEngineFor(country);
+  const chosen = videoEngineFor(country, { pro });
   if (!chosen) {
     return { engine: null, rerouted: false, blocked: true,
       message: 'Video rendering is not available in your region yet.' };
   }
-  const preferred = ENGINE_LICENCES[VIDEO_ENGINE_PREFERENCE[0]];
-  if (chosen.id !== preferred.id) {
+  // Only a Pro customer can be rerouted, because only Pro asks for the engine
+  // with a territory. Say what they lose, plainly, rather than downgrading in
+  // silence and letting them wonder why it looks different.
+  if (pro && chosen.id !== PRO_VIDEO_ENGINE) {
     return { engine: chosen, rerouted: true, blocked: false,
-      message: `Your region uses the ${chosen.label} engine. Everything works the same; the result is rendered by a different model.` };
+      message: `The Pro Motion Engine is not licensed for your region, so your video renders on the ${chosen.label} engine — the same one every other plan uses. Everything else in Pro is unchanged.` };
   }
   return { engine: chosen, rerouted: false, blocked: false, message: '' };
 }

@@ -382,6 +382,22 @@ says nothing about server location - we grepped it for `server`,
 clause. Keeping the fleet in the Americas is sound for other reasons; it is not
 what satisfies this licence.
 
+**The restriction reaches Pro only.** HunyuanVideo *is* the Pro Motion Engine -
+the thing the Pro tiers are sold on. The free and standard lanes run Wan 2.2,
+which is Apache-2.0 with no territorial condition. So a free or standard
+customer never touches the restricted engine anywhere in the world, and the
+territory question only arises for a Pro render.
+
+A Pro customer in an excluded territory drops to the standard engine rather
+than losing video: they lose the upgrade, which is a fair outcome, not the
+product. The Studio says so plainly instead of downgrading in silence and
+leaving them to wonder why it looks different.
+
+The site carries the same disclosure. Every place it sells the Pro Motion
+Engine carries a footnote mark, and the note says which territories, what a
+customer there gets instead, and that the Studio always names the engine that
+produced a file. A test fails the build if a claim is made without the mark.
+
 An excluded customer is **served, not refused**. `model-licence.js` routes the
 27 EU member states, GB and KR to **Wan 2.2**, which is Apache-2.0 with no
 territorial condition, no user ceiling and no registration. They get a working

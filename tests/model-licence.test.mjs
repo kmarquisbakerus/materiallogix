@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 import {
-  ENGINE_LICENCES, EU_MEMBER_STATES, HUNYUAN_EXCLUDED, VIDEO_ENGINE_PREFERENCE, engineAllowedIn, videoEngineFor, engineNoticeFor, usableCountry, videoEnginesAvailableIn, unrestrictedEngineIn, engineProvenance
+  ENGINE_LICENCES, EU_MEMBER_STATES, HUNYUAN_EXCLUDED, VIDEO_ENGINE_PREFERENCE, engineAllowedIn, videoEngineFor, engineNoticeFor, usableCountry, videoEnginesAvailableIn, unrestrictedEngineIn, engineProvenance, STANDARD_VIDEO_ENGINE, PRO_VIDEO_ENGINE
 } from '../studio/js/model-licence.js';
 
 // Tencent Hunyuan Community License §1(l): "'Territory' shall mean the
@@ -33,21 +33,33 @@ test('the excluded territory is exactly the one the licence names', () => {
 });
 
 test('an excluded customer is served, not refused', () => {
-  // Wan 2.2 is Apache-2.0 with no territorial condition, so an EU customer
-  // gets a working product rather than an error.
+  // Wan 2.2 is Apache-2.0 with no territorial condition, and it is what the
+  // free and standard lanes run anyway - so the restriction reaches only Pro
+  // renders, and a Pro customer in an excluded territory drops to the engine
+  // everybody else uses rather than losing video.
   assert.equal(ENGINE_LICENCES.wan.licence, 'Apache-2.0');
   assert.deepEqual([...ENGINE_LICENCES.wan.excludedTerritories], []);
+  assert.equal(STANDARD_VIDEO_ENGINE, 'wan');
+  assert.equal(PRO_VIDEO_ENGINE, 'hunyuan');
+
   for (const country of EXCLUDED) {
-    const notice = engineNoticeFor(country);
-    assert.equal(notice.engine?.id, 'wan', `${country} has no engine`);
-    assert.equal(notice.blocked, false);
-    assert.equal(notice.rerouted, true);
-    assert.match(notice.message, /Wan 2\.2/);
+    assert.equal(videoEngineFor(country).id, 'wan', `${country} has no standard engine`);
+    const pro = engineNoticeFor(country, { pro: true });
+    assert.equal(pro.engine?.id, 'wan', `${country} has no engine for Pro`);
+    assert.equal(pro.blocked, false);
+    assert.equal(pro.rerouted, true);
+    assert.match(pro.message, /not licensed for your region/);
+    // A standard customer in an excluded territory notices nothing, because
+    // their engine was never the restricted one.
+    assert.equal(engineNoticeFor(country).message, '', `${country} bothers a standard customer`);
+    assert.equal(engineNoticeFor(country).rerouted, false);
   }
-  assert.equal(videoEngineFor('US').id, 'hunyuan', 'the preferred engine is used where it is licensed');
-  assert.equal(engineNoticeFor('US').rerouted, false);
-  assert.equal(engineNoticeFor('US').message, '');
-  assert.equal(VIDEO_ENGINE_PREFERENCE[0], 'hunyuan');
+
+  for (const country of ['US', 'CA', 'BR', 'NO']) {
+    assert.equal(videoEngineFor(country, { pro: true }).id, 'hunyuan', country);
+    assert.equal(videoEngineFor(country).id, 'wan', `${country} standard lane`);
+    assert.equal(engineNoticeFor(country, { pro: true }).message, '', country);
+  }
 });
 
 test('an unknown location is refused, never guessed', () => {
@@ -125,4 +137,24 @@ test('the terms name the same three territories the licence does', () => {
   assert.match(terms, /European Union, the United Kingdom and South Korea/);
   assert.equal(EU_MEMBER_STATES.length, 27);
   assert.ok(HUNYUAN_EXCLUDED.includes('GB') && HUNYUAN_EXCLUDED.includes('KR'));
+});
+
+test('the site marks the Pro engine claim wherever it makes it', () => {
+  // The restriction reaches only Pro, so the only place a customer meets it is
+  // where Pro is sold. Every claim carries the mark; the note explains it once.
+  const site = readFileSync(resolve(ROOT, 'index.html'), 'utf8');
+  const note = /id="engine-note"[\s\S]{0,420}?<\/p>/.exec(site)?.[0] || '';
+  // The note explains the mark, so it names the engine without carrying one.
+  const sold = site.replace(note, '');
+  const claims = sold.match(/Pro Motion Engine[^<]*/g) || [];
+  assert.ok(claims.length >= 2, 'the site no longer sells the Pro Motion Engine');
+  for (const claim of claims) {
+    const at = sold.indexOf(claim) + claim.length;
+    assert.match(sold.slice(at, at + 80), /href="#engine-note"/,
+      `an unmarked Pro Motion Engine claim: "${claim.slice(0, 60)}"`);
+  }
+  assert.ok(note, 'the footnote target does not exist');
+  assert.match(note, /European Union, the United Kingdom and South Korea/, 'the note names no territory');
+  assert.match(note, /same engine every other plan uses/, 'the note does not say what they get instead');
+  assert.match(note, /which engine produced a file/, 'the note does not promise provenance');
 });
