@@ -2121,7 +2121,22 @@ async function reviewCloudVideoRender(asset) {
   [btn('Cancel', 'btn', closeDialog), btn('Use local render', 'btn', () => { closeDialog(); renderEditedVideo(asset); }), continueButton]);
 }
 
+// Every path below the first `await` in a render is reachable twice on a
+// double-click, and the durable claim - the jobId in `localVideoJobs` - cannot
+// be taken until several awaits have already run. So the door is held here,
+// synchronously, before any of them.
+const videoRendersStarting = new Set();
+
 async function renderEditedVideo(asset) {
+  if (videoRendersStarting.has(asset.id)) return toast('That render is already starting.');
+  videoRendersStarting.add(asset.id);
+  try {
+    return await startVideoRender(asset);
+  } finally {
+    videoRendersStarting.delete(asset.id);
+  }
+}
+async function startVideoRender(asset) {
   const bridge = await detectBridge();
   if (!bridge.ok || !bridge.video?.ffmpeg) return toast('Video tools are not ready on this device.', true);
   if (asset.video.burnCaptions && !bridge.video?.whisper) {
@@ -2142,15 +2157,27 @@ async function renderEditedVideo(asset) {
     return toast('This device cannot add the preview watermark that an unlicensed render requires. Activate a Video plan, or update the Video pack.', true);
   }
   const opts = { ...plan.opts, resume: true };
-  // The cut this render delivers is what it costs. A flat unit charged an hour
-  // of finished video the same as a minute, on the one local flow that really
-  // does the work.
-  const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload',
-    quantity: exportUnits('video', { seconds: plan.outputSeconds }) });
-  if (!authorization.ok) return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+  // The same asset and the same settings are the same job. Two clicks on
+  // Render video used to reserve twice, settle twice, render twice and add two
+  // identical files, because the id was computed after the reservation and
+  // nothing held the door. Claim it first: this is the one paid action in the
+  // product a customer can trigger twice by double-clicking.
   const jobId = await stableLocalVideoJobId(asset, opts);
+  if (localVideoJobs.has(jobId)) return toast('That render is already running.');
   const controller = new AbortController();
   localVideoJobs.set(jobId, { controller, base: bridge.base, cancelRequested: false, progress: 18 });
+
+  // The cut this render delivers is what it costs. A flat unit charged an hour
+  // of finished video the same as a minute, on the one local flow that really
+  // does the work. The job id is also the idempotency key, the way the export
+  // paths pass their evidence hash, so a retry the service does see cannot be
+  // billed a second time.
+  const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload',
+    quantity: exportUnits('video', { seconds: plan.outputSeconds }), operationId: jobId });
+  if (!authorization.ok) {
+    localVideoJobs.delete(jobId);
+    return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
+  }
   try {
     await busy(async () => {
       toast('Rendering video with the saved editorial settings…');

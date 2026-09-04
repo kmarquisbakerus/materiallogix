@@ -116,13 +116,13 @@ test('a watermarked proof spends no plan units', async () => {
 
 /** The same trick for the one local flow that really renders video. */
 async function videoRenderAuthorization(outputSeconds) {
-  const body = functionBody('renderEditedVideo');
+  const body = functionBody('startVideoRender');
   const start = body.indexOf('const authorization = await authorizeOutbound(');
   assert.ok(start > -1, 'the local video render no longer reserves usage');
   const end = body.indexOf('});', start) + 3;
   const calls = [];
-  const run = new AsyncFunction('exportUnits', 'plan', 'authorizeOutbound', body.slice(start, end));
-  await run(exportUnits, { outputSeconds }, args => { calls.push(args); return { ok: true }; });
+  const run = new AsyncFunction('exportUnits', 'plan', 'jobId', 'authorizeOutbound', body.slice(start, end));
+  await run(exportUnits, { outputSeconds }, 'local-video-testjob', args => { calls.push(args); return { ok: true }; });
   assert.equal(calls.length, 1);
   return calls[0];
 }
@@ -140,4 +140,56 @@ test('the local video render bills the length of the cut it delivers', async () 
   const long = await videoRenderAuthorization(3600);
   assert.ok(long.quantity > short.quantity, 'a longer cut must cost more than a shorter one');
   assert.equal(short.product, 'video');
+});
+
+test('two clicks on Render video are one render, one reservation, one file', async () => {
+  // Reproduced before the fix: two clicks 120ms apart gave authorize 2,
+  // settle 2, render 2 and two identical files in the project, with no console
+  // error. The journey drives this exact button and clicks once.
+  //
+  // The guard has to be synchronous. Everything below the first `await` in the
+  // render is reachable twice, and the durable claim - the jobId in
+  // `localVideoJobs` - cannot be taken until several awaits have already run,
+  // so a check placed there closes nothing.
+  const wrapper = functionBody('renderEditedVideo');
+  assert.match(wrapper, /videoRendersStarting\.has\(asset\.id\)/,
+    'the re-entry check must run before anything is awaited');
+  const firstAwait = wrapper.indexOf('await');
+  const claim = wrapper.indexOf('videoRendersStarting.add(asset.id)');
+  assert.ok(claim > -1 && claim < firstAwait,
+    'the claim must be taken before the first await, or two clicks both pass it');
+  assert.match(wrapper, /finally \{\s*videoRendersStarting\.delete\(asset\.id\);/,
+    'a failed render must release the door');
+
+  // Run the real guard: a second call while the first is in flight must not
+  // reach the body at all.
+  let entered = 0;
+  const starting = new Set();
+  const guard = async asset => {
+    if (starting.has(asset.id)) return 'refused';
+    starting.add(asset.id);
+    try {
+      entered += 1;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return 'rendered';
+    } finally { starting.delete(asset.id); }
+  };
+  const asset = { id: 'asset-1' };
+  const [first, second] = await Promise.all([guard(asset), guard(asset)]);
+  assert.equal(entered, 1, 'the body ran twice for one double-click');
+  assert.deepEqual([first, second].sort(), ['refused', 'rendered']);
+  assert.equal(await guard(asset), 'rendered', 'the door must reopen once the render is done');
+
+  // And the reservation carries an idempotency key, the way the export paths
+  // do, so a retry the service does see cannot be billed twice. Without one
+  // billing-client.js mints a fresh UUID and the two keys differ.
+  const body = functionBody('startVideoRender');
+  assert.match(body, /const jobId = await stableLocalVideoJobId\(asset, opts\);/,
+    'the job id must be derived from the asset and the settings');
+  assert.match(body, /operationId: jobId/,
+    'the reservation must carry the job id as its idempotency key');
+  assert.ok(body.indexOf('const jobId =') < body.indexOf('authorizeOutbound('),
+    'the job id must exist before the reservation that keys on it');
+  assert.match(body, /if \(!authorization\.ok\) \{\s*localVideoJobs\.delete\(jobId\);/,
+    'a refused reservation must not leave the job id claimed');
 });

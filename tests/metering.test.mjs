@@ -24,7 +24,10 @@ function functionBody(name) {
 // therefore has to reserve before the work, settle the delivered artifact, and
 // return the reservation when the job does not deliver. A flow that loses any
 // of the three either bills for nothing or works for free and unrecorded.
-const LOCAL_PRODUCTION_FLOWS = ['generativeFillDialog', 'upscaleAsset', 'renderEditedVideo'];
+// `startVideoRender` is the body of the video render; `renderEditedVideo` is
+// the synchronous re-entry guard wrapped around it, so the metering lives in
+// the former.
+const LOCAL_PRODUCTION_FLOWS = ['generativeFillDialog', 'upscaleAsset', 'startVideoRender'];
 
 for (const name of LOCAL_PRODUCTION_FLOWS) {
   test(`${name} reserves, settles, and releases its usage`, () => {
