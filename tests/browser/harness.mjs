@@ -77,7 +77,10 @@ export async function studioContext(browser, { licence = null, features = {}, au
     bridge.push({ path: url.pathname, opts: url.searchParams.get('opts') });
     if (url.pathname === '/health') {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        upscale: { available: true, models: ['RealESRGAN_x4plus.pth', 'realesr-animevideov3-x2.pth'] },
+        // Upscaling stays on the ComfyUI path the rest of the journey exercises.
+        // Reporting it available here would route Enhance through this stub and
+        // test the stub instead of the product.
+        upscale: { available: false, models: [] },
         voice: { available: false, packs: [] },
         video: { ffmpeg: true, whisper: true, watermark: true },
         lan: []
