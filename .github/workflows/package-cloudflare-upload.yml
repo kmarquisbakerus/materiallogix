@@ -43,7 +43,14 @@ jobs:
               'indexnow-key.txt', 'cc89cc851acf64485c1280baa77eab1b.txt',
           }
 
+          # Working material that lives beside the site but is not part of it.
+          # `legal/drafts/` holds contract language for outside counsel: not in
+          # force, not published, and a build failure if it ever reaches here.
+          not_site_dirs = ('legal/drafts/',)
+
           def is_site(rel: str) -> bool:
+              if rel.startswith(not_site_dirs):
+                  return False
               if rel in site_files:
                   return True
               return rel.startswith(site_dirs)

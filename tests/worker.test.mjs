@@ -161,18 +161,20 @@ test('every file the deploy package ships is one the Worker will serve', () => {
   // The two rules have to agree. A file in the package that the Worker 404s is
   // dead weight; a file the Worker serves that the package omits is a broken
   // link in production.
-  const shipped = execFileSync('python3', ['-c', `
-import pathlib, sys
-root = pathlib.Path('.')
-site_dirs = ('studio/', 'legal/', 'media/', 'demo/')
-site_files = {'index.html','404.html','checkout-site.js','_worker.js','robots.txt',
-              'sitemap.xml','logo.svg','CNAME','indexnow-key.txt',
-              'cc89cc851acf64485c1280baa77eab1b.txt'}
-for p in sorted(root.rglob('*')):
-    if not p.is_file(): continue
-    rel = p.relative_to(root).as_posix()
-    if rel in site_files or rel.startswith(site_dirs): print(rel)
-`], { cwd: ROOT, encoding: 'utf8' }).split('\n').filter(Boolean);
+  // Run the workflow's own selection rather than a copy of it. A copy is how
+  // this test came to disagree with the packaging step the first time the
+  // step learned a new exclusion.
+  const workflow = readFileSync(resolve(ROOT, '.github/workflows/package-cloudflare-upload.yml'), 'utf8');
+  const start = workflow.indexOf("python - <<'PY'") + "python - <<'PY'".length;
+  const block = workflow.slice(start, workflow.indexOf('          PY\n', start));
+  const script = block.split('\n').map(line => line.startsWith(' '.repeat(10)) ? line.slice(10) : line).join('\n');
+  // Everything up to the archive: the selection, not the writing of a 25MB zip.
+  const selection = script.slice(0, script.indexOf('shipped = []'))
+    + 'shipped = [p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))'
+    + ' if p.is_file() and is_site(p.relative_to(root).as_posix())]\n'
+    + 'print("\\n".join(shipped))';
+  const shipped = execFileSync('python3', ['-c', selection], { cwd: ROOT, encoding: 'utf8' })
+    .split('\n').filter(Boolean);
 
   assert.ok(shipped.length > 50, `the package looks empty: ${shipped.length} files`);
   // _worker.js is the Worker itself; Pages consumes it rather than serving it.

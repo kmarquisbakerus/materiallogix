@@ -185,3 +185,30 @@ test('every blank left for outside counsel is visibly a blank', () => {
     assert.ok(!/\[TBD\]|\[\.\.\.\]|TODO/.test(doc), `${name} hides a blank behind something a reader would miss`);
   }
 });
+
+test('the draft contract wording is in the repository and out of the site', () => {
+  // Counsel's 15 clauses were written into a scratchpad that dies with the
+  // session. They belong in the repository — and nowhere near the deploy
+  // package, because a draft published beside the real terms is worse than no
+  // draft at all.
+  const draft = read('legal/drafts/CONTRACT_WORDING.md');
+  assert.ok(draft.length > 4000, 'the draft is a stub');
+  const clauses = draft.match(/^\*\*\d+\. /gm) || [];
+  assert.equal(clauses.length, 15, `${clauses.length} clauses; counsel drafted 15`);
+  assert.match(draft, /is not in force\s*\n?and is not published/,
+    'the draft must say plainly that it is a draft');
+  // Bracketed questions, not invented answers.
+  assert.ok((draft.match(/\[[^\]]{3,}\]/g) || []).length >= 8,
+    'the facts counsel could not source must stay visibly open');
+
+  // The packaging step excludes it, and the Worker refuses it. Both, because
+  // one lock is not enough for something that publishes.
+  const workflow = read('.github/workflows/package-cloudflare-upload.yml');
+  assert.match(workflow, /not_site_dirs = \('legal\/drafts\/',\)/,
+    'the deploy package would ship the draft');
+  assert.match(workflow, /if rel\.startswith\(not_site_dirs\):\s*\n\s*return False/);
+  const worker = read('_worker.js');
+  const notTheSite = new RegExp(worker.match(/const NOT_THE_SITE = \/(.+)\/i;/)[1], 'i');
+  assert.ok(notTheSite.test('/legal/drafts/CONTRACT_WORDING.md'),
+    'the Worker would serve the draft');
+});
