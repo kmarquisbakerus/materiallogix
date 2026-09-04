@@ -149,16 +149,30 @@ through a known origin would break the product on the customer's machine.
 nothing called them: the lanes were declared and never applied, so every tier
 rendered identically and the difference existed only in the price.
 
-One wall is real now. The Enhance dialog listed every upscale model the engine
-had installed and preselected the 4x one for everybody, under a line of text
-claiming "licensed Photo plans unlock 4x" - a sentence where a gate belonged.
-It now offers only the model the licence's lane names, and says so when the
-device does not have it. `upscaleModelsForLane()` is `laneFor()`'s first caller.
+Two walls are real now.
+
+The Enhance dialog listed every upscale model the engine had installed and
+preselected the 4x one for everybody, under a line of text claiming "licensed
+Photo plans unlock 4x" - a sentence where a gate belonged. It now offers only
+the model the licence's lane names, and says so when the device does not have
+it. `upscaleModelsForLane()` is `laneFor()`'s first caller.
+
+The free lane declared `maxWords: 60` and nothing applied it, so an unlicensed
+preview would read a script of any length. `scriptAllowance()` now stops the
+render and says how many words to trim. A preview that is not short is not a
+preview - it is the product, stamped.
+
+Every tier keeps a preview; only the free one is short. **Voice Starter is a
+basic paid tier, not a preview**: it is covered for voice, renders unstamped,
+reads any length, and spends its 30 monthly minutes like any other allowance.
+It draws the free lane for Photo and Video because it did not buy them.
 
 The rest of the Pro lane still cannot be walled, because it does not exist:
 
 | Pro entitlement | Read by | Blocked on |
 | --- | --- | --- |
+| `voice.maxWords` | `scriptAllowance` | - shipped |
+| `upscale.model` | `upscaleModelsForLane` | - shipped |
 | `motionEngine: 'pro'` | nothing | the Pro Motion Engine is not shipped |
 | `voice.quality: 'premium'` | nothing | premium voice models are not shipped |
 | `cloudUpscaleIncluded` | nothing | the cloud lane is disabled |

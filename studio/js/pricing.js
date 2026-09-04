@@ -358,6 +358,31 @@ export const VOICE_STARTER_LANE = Object.freeze({
 });
 
 /**
+ * How long a script this lane may read, and what to say when it is too long.
+ *
+ * `maxWords` was declared on the free lane and applied nowhere, so a free
+ * preview would read a script of any length. A preview that is not short is
+ * not a preview - it is the product, stamped.
+ *
+ * Every tier keeps a preview. The paid lanes simply have no length limit on
+ * theirs, which is why an unlimited lane returns `allowed` with no ceiling
+ * rather than a different code path.
+ */
+export function scriptAllowance(lane, wordCount) {
+  const limit = Number(lane?.voice?.maxWords);
+  const words = Math.max(0, Math.floor(Number(wordCount) || 0));
+  if (!Number.isFinite(limit)) return { allowed: true, limit: null, words, over: 0 };
+  const over = Math.max(0, words - limit);
+  return {
+    allowed: over === 0,
+    limit,
+    words,
+    over,
+    reason: over === 0 ? '' : `Free preview reads up to ${limit} words. This script is ${words}. Trim ${over}, or start a plan to read the whole thing.`
+  };
+}
+
+/**
  * The upscale models a lane may use, filtered from what the engine has
  * installed. The Enhance dialog used to list every installed model and preselect
  * the 4x one for everybody, while a line of text underneath claimed that

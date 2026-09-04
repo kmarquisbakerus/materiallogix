@@ -149,6 +149,7 @@ Create with freedom. Finish with *confidence*.</textarea>
 import { count } from './js/plural.js';
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
+import { laneFor, scriptAllowance } from './js/pricing.js';
 import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-client.js';
 import { bridgeFetch } from './js/generate.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
@@ -487,6 +488,15 @@ $('#render').onclick = async () => {
     return;
   }
   const plan = paintPlan();
+  // Every tier previews; the free one previews short. The 60-word ceiling was
+  // declared on the free lane and applied nowhere, so an unlicensed preview
+  // would read a script of any length.
+  const allowance = scriptAllowance(laneFor(await activeLicense(), 'voice'), plan.totalWords);
+  if (!allowance.allowed) {
+    $('#status').textContent = allowance.reason;
+    $('#script').focus();
+    return;
+  }
   const exag = Number($('#exag').value);
   $('#status').textContent = 'Rendering with the local voice engine…';
   $('#render').disabled = true;

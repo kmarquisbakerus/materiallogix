@@ -403,6 +403,39 @@ try {
   }
 
   // ── Offline ──────────────────────────────────────────────────────────────
+  // ── The free preview is short ────────────────────────────────────────────
+  step('Preview voice without a licence');
+  {
+    const guest = await studioContext(browser, {});
+    const page = guest.page;
+    await page.goto(`${BASE}/voice.html?dev=1`, { waitUntil: 'domcontentloaded' });
+    await settle(page, 2500);
+    const refusal = await page.evaluate(async () => {
+      const script = document.querySelector('#script');
+      script.value = Array.from({ length: 95 }, (_, i) => `word${i}`).join(' ') + '.';
+      script.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#render').click();
+      await new Promise(r => setTimeout(r, 600));
+      return document.querySelector('#status').textContent;
+    });
+    ok('a 95-word script is refused on the free preview', /reads up to 60 words/.test(refusal),
+      refusal.slice(0, 90));
+
+    const shortEnough = await page.evaluate(async () => {
+      const script = document.querySelector('#script');
+      script.value = 'A short line for the preview to read aloud.';
+      script.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#status').textContent = '';
+      document.querySelector('#render').click();
+      await new Promise(r => setTimeout(r, 600));
+      return document.querySelector('#status').textContent;
+    });
+    ok('a short script is not refused for length', !/reads up to 60 words/.test(shortEnough),
+      shortEnough.slice(0, 90));
+    allErrors.push(...guest.errors);
+    await guest.context.close();
+  }
+
   // ── The pricing table ────────────────────────────────────────────────────
   step('Read the pricing table and pick a plan');
   {

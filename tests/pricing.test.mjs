@@ -6,8 +6,9 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
-  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane
+  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance
 } from '../studio/js/pricing.js';
+import { covers } from '../studio/js/license.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => readFileSync(resolve(ROOT, file), 'utf8');
@@ -164,4 +165,34 @@ test('the upscale wall is a gate, not a sentence', () => {
   assert.match(source, /upscaleModelsForLane\(/, 'the Enhance dialog must filter by lane');
   assert.ok(!/models\.find\(m => \/realesrgan-x4plus\$\/\.test\(m\)\)/.test(source),
     'the dialog must not reach past the lane for a better model');
+});
+
+test('every tier previews, and the free preview is short', () => {
+  // maxWords was declared on the free lane and applied nowhere, so an
+  // unlicensed preview would read a script of any length. A preview that is
+  // not short is not a preview - it is the product, stamped.
+  const forVoice = license => scriptAllowance(laneFor(license, 'voice'), 95);
+  const free = forVoice(null);
+  assert.equal(free.allowed, false);
+  assert.equal(free.limit, LANES.free.voice.maxWords);
+  assert.match(free.reason, /Free preview reads up to 60 words/);
+  assert.equal(scriptAllowance(laneFor(null, 'voice'), 60).allowed, true, 'exactly the limit is allowed');
+
+  // Voice Starter is a basic paid tier, not a preview: it reads any length and
+  // renders clean.
+  const starter = { plan: 'voice_starter', selected_product: 'voice' };
+  assert.equal(forVoice(starter).allowed, true);
+  assert.equal(forVoice(starter).limit, null, 'a paid tier has no reading limit');
+  assert.equal(laneFor(starter, 'voice').voice.stamped, false, 'Voice Starter output is not watermarked');
+  assert.equal(covers(starter, 'voice'), true, 'Voice Starter is covered for voice');
+  for (const plan of ['single', 'single_pro', 'full', 'pro']) {
+    assert.equal(forVoice({ plan, selected_product: 'voice' }).allowed, true, `${plan} reads any length`);
+  }
+  assert.equal(forVoice({ plan: 'suspended:voice_starter' }).allowed, false, 'a suspended licence previews short');
+
+  // Asking the lane is not enough; the answer has to stop the render.
+  const markup = read('studio/voice.html');
+  assert.match(markup, /scriptAllowance\(laneFor\(/, 'the render button must ask the lane before it renders');
+  assert.match(markup, /if \(!allowance\.allowed\)[\s\S]{0,200}?return;/,
+    'the render button must stop when the lane refuses');
 });
