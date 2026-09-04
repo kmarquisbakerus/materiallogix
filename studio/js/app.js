@@ -41,6 +41,8 @@ import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation
 import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel,
   laneFor, upscaleModelsForLane, LANES, unitsForDeliveries, deliveryRulesFor, requiresWatermark } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
+import { videoEngineForThisCustomer, rememberEnginePreference, EDITORIAL_PROVENANCE } from './video-engine.js';
+import { PRO_VIDEO_ENGINE, STANDARD_VIDEO_ENGINE } from './model-licence.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
 import { pricingUrl } from './site-links.js';
 
@@ -1906,7 +1908,7 @@ function videoBlock(asset) {
 }
 
 
-function videoRenderPlan(asset, lane = LANES.paid) {
+function videoRenderPlan(asset, lane = LANES.paid, engine = null) {
   const v = asset.video;
   const trim = resolveVideoTrim({ trimStart: v.trimStart, trimEnd: v.trimEnd, duration: asset.duration, speed: v.speed || 1 });
   const frame = deliveryFrame(v.spec);
@@ -1924,8 +1926,14 @@ function videoRenderPlan(asset, lane = LANES.paid) {
       burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments,
       // The engine must mark an unlicensed render. Photo exports are stopped at
       // the paywall and voice previews are audibly stamped; video had nothing.
-      delivery: deliveryRulesFor(lane, 'video')
-    }
+      delivery: deliveryRulesFor(lane, 'video'),
+      // Which generative engine may serve this customer, decided by their
+      // region rather than by whatever the renderer happens to have loaded.
+      // `null` is the honest answer today - no model touches the pixels - and
+      // it travels with the job so the renderer cannot substitute one.
+      engine: engine?.engineId || null
+    },
+    provenance: engine?.provenance || EDITORIAL_PROVENANCE
   };
 }
 
@@ -1976,15 +1984,58 @@ window.addEventListener('materiallogix:cancel-job', event => {
 });
 window.dispatchEvent(new Event('materiallogix:cancel-ready'));
 
+/**
+ * What the customer is told about the engine, and the switch when there is one.
+ *
+ * Three shapes, and the difference between them matters:
+ *   - nothing generative is enabled: say what did produce the file;
+ *   - the engine is fixed by their region: say which one and why, no control;
+ *   - both engines are licensed where they are: give them the choice.
+ *
+ * The control is a convenience, not the enforcement. `resolveVideoEngine`
+ * resolves the preference against the territory on every render, so a stored
+ * preference for an engine that is not licensed where the customer is has no
+ * effect even if this control is never drawn.
+ */
+function engineRow(engine) {
+  if (!engine.generative) return el('p', { className: 'hint' }, engine.provenance);
+  if (!engine.offered) {
+    return el('p', { className: 'hint' }, engine.notice || engine.provenance);
+  }
+  const wrap = el('div', { className: 'engine-choice' },
+    el('p', {}, el('b', {}, 'Motion engine')));
+  const note = el('p', { className: 'hint' }, engine.notice);
+  for (const [id, label] of [[PRO_VIDEO_ENGINE, 'Pro Motion Engine'], [STANDARD_VIDEO_ENGINE, 'Standard engine']]) {
+    const input = el('input', { type: 'radio', name: 'ml-video-engine', value: id });
+    input.checked = engine.engineId === id;
+    input.onchange = () => {
+      if (!input.checked) return;
+      rememberEnginePreference(id);
+      // Re-resolve rather than trusting the click: the answer shown must be the
+      // answer the render will actually use.
+      videoEngineForThisCustomer({ pro: true }).then(next => { note.textContent = next.notice; });
+    };
+    wrap.append(el('label', { className: 'checkline' }, input, el('span', {}, label)));
+  }
+  wrap.append(note);
+  return wrap;
+}
+
 async function reviewCloudVideoRender(asset) {
   const availability = await cloudVideoAvailability();
   if (!availability.available) return dialog('Cloud render is not open yet', el('div', {},
     el('p', {}, 'Use this device to render your video for now.')),
   [btn('Close', 'btn', closeDialog), btn('Use local render', 'btn primary', () => { closeDialog(); renderEditedVideo(asset); })]);
+  const lane = laneFor(await activeLicense(), 'video');
+  // The engine gate applies to the cloud exactly as it does to this device.
+  // Where our GPUs sit is not what the licence turns on - it turns on where the
+  // customer is - so sending the job away cannot route around it.
+  const engine = await videoEngineForThisCustomer({ pro: lane.motionEngine === 'pro' });
+  if (engine.blocked) return toast(engine.notice, true);
   let plan;
   // The cloud render carries the same delivery rules as the local one, so a
   // licence cannot be bypassed by sending the job to our GPUs instead.
-  try { plan = videoRenderPlan(asset, laneFor(await activeLicense(), 'video')); }
+  try { plan = videoRenderPlan(asset, lane, engine); }
   catch (error) { return toast(error.message, true); }
   const quote = quoteCloudJob({ kind: 'video', durationSeconds: plan.outputSeconds });
   // What the licence includes is known here; what remains this period is the
@@ -2003,6 +2054,7 @@ async function reviewCloudVideoRender(asset) {
         source: { filename: asset.filename, contentType: source.type || 'application/octet-stream',
           size: source.size, durationSeconds: asset.duration },
         outputSeconds: plan.outputSeconds, edit: plan.opts,
+        engine: { id: plan.opts.engine, region: engine.country || null, provenance: plan.provenance },
         brandOverlay: state.project.brandOverlay || null
       };
       const result = await busy(() => submitCloudVideoPackage({ source, manifest,
@@ -2033,6 +2085,7 @@ async function reviewCloudVideoRender(asset) {
   consent.onchange = () => { continueButton.disabled = !consent.checked; };
   dialog('Review cloud render', el('div', {},
     el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds.`),
+    engineRow(engine),
     el('p', { className: 'hint' }, includedCredit
       ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo, video or voice. It is used before your wallet; the server settles the actual amount.`
       : 'This job is paid from your prepaid wallet. The server settles the actual amount.'),
@@ -2048,8 +2101,14 @@ async function renderEditedVideo(asset) {
     return toast('Captions need the optional Video pack; add it or turn captions off.', true);
   }
   const lane = laneFor(await activeLicense(), 'video');
+  // Which engine may serve this customer. Today no generative engine is
+  // enabled, so this resolves to "none" and no region lookup is made; when one
+  // is enabled it is the only route to it, and an unconfirmed region stops the
+  // render rather than guessing in the direction that breaks the licence.
+  const engine = await videoEngineForThisCustomer({ pro: lane.motionEngine === 'pro' });
+  if (engine.blocked) return toast(engine.notice, true);
   let plan;
-  try { plan = videoRenderPlan(asset, lane); }
+  try { plan = videoRenderPlan(asset, lane, engine); }
   catch (error) { return toast(error.message, true); }
   // An engine that cannot mark the file must not be handed an unmarked one.
   if (requiresWatermark(lane, 'video') && !bridge.video?.watermark) {
@@ -2081,7 +2140,11 @@ async function renderEditedVideo(asset) {
       const file = new File([blob], asset.filename.replace(/\.[^.]+$/, '') + '-edited.mp4', { type: 'video/mp4' });
       const rendered = newAsset(state.project.id, file);
       rendered.source = 'rendered-local';
-      rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings.`;
+      // The terms promise the customer can always tell what produced a file.
+      // That promise is only kept if the line says so even when the answer is
+      // "no model at all".
+      rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings. ${plan.provenance}`;
+      rendered.engine = plan.opts.engine;
       await store.addAsset(rendered, file);
       const url = await store.objectUrl(rendered.id);
       Object.assign(rendered, await probe(file, url));

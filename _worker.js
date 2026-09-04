@@ -50,6 +50,25 @@ export default {
     if (path.startsWith('/app/')) return canonical('/studio/' + path.slice('/app/'.length));
     if (path === '/voice') return canonical('/studio/voice.html', 302);
 
+    // Where the customer is, from the edge rather than from the browser.
+    //
+    // The video engine's licence excludes a list of territories, so the render
+    // path needs a location it did not get from the thing being gated. The
+    // client asks for this on every session and never caches it; a stale
+    // country is a licence decision made on last week's facts.
+    //
+    // `request.cf` is absent when the Worker runs outside the edge (local
+    // development, a unit test). Answering "unknown" there is correct: the
+    // engine gate fails closed on an unknown region, which is the safe
+    // direction for a territorial licence.
+    if (path === '/edge/region') {
+      const country = typeof request.cf?.country === 'string' ? request.cf.country : null;
+      return harden(new Response(JSON.stringify({ country, source: country ? 'cloudflare-edge' : 'unavailable' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
+      }));
+    }
+
     if (path === '/studio/sw.js') {
       const response = await env.ASSETS.fetch(request);
       const headers = new Headers(response.headers);

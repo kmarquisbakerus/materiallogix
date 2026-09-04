@@ -459,3 +459,32 @@ test('a term a plan is not sold on has no price and no button', () => {
   const checkout = readFileSync(resolve(ROOT, 'studio/js/checkout.js'), 'utf8');
   assert.match(checkout, /button\.disabled = !amount/, 'the button must disable when there is no price');
 });
+
+test('the terms state the wallet range, the credit and the cloud video rate the code enforces', () => {
+  // The terms said $5-$500 refills, $10 of credit and $3 per minute while the
+  // product enforced $10-$500, $20 and $2. A customer reads the terms as the
+  // contract; three numbers wrong in a legal document is three disputes.
+  const terms = readFileSync(resolve(ROOT, 'legal/terms.html'), 'utf8').replace(/&mdash;/g, '-');
+  const wallet = terms.match(/one-time charges between \$(\d+) and \$(\d+)/);
+  assert.ok(wallet, 'the terms must state the refill range');
+  assert.equal(Number(wallet[1]), CLOUD_PRICING.minimumRefill);
+  assert.equal(Number(wallet[2]), CLOUD_PRICING.maximumRefill);
+
+  const credit = terms.match(/includes \$(\d+) of cloud credit/);
+  assert.ok(credit, 'the terms must state the included credit');
+  for (const plan of ['single', 'single_pro', 'full', 'pro']) {
+    assert.equal(Number(credit[1]) * 100, CLOUD_CREDIT.includedCents[plan], `${plan} credit`);
+  }
+  assert.equal(CLOUD_CREDIT.includedCents.voice_starter, 0);
+  assert.match(terms, /Voice Starter includes none/);
+
+  const rate = terms.match(/cloud video rate of \$(\d+) per output minute/);
+  assert.ok(rate, 'the terms must state the video rate');
+  assert.equal(Number(rate[1]), CLOUD_PRICING.videoUpscale.price);
+
+  const covers = terms.match(/covers up to (\d+) seconds \((\d+) minutes\)/);
+  assert.ok(covers, 'the terms must say how much video the credit buys');
+  const quoted = quoteCloudJob({ kind: 'video', durationSeconds: Number(covers[1]) });
+  assert.equal(quoted.amountCents, CLOUD_CREDIT.includedCents.full, 'the seconds quoted must spend exactly the credit');
+  assert.equal(Number(covers[2]) * 60, Number(covers[1]));
+});

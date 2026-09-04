@@ -81,6 +81,7 @@ export async function studioContext(browser, { licence = null, features = {}, au
   // the client actually sent - a grep for the line that builds the options
   // proves the line exists, not that it runs.
   const bridge = [];
+  const handle = { context, api, downloads, errors, bridge, renderBody: null };
   await context.route('http://*:8189/**', route => {
     const url = new URL(route.request().url());
     bridge.push({ path: url.pathname, opts: url.searchParams.get('opts') });
@@ -96,7 +97,12 @@ export async function studioContext(browser, { licence = null, features = {}, au
       }) });
     }
     if (url.pathname === '/video/render') {
-      return route.fulfill({ status: 200, contentType: 'video/mp4', body: 'rendered' });
+      // A test that wants the produced file to be a real, decodable video
+      // sets `handle.renderBody` to the bytes the engine should hand back.
+      // Without it the body is a placeholder, which proves what was sent and
+      // nothing about what the library receives.
+      const body = handle.renderBody || Buffer.from('rendered');
+      return route.fulfill({ status: 200, contentType: handle.renderBody ? 'video/webm' : 'video/mp4', body });
     }
     return route.fulfill({ status: 404, body: '' });
   });
@@ -108,7 +114,8 @@ export async function studioContext(browser, { licence = null, features = {}, au
     if (message.type() === 'error' && !/ERR_CONNECTION|ERR_TUNNEL|Failed to load resource/.test(text)) errors.push(`CONSOLE: ${text.slice(0, 150)}`);
   });
   page.on('download', download => downloads.push(download.suggestedFilename()));
-  return { context, page, api, downloads, errors, bridge };
+  handle.page = page;
+  return handle;
 }
 
 /** A synthetic photograph: a gradient, a subject, and enough texture to analyse. */

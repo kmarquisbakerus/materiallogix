@@ -86,3 +86,25 @@ test('the canonical host and paths still redirect', async () => {
     assert.equal(response.headers.get('Location'), to, `${from} went to the wrong place`);
   }
 });
+
+test('the edge answers where the customer is, and never from a cache', async () => {
+  // The video engine's licence is territorial. The Studio asks the Worker,
+  // because the browser is the thing being gated and cannot be the source.
+  const atEdge = new Request('https://materiallogix.com/edge/region');
+  Object.defineProperty(atEdge, 'cf', { value: { country: 'IE' } });
+  const response = await worker.fetch(atEdge, env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'application/json');
+  assert.equal(response.headers.get('Cache-Control'), 'no-store',
+    'a cached country is a licence decision made on stale facts');
+  assert.deepEqual(await response.json(), { country: 'IE', source: 'cloudflare-edge' });
+  assertHardened(response, 'the region endpoint');
+});
+
+test('off the edge, the region is unknown rather than invented', async () => {
+  // Local development and unit tests have no `request.cf`. "Unknown" is the
+  // answer the gate fails closed on, which is the safe direction.
+  const response = await get('https://materiallogix.com/edge/region');
+  assert.deepEqual(await response.json(), { country: null, source: 'unavailable' });
+  assert.equal(response.headers.get('Cache-Control'), 'no-store');
+});

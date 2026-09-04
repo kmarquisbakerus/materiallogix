@@ -464,9 +464,11 @@ try {
   {
     // The watermark rule was guarded by a grep for the line that builds it.
     // This drives a real render and reads what the client put on the wire.
+    const regionAsked = new Set();
     const sendsFor = async (plan, product) => {
       const licence = await mintLicence(plan, product);
       const ctx = await studioContext(browser, { licence });
+      await ctx.context.route('**/edge/region', route => { regionAsked.add(ctx.context); route.continue(); });
       await ctx.page.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
       await settle(ctx.page, 3000);
       await ctx.page.evaluate(async () => {
@@ -481,7 +483,12 @@ try {
         }
         await new Promise(r => { recorder.onstop = r; recorder.stop(); });
         await window.__cros.importFiles([new File([new Blob(chunks, { type: 'video/webm' })], 'engine-check.webm', { type: 'video/webm' })]);
+        const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+        window.__recorded = btoa(String.fromCharCode(...bytes));
       });
+      // The engine stub hands back the clip that was recorded, so the file the
+      // render adds to the library is a real video and not a placeholder.
+      ctx.renderBody = Buffer.from(await ctx.page.evaluate(() => window.__recorded), 'base64');
       await settle(ctx.page, 4000);
       await closeDialog(ctx.page);
       await ctx.page.evaluate(() => {
@@ -501,9 +508,15 @@ try {
       });
       await settle(ctx.page, 2500);
       const sent = ctx.bridge.filter(entry => entry.path === '/video/render').map(entry => JSON.parse(entry.opts || '{}'));
+      await settle(ctx.page, 2500);
+      const produced = await ctx.page.evaluate(() => {
+        const a = window.__cros.state.assets.find(x => x.source === 'rendered-local');
+        return a ? { provenance: a.provenance, engine: 'engine' in a ? a.engine : 'missing', width: a.width, duration: a.duration } : null;
+      });
+      const askedRegion = ctx.api.some(path => path.startsWith('edge/region')) || regionAsked.has(ctx.context);
       const errors = [...ctx.errors];
       await ctx.context.close();
-      return { sent, errors };
+      return { sent, errors, produced, askedRegion };
     };
 
     const photoOnly = await sendsFor('single', 'photo');
@@ -520,6 +533,21 @@ try {
     ok('a licence that covers video sends a clean render',
       !!clean && clean.delivery.clean === true && clean.delivery.watermark === null,
       clean ? JSON.stringify(clean.delivery) : `no render reached the engine (${covered.sent.length} calls)`);
+
+    // The engine gate: no generative engine is enabled in this build, so the
+    // job must say so (engine: null) rather than leave it to the renderer, the
+    // produced file must say what made it, and nobody's region is looked up
+    // for a question that has no territorial component.
+    ok('the render carries the engine decision, and today that decision is "none"',
+      !!clean && 'engine' in clean && clean.engine === null,
+      clean ? `engine=${JSON.stringify(clean.engine)}` : 'no render');
+    ok('the produced file is a real video and says no generative model was used',
+      !!covered.produced && /No generative video model was used/.test(covered.produced.provenance)
+        && covered.produced.engine === null && covered.produced.width > 0 && covered.produced.duration > 0,
+      covered.produced ? `${covered.produced.width}px, ${covered.produced.duration}s, engine=${JSON.stringify(covered.produced.engine)} :: ${covered.produced.provenance.slice(-70)}` : 'no file was produced');
+    ok('no region lookup is made when nothing territorial is enabled',
+      !photoOnly.askedRegion && !covered.askedRegion,
+      `asked: photo-only=${photoOnly.askedRegion}, full=${covered.askedRegion}`);
 
     allErrors.push(...photoOnly.errors, ...covered.errors);
   }

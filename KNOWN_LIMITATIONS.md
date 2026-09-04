@@ -296,7 +296,7 @@ The rest of the Pro lane still cannot be walled, because it does not exist:
 | `voice.multiTake` | `allowsMultiSourceVoicePack` | - shipped |
 | `personalClones` | `voiceProfileLimit` | - shipped |
 | `upscale.model` | `upscaleModelsForLane` | - shipped |
-| `motionEngine: 'pro'` | nothing | the Pro Motion Engine is not shipped |
+| `motionEngine: 'pro'` | `video-engine.js`, on every render | the Pro Motion Engine is not shipped - the gate runs and records "no generative engine" |
 | `voice.quality: 'premium'` | nothing | premium voice models are not shipped |
 | `cloudUpscaleIncluded` | nothing | the cloud lane is disabled |
 | `walletDiscount` | `walletTopUpCents` | - shipped |
@@ -427,6 +427,30 @@ The site carries the same disclosure. Every place it sells the Pro Motion
 Engine carries a footnote mark, and the note says which territories, what a
 customer there gets instead, and that the Studio always names the engine that
 produced a file. A test fails the build if a claim is made without the mark.
+
+### How the gate is wired
+
+`model-licence.js` decides what a territory permits. It is consumed by exactly
+one piece of product code, `video-engine.js`, which is the only path to an
+engine; a test fails the build if any other module imports a decision from it.
+Both render paths - this device and the cloud - ask it before every render,
+and its answer travels in the job (`opts.engine`, and `manifest.engine` with
+the region it was decided on) and onto the produced file's provenance line.
+
+The region comes from `GET /edge/region`, answered by the Worker from
+Cloudflare's view of the connection with `Cache-Control: no-store`. The
+browser is the thing being gated, so it is not asked. Off the edge the answer
+is "unknown", and a generative render on a territorial engine fails closed on
+"unknown"; an editorial render of the customer's own footage has no
+territorial question and is unaffected, so the offline product still works.
+
+**No generative engine is enabled** - `ENABLED_VIDEO_ENGINES` is empty and a
+test pins it to what this file says. Every render today records "no
+generative video model was used", which is what the terms now say. Adding an
+engine id to that list is the one switch that turns the engine, its territory
+gate, its switch in the cloud dialog and its disclosure on together; the gate
+is proven against an injected two-engine build for every excluded state and a
+client that explicitly asks for the restricted engine from Dublin.
 
 An excluded customer is **served, not refused**. `model-licence.js` routes the
 27 EU member states, GB and KR to **Wan 2.2**, which is Apache-2.0 with no
