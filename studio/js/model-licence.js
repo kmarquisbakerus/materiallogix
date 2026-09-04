@@ -100,6 +100,39 @@ export function videoEngineFor(countryCode) {
 }
 
 /**
+ * Every engine this customer may choose between, best first.
+ *
+ * The terms promise that an unrestricted engine is available to every customer
+ * on every plan, so that a customer who intends to publish worldwide need not
+ * carry a territorial restriction on their own work. That promise is only true
+ * if this list always contains one.
+ */
+export function videoEnginesAvailableIn(countryCode) {
+  return VIDEO_ENGINE_PREFERENCE
+    .filter(id => engineAllowedIn(id, countryCode))
+    .map(id => ENGINE_LICENCES[id]);
+}
+
+/** An engine whose output carries no territorial condition, or null. */
+export function unrestrictedEngineIn(countryCode) {
+  return videoEnginesAvailableIn(countryCode)
+    .find(engine => engine.excludedTerritories.length === 0) || null;
+}
+
+/**
+ * What a rendered file records about the engine that made it. The terms
+ * promise the customer can tell, so this goes in the provenance line rather
+ * than staying an implementation detail.
+ */
+export function engineProvenance(engineId) {
+  const engine = ENGINE_LICENCES[engineId];
+  if (!engine) return '';
+  return engine.excludedTerritories.length
+    ? `Rendered with the ${engine.label} engine, which its publisher licenses for use outside the European Union, the United Kingdom and South Korea.`
+    : `Rendered with the ${engine.label} engine, which carries no territorial restriction.`;
+}
+
+/**
  * Why a render was refused or rerouted, in words a customer can act on. Never
  * names the licence holder's terms as the customer's fault.
  */

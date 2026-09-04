@@ -455,3 +455,34 @@ places.
 
 This is the check that would have caught all seven, and it is the one to run
 first when a tier is added.
+
+## What the terms carry, and what they cannot
+
+Passing the territorial restriction down in the customer terms handles the
+downstream half of this, and only the downstream half. The two are worth keeping
+apart because they fail differently.
+
+**Downstream - the terms handle it.** A customer who publishes their own video
+to a global platform is making their own decision about their own work.
+Hunyuan §6(d) is explicit: "You and Your users are solely responsible for
+Outputs and their subsequent uses." Passing the restriction to downstream
+recipients is what §3(a) contemplates, and the customer, not us, is the
+publisher.
+
+**Upstream - the terms cannot.** If we render Hunyuan output for a customer in
+the excluded territories, that is us using and displaying outside the Territory.
+A contract with our customer cannot grant us rights Tencent never gave us. Only
+the geofence fixes that, and it is not optional.
+
+The terms now say which engines exist, which territory the restricted one is
+licensed for, that excluded regions are served by an unrestricted engine, and
+that a customer who intends to publish worldwide may choose the unrestricted
+engine instead. That last sentence is a promise, so the suite holds it: there
+must be an unrestricted engine available in every territory, and the code must
+be able to say which engine produced a file. A promise in the terms that the
+code does not keep is a false statement, not a missing feature - the tests fail
+if either side is removed.
+
+None of this is legal advice, and the terms wording should go past counsel
+before launch. The licence analysis it rests on is quoted verbatim in the
+section above so counsel can check the reading rather than take it on trust.

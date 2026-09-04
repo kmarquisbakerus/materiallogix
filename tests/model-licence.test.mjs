@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 import {
-  ENGINE_LICENCES, EU_MEMBER_STATES, HUNYUAN_EXCLUDED, VIDEO_ENGINE_PREFERENCE,
-  engineAllowedIn, videoEngineFor, engineNoticeFor, usableCountry
+  ENGINE_LICENCES, EU_MEMBER_STATES, HUNYUAN_EXCLUDED, VIDEO_ENGINE_PREFERENCE, engineAllowedIn, videoEngineFor, engineNoticeFor, usableCountry, videoEnginesAvailableIn, unrestrictedEngineIn, engineProvenance
 } from '../studio/js/model-licence.js';
 
 // Tencent Hunyuan Community License §1(l): "'Territory' shall mean the
@@ -81,4 +85,44 @@ test('the licence terms that bind us are recorded, not remembered', () => {
   assert.equal(hunyuan.monthlyActiveUserCeiling, 100_000_000);   // §4
   assert.equal(hunyuan.mayImproveOtherModels, false);            // §5(b)
   assert.equal(hunyuan.licence, 'Tencent Hunyuan Community License Agreement');
+});
+
+// The terms make two promises about engines. A promise in the terms that the
+// code does not keep is a false statement, not a missing feature.
+
+test('the terms promise an unrestricted engine to everybody, and there is one', () => {
+  const terms = readFileSync(resolve(ROOT, 'legal/terms.html'), 'utf8');
+  assert.match(terms, /available to every customer on every plan/,
+    'the terms no longer promise an unrestricted engine');
+  for (const country of [...EU_MEMBER_STATES, 'GB', 'KR', 'US', 'CA', 'BR', 'JP', 'NO', 'CH']) {
+    const unrestricted = unrestrictedEngineIn(country);
+    assert.ok(unrestricted, `${country} is promised an unrestricted engine and has none`);
+    assert.deepEqual([...unrestricted.excludedTerritories], [], `${country}'s "unrestricted" engine has conditions`);
+    assert.ok(videoEnginesAvailableIn(country).length >= 1, `${country} has no engine at all`);
+  }
+});
+
+test('the terms promise we say which engine made a file, and we can', () => {
+  const terms = readFileSync(resolve(ROOT, 'legal/terms.html'), 'utf8');
+  assert.match(terms, /which engine produced a file/, 'the terms no longer promise provenance');
+  for (const id of Object.keys(ENGINE_LICENCES)) {
+    const line = engineProvenance(id);
+    assert.ok(line.includes(ENGINE_LICENCES[id].label), `${id} provenance does not name the engine`);
+    if (ENGINE_LICENCES[id].excludedTerritories.length) {
+      assert.match(line, /European Union.*United Kingdom.*South Korea/,
+        `${id} restricts territory without saying which`);
+    } else {
+      assert.match(line, /no territorial restriction/, `${id} is unrestricted but does not say so`);
+    }
+  }
+  assert.equal(engineProvenance('not_an_engine'), '', 'an unknown engine claims nothing');
+});
+
+test('the terms name the same three territories the licence does', () => {
+  // If the licence list and the customer-facing list ever disagree, one of them
+  // is lying to somebody.
+  const terms = readFileSync(resolve(ROOT, 'legal/terms.html'), 'utf8');
+  assert.match(terms, /European Union, the United Kingdom and South Korea/);
+  assert.equal(EU_MEMBER_STATES.length, 27);
+  assert.ok(HUNYUAN_EXCLUDED.includes('GB') && HUNYUAN_EXCLUDED.includes('KR'));
 });
