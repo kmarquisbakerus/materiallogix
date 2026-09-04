@@ -15,12 +15,18 @@ if (!sessionId || !claim) {
 }
 
 if ((params.get('checkout') === 'success' || hasPending) && sessionId && claim) {
+  // Drop the one-time claim from the address bar without discarding the rest
+  // of the query: the page the customer lands on may be carrying a project id,
+  // a demo flag or an entry hint that the Studio reads a moment later.
   const cleanUrl = new URL(location.href);
-  cleanUrl.search = '';
+  for (const key of ['checkout', 'session_id', 'claim']) cleanUrl.searchParams.delete(key);
   history.replaceState({}, '', cleanUrl);
   try {
     const response = await fetch(apiUrl(`/api/checkout/result?session_id=${encodeURIComponent(sessionId)}&claim=${encodeURIComponent(claim)}`), {
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/json' },
+      // This module is evaluated before the page finishes booting, so an
+      // unanswered request must not hold the Studio open indefinitely.
+      signal: AbortSignal.timeout(10000)
     });
     const result = await response.json();
     if (!response.ok || !result.licenseKey) throw new Error(result.error || 'fulfillment_pending');

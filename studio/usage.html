@@ -105,6 +105,9 @@
   </main>
 
   <footer class="usage-footer"><span>MaterialLogix Studio™ · Customer usage</span><a href="../legal/privacy.html">Privacy</a><a href="../legal/terms.html">Terms</a><a href="../legal/refunds.html">Refunds</a></footer>
-  <script type="module" src="js/usage.js"></script>
+<script type="module" src="js/usage.js"></script>
+<!-- Redeems a paid Stripe return. Last, so a slow fulfilment lookup can
+     never hold up the page the customer just paid to reach. -->
+<script type="module" src="js/checkout-result.js"></script>
 </body>
 </html>

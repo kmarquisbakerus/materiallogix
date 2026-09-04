@@ -773,5 +773,8 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js');
 }
 </script>
+<!-- Redeems a paid Stripe return. Last, so a slow fulfilment lookup can
+     never hold up the page the customer just paid to reach. -->
+<script type="module" src="js/checkout-result.js"></script>
 </body>
 </html>

@@ -20,7 +20,7 @@ export async function mintLicence(plan = 'full', selectedProduct = null) {
 }
 
 /** A browser context with billing stubbed and, optionally, a licence installed. */
-export async function studioContext(browser, { licence = null, features = {}, authenticated = true } = {}) {
+export async function studioContext(browser, { licence = null, features = {}, authenticated = true, checkoutLicenceKey = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 1600, height: 1100 }, acceptDownloads: true });
   const api = [], downloads = [], errors = [];
 
@@ -44,6 +44,15 @@ export async function studioContext(browser, { licence = null, features = {}, au
       recent: [{ product: 'photo', artifact_kind: 'clean_export', requested_units: 1, included_units: 1, purchased_units: 0,
         status: 'settled', updated_at: 1772668800 }]
     });
+    // Redeeming a paid checkout. Without this route the return handler has
+    // nothing to exchange, and the customer stays unlicensed after paying.
+    // Accepts a function so a test can make fulfilment arrive late, the way a
+    // trailing Stripe webhook does.
+    if (path.startsWith('checkout/result')) {
+      const key = typeof checkoutLicenceKey === 'function' ? checkoutLicenceKey() : checkoutLicenceKey;
+      return key ? json({ licenseKey: key })
+        : route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'fulfillment_pending' }) });
+    }
     if (path.startsWith('wallet/auto-topup')) return json({ configured: false, settings: {} });
     if (path.startsWith('wallet/checkout')) return json({ url: 'https://checkout.stripe.test/journey' });
     if (path.startsWith('wallet')) return json({

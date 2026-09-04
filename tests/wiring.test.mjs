@@ -104,3 +104,42 @@ test('the service worker precache lists only files that exist', () => {
     });
   assert.deepEqual(missing, [], `the service worker precaches files that are not shipped: ${missing.join(', ')}`);
 });
+
+test('every page a paid customer can be returned to redeems the claim', () => {
+  // checkout-result.js shipped for weeks loaded by nothing at all: a customer
+  // paid, Stripe redirected them back, and no code ever exchanged the claim for
+  // a licence. The billing service picks the success URL, so every plausible
+  // landing page has to be able to finish the purchase.
+  const missing = ['studio/index.html', 'studio/voice.html', 'studio/usage.html', 'studio/admin.html']
+    .filter(page => !/checkout-result\.js/.test(read(page)));
+  assert.deepEqual(missing, [], `a paid return to these pages leaves the customer unlicensed: ${missing.join(', ')}`);
+  assert.match(read('checkout-site.js'), /checkout-result\.js/,
+    'the marketing homepage is a valid success URL too and must redeem a claim');
+});
+
+test('the claim redemption runs after the page it lands on has booted', () => {
+  // The module has a top-level await on a network call. Placed before the
+  // Studio's own scripts it holds the whole page on that request, and it
+  // executes before anything else has read the query string.
+  for (const page of ['studio/index.html', 'studio/voice.html', 'studio/usage.html', 'studio/admin.html']) {
+    const source = read(page);
+    const tags = [...source.matchAll(/<script[^>]*\btype="module"[^>]*>/gi)];
+    const last = tags[tags.length - 1];
+    assert.ok(/checkout-result\.js/.test(last[0]),
+      `${page} must load checkout-result.js last; it currently loads ${last[0]}`);
+  }
+});
+
+test('redeeming a claim strips only the claim from the address bar', () => {
+  // Clearing the whole query took the project id, the demo flag and the entry
+  // hint with it, so a customer returning to a specific project lost it.
+  const source = read('studio/js/checkout-result.js');
+  assert.ok(!/\.search\s*=\s*''/.test(source),
+    'the return handler must not blank the whole query string');
+  assert.match(source, /searchParams\.delete/);
+  for (const param of ['checkout', 'session_id', 'claim']) {
+    assert.ok(source.includes(`'${param}'`), `${param} must be removed from the address bar`);
+  }
+  assert.match(source, /AbortSignal\.timeout/,
+    'an unanswered fulfilment lookup must not hold the page open forever');
+});

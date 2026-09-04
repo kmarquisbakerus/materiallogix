@@ -206,6 +206,23 @@ rather than an implementation:
 | `POST /api/checkout/session` | `sku` of `<plan>_<term>`, e.g. `single_pro_photo_yearly` | The two Pro tiers are now buyable from the site. |
 | `POST /api/billing/portal` | the active licence key | Usage offers **Manage billing**; a subscription needs a way out as well as a way in. |
 | `GET /api/usage` | — | `license.plan` is rendered through `planLabel()`, so the service may keep sending plan ids. |
+| `GET /api/checkout/result?session_id=&claim=` | the pair Stripe returned in the success URL | Returns `{ licenseKey }` once the webhook has been processed, or a non-2xx with `{ error }` while it has not. This is the only thing that turns a payment into a licence. |
+
+### The Stripe success URL
+
+The billing service, not this repository, decides where Stripe returns the
+customer. `checkout-result.js` is therefore loaded on the marketing homepage
+(lazily, only when a claim is present) and on every Studio page - Studio,
+Voice, Usage and Operations - so any of those landing spots redeems the claim.
+**If the service is configured to return to a path not on that list, the
+customer pays and is never licensed.** Confirm the configured `success_url`
+before release.
+
+It is loaded last on each page on purpose: the module has a top-level `await`,
+so an earlier position would hold the whole page on a fulfilment lookup. The
+lookup carries a ten second timeout for the same reason. When the webhook
+trails the redirect the claim is held in `sessionStorage` and redeemed on the
+next visit; the journey suite drives both halves of that.
 
 Included cloud credit is declared in `CLOUD_CREDIT.includedCents` and spends on
 any cloud job. The client never decides what remains this period - it shows what

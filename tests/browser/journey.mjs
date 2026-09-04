@@ -402,6 +402,62 @@ try {
     await session.context.close();
   }
 
+  // ── Coming back from Stripe ──────────────────────────────────────────────
+  step('Return from checkout with a paid claim');
+  {
+    // checkout-result.js sat in the repository and was loaded by no page at
+    // all: a customer who paid was redirected back and never licensed. This
+    // drives the real return URL and reads the licence the app actually gates
+    // on, rather than trusting that the file exists.
+    const bought = await mintLicence('full');
+    let fulfilled = null;                       // the webhook has not landed yet
+    const buyer = await studioContext(browser, { checkoutLicenceKey: () => fulfilled });
+    // The minted key only verifies against the public key swapped at the edge.
+    await buyer.context.route('**/studio/js/license-key.js', route => route.fulfill({
+      status: 200, contentType: 'text/javascript',
+      body: `export const LICENSE_PUBLIC_JWK = ${JSON.stringify(bought.jwk)};`
+    }));
+    const page = buyer.page;
+
+    // 1. Fulfilment trails the redirect - the usual case for a card payment.
+    await page.goto(`${BASE}/index.html?dev=1&entry=0&checkout=success&session_id=cs_journey_001&claim=clm_journey_001`,
+      { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
+    await settle(page, 2500);
+    const lagging = await page.evaluate(() => ({
+      licensed: !!globalThis.lic,
+      held: JSON.parse(sessionStorage.getItem('materiallogix:pending-checkout') || 'null'),
+      search: location.search
+    }));
+    ok('a claim the service cannot fulfil yet is held, not lost',
+      !lagging.licensed && lagging.held?.claim === 'clm_journey_001',
+      `licensed=${lagging.licensed}, held=${JSON.stringify(lagging.held)}`);
+    ok('the one-time claim leaves the address bar but the page keeps its own query',
+      !/claim|session_id|checkout=/.test(lagging.search) && /dev=1/.test(lagging.search) && /entry=0/.test(lagging.search),
+      `search was "${lagging.search}"`);
+
+    // 2. The webhook lands. The next ordinary page load must finish the job
+    //    with no claim in the URL at all.
+    fulfilled = bought.key;
+    await page.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
+    await page.waitForFunction(() => !!globalThis.lic, null, { timeout: 20000 }).catch(() => {});
+    await settle(page, 1500);
+    const redeemed = await page.evaluate(() => ({
+      plan: globalThis.lic?.plan || null,
+      keyMatches: localStorage.getItem('cros:license'),
+      held: sessionStorage.getItem('materiallogix:pending-checkout')
+    }));
+    ok('the held claim is redeemed on the next visit and the licence goes live',
+      redeemed.plan === 'full' && redeemed.keyMatches === bought.key,
+      `plan ${redeemed.plan}`);
+    ok('the spent claim is not kept once it has been used', redeemed.held === null,
+      `sessionStorage held ${redeemed.held}`);
+
+    allErrors.push(...buyer.errors);
+    await buyer.context.close();
+  }
+
   // ── Offline ──────────────────────────────────────────────────────────────
   // ── What the renderer is actually told ───────────────────────────────────
   step('Watch what a render sends the engine');

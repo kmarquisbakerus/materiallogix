@@ -8,6 +8,16 @@ const ready = document.readyState === 'loading'
 
 await ready;
 
+// A paid Stripe return can land here just as easily as in the Studio - the
+// success URL is set by the billing service, not by this repository - so the
+// marketing page has to be able to redeem a claim too. Imported only when
+// there is one, so an ordinary visit pays nothing for it.
+let pendingClaim = false;
+try { pendingClaim = Boolean(sessionStorage.getItem('materiallogix:pending-checkout')); } catch { /* unavailable */ }
+if (new URLSearchParams(location.search).get('checkout') === 'success' || pendingClaim) {
+  await import('/studio/js/checkout-result.js?v=20260904');
+}
+
 const pricing = document.querySelector('#pricing');
 if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
   const style = document.createElement('style');
