@@ -199,7 +199,7 @@ export const CLOUD_PRICING = {
   // same thing can never quote different numbers. A cloud image used to be
   // $0.10 - less than a plain photo export - which paid a customer to route
   // work through our GPUs.
-  imageUpscale: { price: RENDER_PRICES.photo.cloud, unit: 'image', estimatedCost: 0.01, available: true },
+  imageUpscale: { price: RENDER_PRICES.photo.cloud, unit: 'image', estimatedCost: 0.01, available: false },
   // Cloud voice, so a long script does not tie up the customer's machine.
   // Synthesis is a tiny GPU job; almost all of its cost is pod lifecycle, which
   // the video measurement puts at about a fifth of $1.31. Derived, not
