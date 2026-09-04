@@ -483,6 +483,55 @@ try {
     await buyer.context.close();
   }
 
+  // ── The colour path, executed rather than assumed ────────────────────────
+  step('Decode a colour-managed photograph');
+  {
+    // `decodeColorManagedBlob` needs a canvas and a browser, so nothing in the
+    // unit suite executes it. An edit that called a function which does not
+    // exist - `readColorMetadata` for `inspectColorMetadata` - broke every
+    // Display P3 and HDR import, and 386 unit tests passed. This runs it.
+    const colour = await studioContext(browser, { comfyBase: COMFY, licence });
+    const page = colour.page;
+    await page.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
+    await settle(page, 2000);
+    const result = await page.evaluate(async () => {
+      const { decodeColorManagedBlob } = await import('./js/color-management.js');
+      const make = async space => {
+        const c = new OffscreenCanvas(120, 90);
+        const x = c.getContext('2d', space ? { colorSpace: space } : {});
+        x.fillStyle = '#c04030'; x.fillRect(0, 0, 120, 90);
+        return c.convertToBlob({ type: 'image/png' });
+      };
+      const out = {};
+      for (const [label, space] of [['p3', 'display-p3'], ['srgb', null]]) {
+        const blob = await make(space);
+        for (const pixels of [true, false]) {
+          try {
+            const managed = await decodeColorManagedBlob(blob, { pixels });
+            out[`${label}:${pixels}`] = managed
+              ? `${managed.w}x${managed.h} source=${managed.source ? 'canvas' : 'none'}`
+              : 'null';
+          } catch (error) {
+            out[`${label}:${pixels}`] = `THREW ${error.message}`;
+          }
+        }
+      }
+      return out;
+    });
+    const threw = Object.entries(result).filter(([, value]) => String(value).startsWith('THREW'));
+    ok('the colour decoder runs instead of throwing', threw.length === 0,
+      threw.length ? threw.map(([k, v]) => `${k} ${v}`).join('; ') : Object.entries(result).map(([k, v]) => `${k}=${v}`).join(' '));
+    // Dimensions without pixels is the whole point of the cheap path: it must
+    // report the same size and hand back no canvas.
+    const cheap = Object.entries(result).filter(([key]) => key.endsWith(':false'));
+    ok('asking for dimensions only returns no canvas',
+      cheap.every(([, value]) => value === 'null' || value.includes('source=none')),
+      cheap.map(([k, v]) => `${k}=${v}`).join(' '));
+    allErrors.push(...colour.errors);
+    await colour.context.close();
+  }
+
   // ── Offline ──────────────────────────────────────────────────────────────
   // ── What the renderer is actually told ───────────────────────────────────
   step('Watch what a render sends the engine');

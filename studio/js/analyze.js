@@ -8,6 +8,7 @@
 
 import { SURFACE_BY_ID } from './model.js';
 import { inspectColorMetadata } from './color-management.js';
+import { yieldToLoop } from './crop.js';
 import { count } from './plural.js';
 
 const SAMPLE_W = 256;   // analysis resolution: comparable scores across assets
@@ -629,7 +630,15 @@ export async function readProvenance(blob) {
 // --- the entry point -------------------------------------------------------
 
 export async function analyzeAsset(source, w, h, blob, colorTransform = null) {
+  // Everything that touches the source at its own resolution happens here, and
+  // on a 100 MP file that is a second of main thread the browser cannot break
+  // up. Grouping it means one yield puts the whole rest of the record — which
+  // only ever reads the 256px sample — behind a repaint, so the import dialog
+  // and the status region are not frozen for the duration.
   const s = sample(source, w, h);
+  const hash = dHash(source);
+  const hashMirror = dHash(source, true);
+  if (typeof document === 'undefined' || !document.hidden) await yieldToLoop();
   const gray = toGray(s);
   const lap = laplacian(gray, s.w, s.h);
   return {
@@ -639,8 +648,8 @@ export async function analyzeAsset(source, w, h, blob, colorTransform = null) {
     height: h,
     megapixels: +((w * h) / 1e6).toFixed(2),
     bytes: blob?.size || 0,
-    hash: dHash(source),
-    hashMirror: dHash(source, true),
+    hash,
+    hashMirror,
     sharpness: sharpnessScore(lap),
     exposure: exposure(s),
     cameraNoise: estimateCameraNoise(s),
