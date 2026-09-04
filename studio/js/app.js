@@ -39,7 +39,7 @@ import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecisio
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
 import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel,
-  laneFor, upscaleModelsForLane, LANES, unitsForDeliveries } from './pricing.js';
+  laneFor, upscaleModelsForLane, LANES, unitsForDeliveries, deliveryRulesFor, requiresWatermark } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
 import { pricingUrl } from './site-links.js';
@@ -1906,7 +1906,7 @@ function videoBlock(asset) {
 }
 
 
-function videoRenderPlan(asset) {
+function videoRenderPlan(asset, lane = LANES.paid) {
   const v = asset.video;
   const trim = resolveVideoTrim({ trimStart: v.trimStart, trimEnd: v.trimEnd, duration: asset.duration, speed: v.speed || 1 });
   const frame = deliveryFrame(v.spec);
@@ -1921,7 +1921,10 @@ function videoRenderPlan(asset) {
       trimStart: trim.start, trimEnd: trim.end, spec: v.spec || DEFAULT_VIDEO_SPEC, speed: trim.speed,
       fadeIn: v.fadeIn || 0, fadeOut: v.fadeOut || 0, rotate: v.rotate || 0,
       volumeDb: v.volumeDb || 0, denoise: !!v.denoise, audioEq: v.audioEq || 'flat',
-      burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments
+      burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments,
+      // The engine must mark an unlicensed render. Photo exports are stopped at
+      // the paywall and voice previews are audibly stamped; video had nothing.
+      delivery: deliveryRulesFor(lane, 'video')
     }
   };
 }
@@ -1979,7 +1982,9 @@ async function reviewCloudVideoRender(asset) {
     el('p', {}, 'Use this device to render your video for now.')),
   [btn('Close', 'btn', closeDialog), btn('Use local render', 'btn primary', () => { closeDialog(); renderEditedVideo(asset); })]);
   let plan;
-  try { plan = videoRenderPlan(asset); }
+  // The cloud render carries the same delivery rules as the local one, so a
+  // licence cannot be bypassed by sending the job to our GPUs instead.
+  try { plan = videoRenderPlan(asset, laneFor(await activeLicense(), 'video')); }
   catch (error) { return toast(error.message, true); }
   const quote = quoteCloudJob({ kind: 'video', durationSeconds: plan.outputSeconds });
   // What the licence includes is known here; what remains this period is the
@@ -2042,9 +2047,14 @@ async function renderEditedVideo(asset) {
   if (asset.video.burnCaptions && !bridge.video?.whisper) {
     return toast('Captions need the optional Video pack; add it or turn captions off.', true);
   }
+  const lane = laneFor(await activeLicense(), 'video');
   let plan;
-  try { plan = videoRenderPlan(asset); }
+  try { plan = videoRenderPlan(asset, lane); }
   catch (error) { return toast(error.message, true); }
+  // An engine that cannot mark the file must not be handed an unmarked one.
+  if (requiresWatermark(lane, 'video') && !bridge.video?.watermark) {
+    return toast('This device cannot add the preview watermark that an unlicensed render requires. Activate a Video plan, or update the Video pack.', true);
+  }
   const opts = { ...plan.opts, resume: true };
   const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload', quantity: 1 });
   if (!authorization.ok) return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);

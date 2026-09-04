@@ -245,3 +245,41 @@ catalogue or priced differently in it.
 
 Cloud jobs are deliberately absent from the catalogue: they meter against the
 prepaid wallet, and the only Stripe product behind them is the top-up.
+
+## Watermarks
+
+Three products, three protections. Two of them worked; the third did not exist.
+
+| | Unlicensed output | Applied by |
+| --- | --- | --- |
+| Photo | export blocked at the paywall; proof packages carry a full-frame diagonal watermark and a 960px cap | `applyProofWatermark` in `crop.js`, called from `export.js` |
+| Audio | spoken preview mark at the start, the middle and the end, so no crop removes all three | `stampPreview` in `voice.js`, called from `voice.html` |
+| Video | **nothing** - the local renderer returned a clean MP4 to anybody | now `deliveryRulesFor` |
+
+The free lane had always declared its video export as "proof only (visual +
+audible watermark, 720p)". That was a sentence in a config object, and nothing
+read it. `videoRenderPlan` built its options without consulting a licence at
+all, and `renderEditedVideo` had no `covers()` check, so an unlicensed customer
+could render a finished, unmarked, full-resolution video.
+
+The lane's export descriptors are structured instructions now, not prose, and
+the render plan carries them to the engine. Both callers - the local render and
+the cloud render - pass the lane, so the licence cannot be bypassed by sending
+the job to our GPUs instead. An unknown or suspended lane resolves to the
+strictest rules, never the loosest.
+
+**Contract for the local bridge and the cloud worker.** `opts.delivery` arrives
+on every video render:
+
+```
+{ clean: false, watermark: { visual: true, audible: true }, maxHeight: 720 }
+```
+
+An engine that cannot honour it must fail the job rather than return an
+unmarked file. The client refuses to start a marked render against a bridge
+that does not report `video.watermark`, so an old Video pack cannot be used to
+launder a clean render - but the engine must enforce it too, because the client
+is not the security boundary.
+
+The audible mark matters as much as the visual one: a visual-only watermark is
+removed by cropping, and an audio-only one by muting. Video needs both.

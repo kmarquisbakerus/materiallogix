@@ -7,7 +7,7 @@ import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
   CLOUD_VIDEO, CLOUD_VOICE, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit,
-  exportUnits, unitsForDeliveries, UNITS_PER_VIDEO_MINUTE
+  exportUnits, unitsForDeliveries, UNITS_PER_VIDEO_MINUTE, deliveryRulesFor, requiresWatermark
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
@@ -136,8 +136,9 @@ test('the wallet range is declared once and enforced from that declaration', () 
 
 test('the free lane can never deliver a clean file, and a paid lane always can', () => {
   assert.equal(laneFor(null, 'photo'), LANES.free);
-  assert.match(LANES.free.imageExport, /proof/i);
-  assert.match(LANES.free.videoExport, /proof/i);
+  assert.equal(LANES.free.imageExport.clean, false);
+  assert.equal(LANES.free.videoExport.clean, false);
+  assert.match(LANES.free.videoExport.label, /proof/i);
   assert.equal(LANES.free.voice.stamped, true, 'free voice must stay watermarked');
   assert.equal(laneFor({ plan: 'full' }, 'photo'), LANES.paid);
   assert.equal(laneFor({ plan: 'single', selected_product: 'photo' }, 'photo'), LANES.paid);
@@ -277,4 +278,41 @@ test('a delivery spends units by what it actually is', () => {
   assert.ok(!/quantity: pairs\.length/.test(packageCall), 'the package must not bill per placement');
   assert.equal((source.match(/artifactKind: 'client_review', quantity: pairs\.length/g) || []).length, 1);
   assert.equal((source.match(/artifactKind: 'contact_sheet', quantity: pairs\.length/g) || []).length, 1);
+});
+
+test('an unlicensed render is marked, and the rule reaches the engine', () => {
+  // "proof only (visual + audible watermark, 720p)" was a sentence in a config
+  // object that nothing read. Photo exports were stopped at the paywall and
+  // voice previews were audibly stamped; video shipped a clean MP4 to anybody.
+  const free = laneFor(null, 'video');
+  const paid = laneFor({ plan: 'full' }, 'video');
+  assert.equal(requiresWatermark(free, 'video'), true);
+  assert.equal(requiresWatermark(paid, 'video'), false);
+
+  const rules = deliveryRulesFor(free, 'video');
+  assert.equal(rules.clean, false);
+  assert.equal(rules.watermark.visual, true, 'a video proof needs a visible mark');
+  assert.equal(rules.watermark.audible, true, 'and an audible one, so a muted crop is still marked');
+  assert.equal(rules.maxHeight, 720);
+  assert.equal(deliveryRulesFor(paid, 'video').clean, true);
+
+  // A photo proof is marked too, and capped.
+  assert.equal(requiresWatermark(free, 'photo'), true);
+  assert.equal(deliveryRulesFor(free, 'photo').maxEdge, 960);
+  assert.equal(deliveryRulesFor(paid, 'photo').clean, true);
+
+  // A suspended licence and an unrecognised lane both fall to the strictest
+  // rules, never the loosest.
+  assert.equal(requiresWatermark(laneFor({ plan: 'suspended:pro' }, 'video'), 'video'), true);
+  assert.equal(deliveryRulesFor(null, 'video').clean, false);
+  assert.equal(deliveryRulesFor(undefined, 'photo').clean, false);
+
+  const source = read('studio/js/app.js');
+  assert.match(source, /delivery: deliveryRulesFor\(lane, 'video'\)/, 'the render plan must carry the rules');
+  assert.match(source, /requiresWatermark\(lane, 'video'\) && !bridge\.video\?\.watermark/,
+    'an engine that cannot mark the file must not be handed an unmarked one');
+  const callers = source.match(/plan = videoRenderPlan\(asset(?:,|\))/g) || [];
+  assert.equal(callers.length, 2, 'the local and the cloud render are the two callers');
+  assert.ok(callers.every(call => call.endsWith(',')), 'every render must pass the lane');
+  assert.ok(!/videoRenderPlan\(asset\)/.test(source), 'no render may default to the clean lane');
 });

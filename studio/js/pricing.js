@@ -361,16 +361,19 @@ export const LANES = {
     label: 'Preview lane',
     voice: { maxWords: 60, stamped: true, knobs: true, batch: false, multiTake: false },
     upscale: { model: 'realesr-animevideov3-x2', factor: '2×' },
-    imageExport: 'proof only (watermark + 960px)',
-    videoExport: 'proof only (visual + audible watermark, 720p)',
+    // Prose the renderer cannot act on is how the video watermark went missing.
+    // These are instructions now, and the render plan carries them.
+    imageExport: { clean: false, watermark: 'full-frame', maxEdge: 960, label: 'proof only (watermark + 960px)' },
+    videoExport: { clean: false, watermark: { visual: true, audible: true }, maxHeight: 720,
+      label: 'proof only (visual + audible watermark, 720p)' },
     packs: 0, clientLinks: 0
   },
   paid: {
     label: 'Studio lane',
     voice: { maxWords: Infinity, stamped: false, knobs: true, batch: true, multiTake: true },
     upscale: { model: 'realesrgan-x4plus', factor: '4×' },
-    imageExport: 'clean, full resolution',
-    videoExport: 'clean, platform spec',
+    imageExport: { clean: true, watermark: null, maxEdge: null, label: 'clean, full resolution' },
+    videoExport: { clean: true, watermark: null, maxHeight: null, label: 'clean, platform spec' },
     packs: 5, clientLinks: 25
   }
 };
@@ -393,6 +396,34 @@ export const VOICE_STARTER_LANE = Object.freeze({
   packs: 1,
   clientLinks: 0
 });
+
+/**
+ * How a lane must deliver a finished file.
+ *
+ * The free lane has always said its video export is "proof only (visual +
+ * audible watermark, 720p)". It was a sentence in a config object that nothing
+ * read, and the local renderer shipped a clean MP4 to anybody: photo exports
+ * were blocked at the paywall and voice previews were audibly stamped, but
+ * video had no protection at all.
+ *
+ * The render plan carries this to the engine. A caller that cannot apply it
+ * must refuse the render rather than deliver an unmarked file.
+ */
+export function deliveryRulesFor(lane, kind) {
+  const rules = kind === 'video' ? lane?.videoExport : lane?.imageExport;
+  if (!rules || typeof rules !== 'object') {
+    // An unknown lane is treated as the most restrictive one, never the least.
+    return kind === 'video'
+      ? { ...LANES.free.videoExport }
+      : { ...LANES.free.imageExport };
+  }
+  return { ...rules };
+}
+
+/** True when this lane's output must carry a watermark of any kind. */
+export function requiresWatermark(lane, kind) {
+  return deliveryRulesFor(lane, kind).clean !== true;
+}
 
 /**
  * Units one delivery spends out of a plan's monthly allowance.
