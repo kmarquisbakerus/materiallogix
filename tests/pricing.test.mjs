@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
-  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice
+  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane
 } from '../studio/js/pricing.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,18 +42,25 @@ test('cloud work is quoted in whole billing blocks, rounded once per job', () =>
   assert.ok(over.amountCents > exact.amountCents);
 });
 
-test('an image job bills per image and a voice job bills per minute', () => {
+test('an image job bills per image, at the declared rate', () => {
+  // The image branch billed a hard-coded ten cents, so the declared price and
+  // the quote could disagree without anything noticing.
   const images = quoteCloudJob({ kind: 'image', imageCount: 3 });
   assert.equal(images.blocks, 3);
-  assert.equal(images.amountCents, 30);
+  assert.equal(images.amountCents, Math.round(3 * CLOUD_PRICING.imageUpscale.price * 100));
   assert.equal(quoteCloudJob({ kind: 'image', imageCount: 0 }).blocks, 1, 'a job is never free by rounding to zero');
-  const voice = quoteCloudJob({ kind: 'voice', durationSeconds: 60 });
-  assert.equal(voice.amountCents, Math.round(CLOUD_PRICING.voiceRender.price * 100));
+});
+
+test('a service with no cloud endpoint is refused, not priced', () => {
+  // Voice runs entirely on the customer's machine. Quoting a cloud minute
+  // would sell a render there is nothing to run.
+  assert.equal(CLOUD_PRICING.voiceRender.available, false);
+  assert.throws(() => quoteCloudJob({ kind: 'voice', durationSeconds: 60 }), /no cloud voice service/);
 });
 
 test('a quote is never negative or NaN, whatever it is handed', () => {
   for (const input of [{ kind: 'video', durationSeconds: -10 }, { kind: 'video', durationSeconds: NaN },
-                       { kind: 'video' }, { kind: 'voice', durationSeconds: 'x' }, { kind: 'image', imageCount: -4 }]) {
+                       { kind: 'video' }, { kind: 'image', imageCount: -4 }]) {
     const quote = quoteCloudJob(input);
     assert.ok(Number.isFinite(quote.amountCents) && quote.amountCents >= 0, JSON.stringify(input));
   }
@@ -73,8 +80,12 @@ test('wallet cents convert only into time the customer can actually spend', () =
 });
 
 test('the cloud price of a job always covers its estimated cost', () => {
-  for (const key of ['imageUpscale', 'voiceRender', 'videoUpscale']) {
-    const rate = CLOUD_PRICING[key];
+  for (const [key, rate] of Object.entries(CLOUD_PRICING)) {
+    if (!rate || typeof rate !== 'object' || !('available' in rate)) continue;
+    if (!rate.available) {
+      assert.equal(rate.price, null, `${key} is unavailable but still carries a price`);
+      continue;
+    }
     assert.ok(Number.isFinite(rate.estimatedCost), `${key} has no cost to price against`);
     assert.ok(rate.price > rate.estimatedCost, `${key} is sold below its estimated cost`);
   }
@@ -132,4 +143,25 @@ test('a suspended or missing licence has no monthly allowance', () => {
   assert.equal(planRemaining(null), 0);
   assert.equal(planRemaining({ plan: 'suspended:full' }), MONTHLY_UNITS.full, 'the suffix is stripped, not treated as a new plan');
   assert.equal(planRemaining({ plan: 'not-a-plan' }), 0);
+});
+
+test('the upscale wall is a gate, not a sentence', () => {
+  // The Enhance dialog listed every installed model and preselected the 4x one
+  // for everybody, under a line of text claiming a plan was required. A free
+  // preview could pick the licensed model straight off the menu.
+  const installed = ['RealESRGAN_x4plus.pth', 'realesr-animevideov3-x2.pth', 'cpu-lanczos-x4'];
+  const offered = license => upscaleModelsForLane(laneFor(license, 'photo'), installed);
+  assert.deepEqual(offered(null), ['realesr-animevideov3-x2.pth'], 'free preview is offered the 2x model only');
+  assert.deepEqual(offered({ plan: 'full' }), ['RealESRGAN_x4plus.pth']);
+  assert.deepEqual(offered({ plan: 'pro' }), ['RealESRGAN_x4plus.pth']);
+  assert.deepEqual(offered({ plan: 'suspended:pro' }), ['realesr-animevideov3-x2.pth'],
+    'a suspended licence falls back to the preview lane');
+  assert.deepEqual(offered({ plan: 'single', selected_product: 'video' }), ['realesr-animevideov3-x2.pth'],
+    'a Video-only plan does not unlock the Photo model');
+  assert.deepEqual(upscaleModelsForLane(LANES.paid, []), [], 'nothing installed offers nothing');
+
+  const source = read('studio/js/app.js');
+  assert.match(source, /upscaleModelsForLane\(/, 'the Enhance dialog must filter by lane');
+  assert.ok(!/models\.find\(m => \/realesrgan-x4plus\$\/\.test\(m\)\)/.test(source),
+    'the dialog must not reach past the lane for a better model');
 });

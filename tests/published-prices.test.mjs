@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, PAY_PER_EXPORT, CLOUD_PRICING, MONTHLY_UNITS, PREMIUM_VOICE, LANES, laneFor,
   EXPORT_PRODUCTS, exportPrice, UNIT_PRICE, CLOUD_CREDIT, includedCloudCents, applyCloudCredit,
-  walletTopUpCents, quoteCloudJob, planLabel
+  walletTopUpCents, quoteCloudJob, planLabel, RENDER_PRICES
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
@@ -222,8 +222,15 @@ test('the site quotes the video export price the code charges', () => {
   assert.equal(exportPrice('export_video').total, advertised);
 });
 
-test('included cloud credit spends on any cloud job, not only video', () => {
-  assert.deepEqual([...CLOUD_CREDIT.spendableOn].sort(), ['image', 'video', 'voice']);
+test('included cloud credit spends on every cloud job that exists', () => {
+  // It used to be video-only, which was useless to a customer who bought
+  // Photo. It must not swing the other way and promise cloud voice, which has
+  // no endpoint to spend it on.
+  assert.deepEqual([...CLOUD_CREDIT.spendableOn].sort(), ['image', 'video']);
+  for (const kind of CLOUD_CREDIT.spendableOn) {
+    const rate = kind === 'image' ? CLOUD_PRICING.imageUpscale : CLOUD_PRICING.videoUpscale;
+    assert.equal(rate.available, true, `credit is offered for ${kind}, which is not available`);
+  }
   const advertised = Number(/\$(\d+) of cloud credit each paid period/.exec(site)?.[1]);
   assert.ok(advertised, 'the site no longer states an included cloud credit');
   for (const plan of ['single', 'single_pro', 'full', 'pro']) {
@@ -352,4 +359,51 @@ test('the account panels are styled by name, not by position', () => {
     assert.ok(css.includes(`.${name}`), `${name} has no style`);
     assert.ok(markup.includes(name), `${name} is not on any panel`);
   }
+});
+
+// ── the price ladder ────────────────────────────────────────────────────────
+
+test('cloud always costs more than the customer own machine', () => {
+  // Local renders cost us nothing; cloud renders cost GPU time. A cloud photo
+  // used to be $0.10 against a $2.99 photo export, which paid a customer to
+  // route work through our GPUs.
+  for (const [product, rate] of Object.entries(RENDER_PRICES)) {
+    assert.ok(rate.local > 0, `${product} has no local price`);
+    if (rate.cloud === null) continue;
+    assert.ok(rate.cloud > rate.local,
+      `${product}: cloud $${rate.cloud} is not dearer than local $${rate.local}`);
+  }
+});
+
+test('nobody without a plan pays less than somebody with one', () => {
+  // The no-plan price and the rate a plan's wallet is charged are the same
+  // number. A plan only ever does better, through included credit and the Pro
+  // top-up discount. A cheaper no-plan price would pay customers to cancel.
+  assert.equal(CLOUD_PRICING.imageUpscale.price, RENDER_PRICES.photo.cloud);
+  assert.equal(CLOUD_PRICING.videoUpscale.price, RENDER_PRICES.video.cloud);
+  for (const item of EXPORT_PRODUCTS) {
+    assert.equal(exportPrice(item.id).total, RENDER_PRICES[item.product].local,
+      `${item.id} is not sold at its ladder price`);
+  }
+  const jobCents = quoteCloudJob({ kind: 'video', durationSeconds: 60 }).amountCents;
+  assert.equal(jobCents, Math.round(RENDER_PRICES.video.cloud * 100),
+    'a cloud job quotes a different number than the ladder publishes');
+  // A plan's advantage is credit and discount, never a lower list price.
+  assert.ok(includedCloudCents({ plan: 'full' }) > 0, 'a paid plan must get credit');
+  assert.ok(walletTopUpCents(10000, { plan: 'pro' }).chargedCents < 10000, 'Pro must get its discount');
+  assert.equal(walletTopUpCents(10000, null).chargedCents, 10000, 'no plan means no discount');
+});
+
+test('the site quotes the ladder, not a number of its own', () => {
+  const shown = {
+    photo: Number(/a photo from \$([0-9.]+)/.exec(site)?.[1]),
+    voice: Number(/a minute of audio from \$([0-9.]+)/.exec(site)?.[1]),
+    video: Number(/a minute of video from \$([0-9.]+)/.exec(site)?.[1])
+  };
+  for (const [product, amount] of Object.entries(shown)) {
+    assert.equal(amount, RENDER_PRICES[product].local, `the site quotes ${product} at $${amount}`);
+  }
+  const floor = Math.min(...Object.values(RENDER_PRICES).map(rate => rate.local));
+  assert.equal(PAY_PER_EXPORT.price, floor);
+  assert.equal(Number(/Exports from \$([0-9.]+)\./.exec(site)?.[1]), floor, 'the advertised floor is not the cheapest thing sold');
 });

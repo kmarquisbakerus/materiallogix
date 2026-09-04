@@ -50,12 +50,15 @@ async function api(path, options = {}) {
 function renderRules() {
   const refillCents = cents(walletAmount);
   const refillSeconds = cloudVideoSecondsForCents(refillCents);
-  // The wallet buys any cloud job, so the estimate covers all three rather
-  // than quoting video alone.
-  const photos = Math.floor(refillCents / Math.round(CLOUD_PRICING.imageUpscale.price * 100));
-  const voiceMinutes = Math.floor(refillCents / Math.round(CLOUD_PRICING.voiceRender.price * 100));
+  // The wallet buys any cloud job that exists. Voice has no cloud endpoint, so
+  // the estimate must not offer minutes of it.
+  const buys = [`${videoTime(refillSeconds)} of Video`];
+  for (const rate of [CLOUD_PRICING.imageUpscale]) {
+    if (!rate.available || !Number.isFinite(rate.price)) continue;
+    buys.push(count(Math.floor(refillCents / Math.round(rate.price * 100)), 'photo'));
+  }
   document.querySelector('#walletEstimate').textContent = Number.isInteger(refillCents) && refillCents >= REFILL_MIN_CENTS && refillCents <= REFILL_MAX_CENTS
-    ? `That buys about ${videoTime(refillSeconds)} of Video, or ${count(voiceMinutes, 'minute')} of Voice, or ${count(photos, 'photo')} upscaled — whichever you use it on. Each completed video package rounds once to 10 seconds.`
+    ? `That buys about ${buys.join(', or ')} — whichever you use it on. Each completed video package rounds once to 10 seconds.`
     : `Choose an amount from ${money(REFILL_MIN_CENTS)} through ${money(REFILL_MAX_CENTS)} to see what it buys.`;
   document.querySelector('#autoRules').textContent = `If the verified cloud balance is at or below ${money(cents(autoThreshold))}, add exactly ${money(cents(autoRefill))}. Never spend more than ${money(cents(autoCap))} on automatic refills in a calendar month. A 15-minute cooldown, idempotency, and failure pause prevent refill loops. You can disable this immediately.`;
   document.querySelector('#walletRefill').textContent = `Review ${money(cents(walletAmount))} refill`;
@@ -159,7 +162,7 @@ function renderPlan(license) {
   const creditCents = includedCloudCents(license);
   const parts = [`Current plan: ${planLabel(plan)}.`];
   if (units) parts.push(`${units.toLocaleString()} production units each month.`);
-  if (creditCents) parts.push(`${money(creditCents)} of cloud credit each paid period, spendable on photo, video or voice.`);
+  if (creditCents) parts.push(`${money(creditCents)} of cloud credit each paid period, spendable on photo or video.`);
   parts.push(plan
     ? 'Manage billing opens the secure Stripe portal, where you can change your payment method, switch term, or cancel.'
     : 'Activate a licence in the Studio to manage billing here.');

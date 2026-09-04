@@ -88,18 +88,40 @@ export const MONTHLY_UNITS = { voice_starter: 30, single: 500, single_pro: 500, 
 // four because it is four times the work.
 export const UNIT_PRICE = 2.99;
 
+/**
+ * What one finished thing costs, by where it is made. This is the whole price
+ * ladder in one place: everything else on this page reads it.
+ *
+ * Two rules hold it together, and both are tested:
+ *
+ *   1. Cloud costs more than local, for the same deliverable. Local runs on the
+ *      customer's own machine and costs us nothing; cloud runs on our GPUs.
+ *   2. Nobody without a plan pays less than somebody with one. These are the
+ *      no-plan prices, and they are the same numbers a plan's wallet is
+ *      charged - a plan only ever does better, through its included credit and
+ *      the Pro top-up discount. A cheaper no-plan price would pay customers to
+ *      cancel.
+ *
+ * Voice has no cloud price because it has no cloud endpoint: voice runs
+ * entirely on the customer's machine. Pricing a cloud minute we cannot render
+ * would be selling something that does not exist.
+ */
+export const RENDER_PRICES = Object.freeze({
+  photo: Object.freeze({ local: 2.99, cloud: 3.99, per: 'image' }),
+  video: Object.freeze({ local: 4.99, cloud: 5.99, per: 'minute' }),
+  voice: Object.freeze({ local: 2.99, cloud: null, per: 'minute' })
+});
+
 // Price is a separate decision from metering. A one-off video minute is sold at
-// $4.99, not at four units of list, because a customer buying a single minute
-// without a plan is not buying four photos. Rendering it in the cloud is the
-// dearer product and carries its own rate; this is the price of a minute
-// finished on the customer's own machine, which costs nothing to serve.
+// its ladder price, not at four units of list, because a customer buying a
+// single minute without a plan is not buying four photos.
 //
 // These ids are the checkout SKUs. The billing service must accept all three;
 // a SKU it does not know is a checkout that fails after the customer clicked.
 export const EXPORT_PRODUCTS = Object.freeze([
-  Object.freeze({ id: 'export_image', product: 'photo', units: 1, price: 2.99, per: 'image', label: 'One clean photo export' }),
-  Object.freeze({ id: 'export_audio', product: 'voice', units: 1, price: 2.99, per: 'minute', label: 'One clean minute of audio' }),
-  Object.freeze({ id: 'export_video', product: 'video', units: 4, price: 4.99, per: 'minute', label: 'One clean minute of video' })
+  Object.freeze({ id: 'export_image', product: 'photo', units: 1, price: RENDER_PRICES.photo.local, per: 'image', label: 'One clean photo export' }),
+  Object.freeze({ id: 'export_audio', product: 'voice', units: 1, price: RENDER_PRICES.voice.local, per: 'minute', label: 'One clean minute of audio' }),
+  Object.freeze({ id: 'export_video', product: 'video', units: 4, price: RENDER_PRICES.video.local, per: 'minute', label: 'One clean minute of video' })
 ]);
 
 export const EXPORT_PRODUCT_BY_ID = Object.fromEntries(EXPORT_PRODUCTS.map(item => [item.id, item]));
@@ -164,13 +186,18 @@ export const PREMIUM_VOICE = Object.freeze({
 // amount before submission and settle the actual amount afterward. Local work
 // never draws from this balance.
 export const CLOUD_PRICING = {
-  imageUpscale: { price: 0.10, unit: 'image', estimatedCost: 0.01 },
-  voiceRender: { price: 0.25, unit: 'minute', estimatedCost: 0.10 },
-  // A cloud minute is the dear one: it runs on our GPUs, where a minute
-  // finished on the customer's own machine costs us nothing. Measured at
-  // $1.31 per output minute for native 4K on a community RTX 4090 pool at
-  // $0.34/hr - see MEASURED_VIDEO_COST for what that measurement is worth.
-  videoUpscale: { price: 6.99, unit: 'output minute', estimatedCost: 1.31 },
+  // Rates come from the ladder, so a cloud job and a no-plan purchase of the
+  // same thing can never quote different numbers. A cloud image used to be
+  // $0.10 - less than a plain photo export - which paid a customer to route
+  // work through our GPUs.
+  imageUpscale: { price: RENDER_PRICES.photo.cloud, unit: 'image', estimatedCost: 0.01, available: true },
+  // Voice has no cloud endpoint. It stays declared and unavailable rather than
+  // priced, so nothing offers a minute we cannot render.
+  voiceRender: { price: null, unit: 'minute', estimatedCost: null, available: false },
+  // Measured at $1.31 per output minute for native 4K on a community RTX 4090
+  // pool at $0.34/hr - see MEASURED_VIDEO_COST for what that measurement is
+  // worth.
+  videoUpscale: { price: RENDER_PRICES.video.cloud, unit: 'output minute', estimatedCost: 1.31, available: true },
   minimumRefill: 10,
   maximumRefill: 500,
   prepaidOnly: true,
@@ -193,12 +220,16 @@ export function cloudVideoSecondsForCents(amountCents) {
  * never once per frame or clip. Money is returned in cents for safe billing. */
 export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
   if (kind === 'image') {
+    // This used to bill a hard-coded ten cents, so moving the declared price
+    // moved the site and left every quote where it was.
     const count = Math.max(1, Math.ceil(Number(imageCount) || 0));
-    return { kind, billedSeconds: 0, blocks: count, amountCents: count * 10 };
+    return { kind, billedSeconds: 0, blocks: count,
+      amountCents: Math.round(count * CLOUD_PRICING.imageUpscale.price * 100) };
   }
+  const rate = kind === 'voice' ? CLOUD_PRICING.voiceRender.price : CLOUD_PRICING.videoUpscale.price;
+  if (!Number.isFinite(rate)) throw new Error(`There is no cloud ${kind} service to quote.`);
   const seconds = Math.max(0, Number(durationSeconds) || 0);
   const billedSeconds = Math.ceil(seconds / CLOUD_BILLING_INCREMENT_SECONDS) * CLOUD_BILLING_INCREMENT_SECONDS;
-  const rate = kind === 'voice' ? CLOUD_PRICING.voiceRender.price : CLOUD_PRICING.videoUpscale.price;
   return {
     kind,
     billedSeconds,
@@ -230,7 +261,7 @@ export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
   includedEquivalentSeconds: 200,
-  pricePerMinute: 6.99,
+  pricePerMinute: RENDER_PRICES.video.cloud,
   productionEnabled: false
 };
 
@@ -239,7 +270,8 @@ export const CLOUD_VIDEO = {
 // customer who bought Photo has no use for credit that only buys video.
 export const CLOUD_CREDIT = Object.freeze({
   includedCents: Object.freeze({ voice_starter: 0, single: 2000, single_pro: 2000, full: 2000, pro: 2000 }),
-  spendableOn: Object.freeze(['image', 'voice', 'video']),
+  // Credit spends on the cloud jobs that exist. Voice is not one of them.
+  spendableOn: Object.freeze(['image', 'video']),
   freeUpscalePlans: Object.freeze(['pro']),
   walletDiscount: Object.freeze({ pro: 0.2 })
 });
@@ -324,6 +356,23 @@ export const VOICE_STARTER_LANE = Object.freeze({
   packs: 1,
   clientLinks: 0
 });
+
+/**
+ * The upscale models a lane may use, filtered from what the engine has
+ * installed. The Enhance dialog used to list every installed model and preselect
+ * the 4x one for everybody, while a line of text underneath claimed that
+ * "licensed Photo plans unlock 4x" - so the wall was a sentence, not a gate.
+ *
+ * A lane names the model it is entitled to. Anything the lane does not name is
+ * withheld. If the engine has nothing matching, the caller gets an empty list
+ * and must say so rather than quietly serving a better model.
+ */
+export function upscaleModelsForLane(lane, installed = []) {
+  const entitled = String(lane?.upscale?.model || '');
+  if (!entitled) return [];
+  const wanted = entitled.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return installed.filter(name => String(name).replace(/[^a-z0-9]/gi, '').toLowerCase().includes(wanted));
+}
 
 export function laneFor(license, product) {
   if (!license) return LANES.free;

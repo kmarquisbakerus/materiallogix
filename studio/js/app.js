@@ -38,7 +38,8 @@ import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './c
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
-import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel } from './pricing.js';
+import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel,
+  laneFor, upscaleModelsForLane, LANES } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
 import { pricingUrl } from './site-links.js';
@@ -2028,7 +2029,7 @@ async function reviewCloudVideoRender(asset) {
   dialog('Review cloud render', el('div', {},
     el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds.`),
     el('p', { className: 'hint' }, includedCredit
-      ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo, video or voice. It is used before your wallet; the server settles the actual amount.`
+      ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo or video. It is used before your wallet; the server settles the actual amount.`
       : 'This job is paid from your prepaid wallet. The server settles the actual amount.'),
     el('label', { className: 'checkline' }, consent,
       el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are scheduled for deletion within 24 hours.'))),
@@ -3279,20 +3280,27 @@ async function upscaleAsset(asset) {
       return toast('Add the Photo enhancement pack in Workspace, then try again.', true);
     }
   }
+  // The licence decides which models are on the menu. The dialog used to list
+  // everything installed and preselect 4x for everyone, with a line of text
+  // claiming a plan was required - a sentence where a gate belonged.
+  const lane = laneFor(lic, 'photo');
+  const entitled = upscaleModelsForLane(lane, models);
+  if (!entitled.length) {
+    return toast(covers(lic, 'photo')
+      ? 'This device does not have the enhancement model your plan uses. Add the Photo enhancement pack in Workspace.'
+      : `Free preview enhances at ${lane.upscale.factor}, and that model is not installed on this device.`, true);
+  }
   const pick = el('select', {});
-  const preferredModel = models.find(m => /realesrgan-x4plus$/.test(m))
-    || models.find(m => /cpu-lanczos-x4$/.test(m))
-    || models[0];
-  for (const [index, m] of models.entries()) pick.append(el('option', {
+  for (const [index, m] of entitled.entries()) pick.append(el('option', {
     value: m,
-    selected: m === preferredModel
+    selected: index === 0
   }, `Enhancement quality ${index + 1}`));
   dialog('Enhance photo',
     el('div', {},
       el('p', { className: 'hint' },
         'Choose the final size; MaterialLogix will add a linked copy and check it automatically.'),
       !covers(lic, 'photo') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
-        'Preview supports 2×; licensed Photo plans unlock 4×.') : null,
+        `Free preview enhances at ${LANES.free.upscale.factor}; licensed Photo plans unlock ${LANES.paid.upscale.factor}.`) : null,
       el('label', { className: 'field' }, el('span', {}, 'Quality'), pick)),
     [btn('Cancel', 'btn', closeDialog),
      btn('Upscale', 'btn primary', async () => {

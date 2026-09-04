@@ -48,12 +48,37 @@ matches it exactly, and a test fails the build if the two ever disagree again -
 on a plan, a term price, the pay-per-export price, the wallet range, the Voice
 Starter allowance, or the premium voice rate.
 
+### The price ladder
+
+`RENDER_PRICES` is the whole ladder, and everything reads it:
+
+| | On the customer's machine | In the cloud |
+| --- | --- | --- |
+| One clean photo | **$2.99** | **$3.99** |
+| One clean minute of audio | **$2.99** | no cloud voice endpoint |
+| One clean minute of video | **$4.99** | **$5.99** |
+
+Two rules hold it together, both tested:
+
+1. **Cloud costs more than local**, for the same deliverable. A cloud image was
+   $0.10 against a $2.99 photo export, which paid a customer to route work
+   through our GPUs.
+2. **Nobody without a plan pays less than somebody with one.** The no-plan price
+   and the rate a plan's wallet is charged are the same number; a plan only ever
+   does better, through its included credit and the Pro top-up discount. A
+   cheaper no-plan price would pay customers to cancel.
+
+Voice has no cloud price because it has no cloud endpoint - voice runs entirely
+on the customer's machine. `voiceRender` is declared `available: false` with a
+null price, `quoteCloudJob` refuses it, and the wallet no longer offers minutes
+of it. Included credit therefore spends on photo and video only, and the site
+says so.
+
 ### A video minute has two prices, because it has two costs
 
 A minute finished on the customer's own machine costs us nothing to serve, and
 sells for **$4.99** with no plan. A minute rendered in the cloud runs on our
-GPUs and sells for **$6.99**. The cloud minute must always be the dearer of the
-two; a test fails the build if it is not.
+GPUs and sells for **$5.99**.
 
 Price and metering are now separate. A video minute still spends **four units**
 of a plan's monthly allowance, because it is four times the work of an image -
@@ -62,7 +87,7 @@ the previous $11.96 came from.
 
 The only measured cost in the model is `MEASURED_VIDEO_COST`: **$1.31 per
 output minute** for native 4K on a community RTX 4090 pool at $0.34/hr, which
-leaves 81% at $6.99. That figure is extrapolated from **a single ten-second
+leaves 78% at $5.99. That figure is extrapolated from **a single ten-second
 run** and the sixty-second checkpoint has never been run. Roughly a fifth of the
 cost is fixed pod lifecycle, so longer jobs should come in cheaper per minute
 and this is the pessimistic case. `productionEnabled` stays `false` until a
@@ -70,7 +95,8 @@ production-length fixture confirms it, and a test fails the build if that flag
 is opened while `productionLengthConfirmed` is still false.
 
 **Consequence to decide before launch:** the included $20 cloud credit bought
-6m 40s of video at the old $3.00/min. At $6.99 it buys **2m 50s**. The site
+6m 40s of video at the old $3.00/min. At $5.99 it buys **3m 20s**, or 5 cloud
+photos where it used to buy 200. The site
 promises "$20 of cloud credit each paid period" and that is still exactly what
 it grants - but if the intent was a number of *minutes* rather than a number of
 *dollars*, the credit has to rise with the rate.
@@ -116,3 +142,27 @@ inline theme script, and it talks to a local engine bridge on the customer's own
 network, whose address is not known ahead of time. Adding either directive
 without first moving the inline script to a file and routing bridge traffic
 through a known origin would break the product on the customer's machine.
+
+## Pro is priced, and mostly not walled
+
+`laneFor()` and `LANES` describe what each tier renders through. Until now
+nothing called them: the lanes were declared and never applied, so every tier
+rendered identically and the difference existed only in the price.
+
+One wall is real now. The Enhance dialog listed every upscale model the engine
+had installed and preselected the 4x one for everybody, under a line of text
+claiming "licensed Photo plans unlock 4x" - a sentence where a gate belonged.
+It now offers only the model the licence's lane names, and says so when the
+device does not have it. `upscaleModelsForLane()` is `laneFor()`'s first caller.
+
+The rest of the Pro lane still cannot be walled, because it does not exist:
+
+| Pro entitlement | Read by | Blocked on |
+| --- | --- | --- |
+| `motionEngine: 'pro'` | nothing | the Pro Motion Engine is not shipped |
+| `voice.quality: 'premium'` | nothing | premium voice models are not shipped |
+| `cloudUpscaleIncluded` | nothing | the cloud lane is disabled |
+| `walletDiscount` | `walletTopUpCents` | - shipped |
+
+A Pro licence today therefore renders exactly like its standard tier. Do not
+sell the Pro plans until the engines behind those first three rows exist.
