@@ -32,12 +32,16 @@ jobs:
           test -f company-site/index.html
           test -f company-site/styles.css
           test -f company-site/site.js
-          test -f company-site/media/black-led-collaboration.webp
-          grep -Fq 'Better tools.' company-site/index.html
-          grep -Fq 'Power should not require surrender.' company-site/index.html
-          grep -Fq 'black-led-collaboration.webp' company-site/index.html
-          grep -Fq 'Actual MaterialLogix Studio Photo editing workspace' company-site/index.html
-          grep -Fq 'Actual SideOf Social Discover screen' company-site/index.html
+          test -f company-site/media/libraside-investor-hero.webp
+          test -f company-site/media/libraside-investor-hero-proof.webp
+          test -f company-site/media/studio-founder-review-actual.webp
+          test -f company-site/media/sideof-group-chat-actual.webp
+          test -f company-site/media/evidence-manifest.json
+          grep -Fq 'Technology<br> with boundaries.' company-site/index.html
+          grep -Fq 'Proof before promise.' company-site/index.html
+          grep -Fq 'libraside-investor-hero-proof.webp' company-site/index.html
+          grep -Fq 'Actual product interface · fictional demo data' company-site/index.html
+          grep -Fq 'LibraSide Technologies LLC' company-site/index.html
           if grep -Eiq 'beforeinstallprompt|serviceWorker|manifest\.json|add to home screen' company-site/index.html company-site/site.js; then
             echo '::error::Web-app installation behavior is not permitted on this corporate website.'
             exit 1
@@ -80,7 +84,7 @@ jobs:
               esac
               if git show "$ref:company-site/index.html" > /tmp/candidate.html 2>/dev/null \
                 && grep -Fq 'LibraSide Technologies' /tmp/candidate.html \
-                && grep -Fq 'Better tools.' /tmp/candidate.html; then
+                && { grep -Fq 'Better tools.' /tmp/candidate.html || grep -Fq 'Technology<br> with boundaries.' /tmp/candidate.html; }; then
                 target="$branch"
                 reason='company-site-marker-match'
                 break
@@ -139,11 +143,11 @@ jobs:
               if curl --fail --silent --show-error --location --max-time 30 \
                 -H 'Cache-Control: no-cache' \
                 "${url}?publish_verify=${GITHUB_RUN_ID}-${attempt}" > "$body" 2>/tmp/curl-error.txt \
-                && grep -Fq 'Better tools.' "$body" \
-                && grep -Fq 'Real solutions.' "$body" \
-                && grep -Fq 'Power should not require surrender.' "$body" \
-                && grep -Fq 'black-led-collaboration.webp' "$body" \
-                && grep -Fq 'Actual SideOf Social Discover screen' "$body"; then
+                && grep -Fq 'Technology<br> with boundaries.' "$body" \
+                && grep -Fq 'Proof before promise.' "$body" \
+                && grep -Fq 'libraside-investor-hero-proof.webp' "$body" \
+                && grep -Fq 'Actual product interface · fictional demo data' "$body" \
+                && grep -Fq 'LibraSide Technologies LLC' "$body"; then
                 echo "$url serves the approved LibraSide corporate website."
                 return 0
               fi
