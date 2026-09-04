@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
-  CLOUD_VIDEO, CLOUD_VOICE, MEASURED_VIDEO_COST, exportPrice, CLOUD_SURCHARGE, deliveredPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit,
+  CLOUD_VIDEO, CLOUD_VOICE, MEASURED_VIDEO_COST, exportPrice, CLOUD_SURCHARGE, deliveredPrice, RENDER_PRICES, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit,
   exportUnits, unitsForDeliveries, UNITS_PER_VIDEO_MINUTE, deliveryRulesFor, requiresWatermark
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
@@ -341,4 +341,20 @@ test('an unlicensed render is marked, and the rule reaches the engine', () => {
   assert.equal(callers.length, 2, 'the local and the cloud render are the two callers');
   assert.ok(callers.every(call => call.endsWith(',')), 'every render must pass the lane');
   assert.ok(!/videoRenderPlan\(asset\)/.test(source), 'no render may default to the clean lane');
+});
+
+test('the cloud charge is whole dollars, and never loose change', () => {
+  // A surcharge is the one charge a customer meets after they have already
+  // decided to buy. Cents on top of a price read as a surprise fee however
+  // small they are.
+  for (const [key, surcharge] of Object.entries(CLOUD_SURCHARGE)) {
+    assert.equal(surcharge.price, Math.round(surcharge.price), `${key} is charged in cents`);
+    assert.ok(surcharge.price >= 1, `${key} is charged in change`);
+  }
+  // And a cloud job still never costs more than the thing it delivers.
+  for (const product of Object.keys(RENDER_PRICES)) {
+    const cloud = deliveredPrice(product, { units: 1, cloud: true });
+    assert.ok(cloud.surchargeCents <= cloud.deliverableCents,
+      `${product}: the cloud costs more than the file it delivers`);
+  }
 });

@@ -65,10 +65,14 @@ output minute, against roughly 0.1 for a minute of synthesised speech. So:
 
 | Charged | Basis | Rate | Pod cost |
 | --- | --- | --- | --- |
-| Cloud photo | per job | $0.50 | ~$0.26 |
-| Cloud voice render | per job, any script length | $0.50 | ~$0.27 |
-| Cloud voice conditioning | per job | $1.00 | ~$0.40 |
-| Cloud video | per output minute | $2.00 | $1.31 measured |
+| Cloud photo | per job | $1 | ~$0.26 |
+| Cloud voice render | per job, any script length | $1 | ~$0.27 |
+| Cloud voice conditioning | per job | $2 | ~$0.40 |
+| Cloud video | per output minute | $2 | $1.31 measured |
+
+Whole dollars, deliberately. A surcharge is the one charge a customer meets
+after they have already decided to buy, and loose change on top of a price reads
+as a surprise fee however small it is.
 
 The surcharge only has to cover the GPU. The product's margin lives in the
 deliverable price the customer already paid; asking the surcharge to carry it
@@ -83,15 +87,38 @@ What that means for a customer:
 | | No plan, all in | With a plan |
 | --- | --- | --- |
 | One photo, local | $2.99 | 1 unit |
-| One photo, in the cloud | $3.49 | 1 unit + $0.50 credit |
+| One photo, in the cloud | $3.99 | 1 unit + $1 credit |
 | Ten-minute script, local | $29.90 | 10 units |
-| Ten-minute script, in the cloud | $30.40 | 10 units + $0.50 credit |
+| Ten-minute script, in the cloud | $30.90 | 10 units + $1 credit |
 | One video minute, local | $4.99 | 4 units |
-| One video minute, in the cloud | $6.99 | 4 units + $2.00 credit |
+| One video minute, in the cloud | $6.99 | 4 units + $2 credit |
 
-The $20 included credit now buys **40 cloud photos, or 40 cloud voice renders
-of any length, or ten minutes of cloud video** - where the previous rates gave
-it 3m20s of video and five photos.
+The $20 included credit buys **20 cloud photos, or 20 cloud voice renders of
+any length, or ten minutes of cloud video**.
+
+### We are not the expensive option, and should stop pricing as if we might be
+
+Measured against the market, in-plan, per finished unit:
+
+| | Us, in plan | Nearest competitor |
+| --- | --- | --- |
+| Video minute | **$0.12** | Kling Ultra $4.99 · Runway Pro $8.96 · Veo 3.1 $24.00 |
+| Voice minute | **$0.03** | ElevenLabs Creator $0.182 · Resemble $0.03 |
+| Photo | **$0.03** | Midjourney Basic $0.05 list |
+| Voice entry tier | **$5/mo, 30 min** | ElevenLabs Starter $6/mo, ~30 min |
+
+We are 40x to 200x under the market per video minute and 5-6x under it per
+voice minute, because local rendering costs us nothing and the allowances pass
+that straight to the customer. That is the wedge, and it is deliberate.
+
+It also means the cloud surcharge is the wrong thing to discount. It is the
+only charge attached to a cost we actually pay, on the only lane whose cost
+scales. Cutting it would give away margin we do not need to give away, on a
+price list already far below everybody else's.
+
+Competitor figures came from third-party pricing aggregators: direct fetches to
+vendor pricing pages were blocked from the build environment, so **not one of
+them is primary-source verified**. Confirm before quoting externally.
 
 ### The old ladder
 

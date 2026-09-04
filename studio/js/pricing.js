@@ -140,11 +140,14 @@ export const RENDER_PRICES = Object.freeze({
  * separation matters: a unit earns us about three cents, so a cloud job billed
  * against units would lose money on every render.
  */
+// Whole dollars, deliberately. Loose change on top of a price reads as a
+// surprise fee however small it is, and this is the one charge a customer meets
+// after they have already decided to buy.
 export const CLOUD_SURCHARGE = Object.freeze({
-  photo: Object.freeze({ price: 0.50, basis: 'job', unit: 'image', lane: 'photo' }),
-  voiceRender: Object.freeze({ price: 0.50, basis: 'job', unit: 'render', lane: 'voice_render' }),
-  voiceTraining: Object.freeze({ price: 1.00, basis: 'job', unit: 'voice profile', lane: 'voice_training' }),
-  video: Object.freeze({ price: 2.00, basis: 'output minute', unit: 'output minute', lane: 'video' })
+  photo: Object.freeze({ price: 1, basis: 'job', unit: 'image', lane: 'photo' }),
+  voiceRender: Object.freeze({ price: 1, basis: 'job', unit: 'render', lane: 'voice_render' }),
+  voiceTraining: Object.freeze({ price: 2, basis: 'job', unit: 'voice profile', lane: 'voice_training' }),
+  video: Object.freeze({ price: 2, basis: 'output minute', unit: 'output minute', lane: 'video' })
 });
 
 /**
