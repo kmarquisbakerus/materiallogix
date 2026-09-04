@@ -120,6 +120,12 @@ try {
       const asset = window.__cros.state.assets[0];
       return { engine: asset?.geometry?.engine ?? null, status: asset?.peopleReview?.status ?? null };
     });
+    // The worker is the whole point of moving the analysis off the main thread,
+    // and its fallback is silent by design. A silent fallback that is also
+    // unobserved means a broken worker passes every test.
+    const thread = await page.evaluate(() => window.__cros.state.assets[0]?.auto?.analysedOn ?? null);
+    ok('the analysis ran off the main thread, not on the quiet fallback',
+      thread === 'worker', `analysed on ${thread}`);
     ok('the people check runs with no network, and says which engine ran',
       people.engine === 'human-candidate-local' && people.status === 'complete',
       `engine ${people.engine}, status ${people.status}`);

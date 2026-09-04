@@ -11,6 +11,7 @@ import {
 import {
   analyzeAsset, assetIssues, placementIssues, preflight, smartCrop, captureCoverage, captureCoverageBody, cornerSignature, captureFrameQuality
 } from './analyze.js';
+import { analyzeBlobOffThread } from './analysis-worker.js';
 import { buildPackage, decisionsMarkdown, approvedPairs, slug } from './export.js';
 import { buildClientPage, applyClientVerdict } from './clientpage.js';
 import { snapshot, snapshotProject, popUndo, clearUndo, log, logMarkdown } from './history.js';
@@ -444,6 +445,44 @@ function forgetDecodesOutside(assetIds) {
   for (const id of [...state.decoded.keys()]) if (!live.has(id)) releaseDecoded(id);
 }
 
+/**
+ * A photograph's pixels, decoded off this thread where the browser allows it.
+ *
+ * `createImageBitmap` decodes on a thread of its own; an `<img>` is decoded
+ * through the browser's own scaled-decode path, which no worker can reach. The
+ * analysis worker can only ever hold a bitmap, so this thread has to hold one
+ * too — a photograph sampled through an image element scored 115 on the
+ * sharpness index and 297 through a bitmap, and an analysis that depends on
+ * which thread ran it is not an analysis. The element stays as the fallback for
+ * a browser with no `createImageBitmap`, which has no worker either.
+ */
+async function decodeImageSource(blob, url) {
+  if (blob && typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(blob);
+      return { source: bitmap, w: bitmap.width, h: bitmap.height };
+    } catch { /* fall through: some containers only the element decoder reads */ }
+  }
+  const img = await loadImage(url);
+  return { source: img, w: img.naturalWidth, h: img.naturalHeight };
+}
+
+/** Hold a decode, and repair whatever the asset record could not measure. */
+async function rememberDecode(asset, d) {
+  let repaired = false;
+  if (!asset.width && d.w) { asset.width = d.w; asset.height = d.h; repaired = true; }
+  // A clip imported before its container's length could be read carries no
+  // usable duration on its record, and trim, pricing and the plan all read it
+  // from there. Decoding is the moment the real length is known.
+  if (Number.isFinite(d.duration) && d.duration > 0 && !(asset.duration > 0)) {
+    asset.duration = d.duration; repaired = true;
+  }
+  if (repaired) await store.saveAsset(asset);
+  state.decoded.set(asset.id, d);
+  trimDecodeCache();
+  return d;
+}
+
 async function decode(asset) {
   const hit = state.decoded.get(asset.id);
   if (hit) return hit;
@@ -469,34 +508,41 @@ async function decode(asset) {
     } else {
       const blob = await store.getBlob(asset.id);
       const managed = await decodeColorManagedBlob(blob);
-      if (managed) d = { ...managed, url };
-      else {
-        const img = await loadImage(url);
-        d = { source: img, w: img.naturalWidth, h: img.naturalHeight, url };
-      }
+      d = managed ? { ...managed, url } : { ...await decodeImageSource(blob, url), url };
     }
   } catch {
     return null;
   }
-  let repaired = false;
-  if (!asset.width && d.w) { asset.width = d.w; asset.height = d.h; repaired = true; }
-  // A clip imported before its container's length could be read carries no
-  // usable duration on its record, and trim, pricing and the plan all read it
-  // from there. Decoding is the moment the real length is known.
-  if (Number.isFinite(d.duration) && d.duration > 0 && !(asset.duration > 0)) {
-    asset.duration = d.duration; repaired = true;
-  }
-  if (repaired) await store.saveAsset(asset);
-  state.decoded.set(asset.id, d);
-  trimDecodeCache();
-  return d;
+  return rememberDecode(asset, d);
 }
 
 async function runAnalysis(asset, { quiet = false } = {}) {
-  const d = await decode(asset);
-  if (!d) { if (!quiet) toast(`Could not decode ${asset.filename}.`, true); return null; }
   const blob = await store.getBlob(asset.id);
-  asset.auto = await analyzeAsset(d.source, d.w, d.h, blob, d.colorTransform || null);
+  // Decode and measurement together are seconds of unbroken main thread on a
+  // print-resolution photograph, and for that whole window nothing repaints,
+  // no click lands, and the import dialog is frozen on the file it is already
+  // working on. The worker does both and hands the decode back, so this thread
+  // pays for neither. A null answer is a browser without workers, or a worker
+  // that failed: the work happens here instead, and the record is the same.
+  let d = state.decoded.get(asset.id) || null;
+  let auto = null;
+  if (!d && asset.kind === 'image' && blob) {
+    const off = await analyzeBlobOffThread(blob);
+    if (off) {
+      auto = off.auto;
+      d = await rememberDecode(asset, { source: off.source, w: off.w, h: off.h,
+        colorTransform: off.colorTransform, url: await store.objectUrl(asset.id) });
+    }
+  }
+  if (!d) d = await decode(asset);
+  if (!d) { if (!quiet) toast(`Could not decode ${asset.filename}.`, true); return null; }
+  asset.auto = auto || await analyzeAsset(d.source, d.w, d.h, blob, d.colorTransform || null);
+  // Which thread did the work. The fallback is deliberately silent to the
+  // customer - losing an analysis because a worker died would be worse - but
+  // silent to us as well means a broken worker looks exactly like a working
+  // one, and nothing would ever fail. Recording it is what makes the
+  // difference observable, in the browser suite and in a support conversation.
+  if (asset.auto) asset.auto.analysedOn = auto ? 'worker' : 'main-thread';
   const clipSeconds = d.duration || asset.duration;
   if (asset.kind === 'video' && Number.isFinite(clipSeconds) && clipSeconds > 0) {
     const duration = clipSeconds;
