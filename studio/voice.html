@@ -149,7 +149,7 @@ Create with freedom. Finish with *confidence*.</textarea>
 import { count } from './js/plural.js';
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
-import { laneFor, scriptAllowance } from './js/pricing.js';
+import { laneFor, scriptAllowance, allowsMultiSourceVoicePack, plansCovering, voiceProfileLimit } from './js/pricing.js';
 import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-client.js';
 import { bridgeFetch } from './js/generate.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
@@ -576,8 +576,14 @@ async function savePack(blob, assessment) {
     return;
   }
   const license = await activeLicense();
-  if (license?.plan === 'voice_starter' && knownVoicePacks.length >= 1) {
-    $('#recState').textContent = 'Voice Starter allows one active personal voice profile. Discard the current profile or upgrade before adding another.';
+  // The count used to be compared against one named plan, so a free preview
+  // could keep any number of profiles while the paying Starter tier was held
+  // to one.
+  const profileLimit = voiceProfileLimit(license);
+  if (knownVoicePacks.length >= profileLimit) {
+    $('#recState').textContent = profileLimit === 0
+      ? `Free preview does not store a personal voice profile. ${plansCovering('voice').join(', ')} do.`
+      : `Your plan keeps ${count(profileLimit, 'active personal voice profile')}. Discard one, or move to a plan with more, before adding another.`;
     return;
   }
   const name = prompt('Name this voice reference (letters and dashes):', 'my-voice');
@@ -676,8 +682,12 @@ $('#packFile').onchange = async e => {
   e.target.value = '';
   if (!files.length) return;
   const license = await activeLicense();
-  if (files.length > 1 && license?.plan === 'voice_starter') {
-    $('#recState').textContent = 'Voice Starter supports one personal voice source, not composite or multi-source packs. Upgrade to Voice Studio for advanced pack features.';
+  // This asked for `plan === 'voice_starter'` directly, so a free preview - which
+  // has no plan at all - sailed past it and could build composite packs a paying
+  // Voice Starter customer could not. The lane decides.
+  if (files.length > 1 && !allowsMultiSourceVoicePack(laneFor(license, 'voice'))) {
+    const upgrades = plansCovering('voice').filter(name => name !== 'Voice Starter');
+    $('#recState').textContent = `This plan builds a voice from one recording, not a composite of several. ${upgrades.join(', ')} support multi-source packs.`;
     return;
   }
   if (files.length === 1) {

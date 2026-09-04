@@ -322,7 +322,7 @@ export function walletTopUpCents(amountCents, license) {
 export const LANES = {
   free: {
     label: 'Preview lane',
-    voice: { maxWords: 60, stamped: true, knobs: true },
+    voice: { maxWords: 60, stamped: true, knobs: true, batch: false, multiTake: false },
     upscale: { model: 'realesr-animevideov3-x2', factor: '2×' },
     imageExport: 'proof only (watermark + 960px)',
     videoExport: 'proof only (visual + audible watermark, 720p)',
@@ -330,7 +330,7 @@ export const LANES = {
   },
   paid: {
     label: 'Studio lane',
-    voice: { maxWords: Infinity, stamped: false, knobs: true },
+    voice: { maxWords: Infinity, stamped: false, knobs: true, batch: true, multiTake: true },
     upscale: { model: 'realesrgan-x4plus', factor: '4×' },
     imageExport: 'clean, full resolution',
     videoExport: 'clean, platform spec',
@@ -344,7 +344,7 @@ LANES.pro = {
   ...LANES.paid,
   label: 'Pro lane',
   motionEngine: 'pro',
-  voice: { maxWords: Infinity, stamped: false, knobs: true, quality: 'premium' },
+  voice: { maxWords: Infinity, stamped: false, knobs: true, quality: 'premium', batch: true, multiTake: true },
   cloudUpscaleIncluded: true,
   walletDiscount: 0.2
 };
@@ -356,6 +356,33 @@ export const VOICE_STARTER_LANE = Object.freeze({
   packs: 1,
   clientLinks: 0
 });
+
+/**
+ * How many personal voice profiles a licence may keep on the device.
+ *
+ * The count was compared against `plan === 'voice_starter'`, so a free preview
+ * could store any number while the paying Starter tier was held to one. Free
+ * gets none: "one approved personal voice profile" is the Starter tier's
+ * headline benefit, and it is not a benefit if it is also free.
+ */
+export function voiceProfileLimit(license) {
+  if (!license) return 0;
+  const plan = String(license.plan);
+  if (plan.startsWith('suspended:')) return 0;
+  return PREMIUM_VOICE.personalClones[plan] || 0;
+}
+
+/**
+ * Whether this lane may build a voice profile from more than one recording.
+ *
+ * The upload handler asked `plan === 'voice_starter'` directly, so a free
+ * preview - which has no plan at all - sailed past the check and could build
+ * composite packs that a paying Voice Starter customer could not. Reading the
+ * lane fixes the inversion and puts the rule in one place.
+ */
+export function allowsMultiSourceVoicePack(lane) {
+  return lane?.voice?.multiTake === true;
+}
 
 /**
  * How long a script this lane may read, and what to say when it is too long.

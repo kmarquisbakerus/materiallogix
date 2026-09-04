@@ -162,6 +162,23 @@ preview would read a script of any length. `scriptAllowance()` now stops the
 render and says how many words to trim. A preview that is not short is not a
 preview - it is the product, stamped.
 
+Two more gates named a single plan instead of reading the lane, and both let
+the free tier out-rank a paying one:
+
+- **Composite voice packs.** The upload handler asked
+  `plan === 'voice_starter'`. A free preview has no plan at all, so it sailed
+  past the check and could build multi-source packs a paying Starter customer
+  could not. `allowsMultiSourceVoicePack()` reads the lane now.
+- **Personal voice profiles.** The count was compared against the same named
+  plan, so a free preview could keep any number while Starter was held to one.
+  `voiceProfileLimit()` reads the declared `personalClones` table, and free
+  gets none - "one approved personal voice profile" is Starter's headline
+  benefit, and it is not a benefit if it is also free.
+
+The upgrade message also offered "Voice Studio", which is the name of the page,
+not a plan anybody can buy. It names the real plans now, and a test fails the
+build if any upgrade sentence names something `PRODUCTS` does not sell.
+
 Every tier keeps a preview; only the free one is short. **Voice Starter is a
 basic paid tier, not a preview**: it is covered for voice, renders unstamped,
 reads any length, and spends its 30 monthly minutes like any other allowance.
@@ -172,6 +189,8 @@ The rest of the Pro lane still cannot be walled, because it does not exist:
 | Pro entitlement | Read by | Blocked on |
 | --- | --- | --- |
 | `voice.maxWords` | `scriptAllowance` | - shipped |
+| `voice.multiTake` | `allowsMultiSourceVoicePack` | - shipped |
+| `personalClones` | `voiceProfileLimit` | - shipped |
 | `upscale.model` | `upscaleModelsForLane` | - shipped |
 | `motionEngine: 'pro'` | nothing | the Pro Motion Engine is not shipped |
 | `voice.quality: 'premium'` | nothing | premium voice models are not shipped |

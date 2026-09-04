@@ -410,26 +410,25 @@ try {
     const page = guest.page;
     await page.goto(`${BASE}/voice.html?dev=1`, { waitUntil: 'domcontentloaded' });
     await settle(page, 2500);
-    const refusal = await page.evaluate(async () => {
+    // The render button is disabled while the local engine is offline, which is
+    // its own gate and tested elsewhere. Enable it so the length check - which
+    // runs before any engine call - gets a chance to answer.
+    const render = async text => page.evaluate(async body => {
       const script = document.querySelector('#script');
-      script.value = Array.from({ length: 95 }, (_, i) => `word${i}`).join(' ') + '.';
+      script.value = body;
       script.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('#render').click();
-      await new Promise(r => setTimeout(r, 600));
+      document.querySelector('#status').textContent = '';
+      const button = document.querySelector('#render');
+      button.disabled = false;
+      button.click();
+      await new Promise(r => setTimeout(r, 700));
       return document.querySelector('#status').textContent;
-    });
+    }, text);
+    const refusal = await render(Array.from({ length: 95 }, (_, i) => `word${i}`).join(' ') + '.');
     ok('a 95-word script is refused on the free preview', /reads up to 60 words/.test(refusal),
       refusal.slice(0, 90));
 
-    const shortEnough = await page.evaluate(async () => {
-      const script = document.querySelector('#script');
-      script.value = 'A short line for the preview to read aloud.';
-      script.dispatchEvent(new Event('input', { bubbles: true }));
-      document.querySelector('#status').textContent = '';
-      document.querySelector('#render').click();
-      await new Promise(r => setTimeout(r, 600));
-      return document.querySelector('#status').textContent;
-    });
+    const shortEnough = await render('A short line for the preview to read aloud.');
     ok('a short script is not refused for length', !/reads up to 60 words/.test(shortEnough),
       shortEnough.slice(0, 90));
     allErrors.push(...guest.errors);

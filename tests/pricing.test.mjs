@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import {
   PRODUCTS, TERMS, price, quoteCloudJob, cloudVideoSecondsForCents,
   CLOUD_PRICING, CLOUD_BILLING_INCREMENT_SECONDS, MONTHLY_UNITS, laneFor, LANES, planRemaining,
-  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance
+  CLOUD_VIDEO, MEASURED_VIDEO_COST, exportPrice, upscaleModelsForLane, scriptAllowance, allowsMultiSourceVoicePack, voiceProfileLimit
 } from '../studio/js/pricing.js';
 import { covers } from '../studio/js/license.js';
 
@@ -195,4 +195,46 @@ test('every tier previews, and the free preview is short', () => {
   assert.match(markup, /scriptAllowance\(laneFor\(/, 'the render button must ask the lane before it renders');
   assert.match(markup, /if \(!allowance\.allowed\)[\s\S]{0,200}?return;/,
     'the render button must stop when the lane refuses');
+});
+
+test('a free preview never gets more than a paying tier', () => {
+  // The voice pack upload asked `plan === 'voice_starter'` directly, so a free
+  // preview - which has no plan at all - sailed past the check and could build
+  // composite packs a paying Voice Starter customer could not.
+  const lane = license => laneFor(license, 'voice');
+  const starter = { plan: 'voice_starter', selected_product: 'voice' };
+  assert.equal(allowsMultiSourceVoicePack(lane(null)), false, 'free preview must not out-rank a paid tier');
+  assert.equal(allowsMultiSourceVoicePack(lane(starter)), false);
+  for (const plan of ['single', 'single_pro', 'full', 'pro']) {
+    assert.equal(allowsMultiSourceVoicePack(lane({ plan, selected_product: 'voice' })), true, plan);
+  }
+
+  // Whatever the free lane grants, some paid lane must grant at least as much.
+  const free = lane(null);
+  const paid = lane({ plan: 'full' });
+  assert.ok(!Number.isFinite(paid.voice.maxWords) || paid.voice.maxWords >= free.voice.maxWords);
+  assert.equal(free.voice.stamped, true, 'the free lane is the watermarked one');
+  assert.equal(paid.voice.stamped, false);
+  assert.ok(paid.packs >= free.packs && paid.clientLinks >= free.clientLinks);
+
+  // A personal voice profile is Voice Starter's headline benefit. It is not a
+  // benefit if the free tier keeps them too.
+  assert.equal(voiceProfileLimit(null), 0);
+  assert.equal(voiceProfileLimit({ plan: 'suspended:pro' }), 0);
+  for (const plan of ['voice_starter', 'single', 'single_pro', 'full', 'pro']) {
+    assert.ok(voiceProfileLimit({ plan }) >= 1, `${plan} keeps no voice profile`);
+    assert.ok(voiceProfileLimit({ plan }) > voiceProfileLimit(null), `free out-ranks ${plan}`);
+  }
+
+  const markup = read('studio/voice.html');
+  assert.match(markup, /allowsMultiSourceVoicePack\(laneFor\(/, 'the pack gate must read the lane');
+  assert.match(markup, /voiceProfileLimit\(license\)/, 'the profile cap must read the declared limit');
+  assert.ok(!/license\?\.plan === 'voice_starter'/.test(markup), 'the gates must not name a single plan');
+  // "Voice Studio" is this page's own name. It is not a plan, so it must never
+  // be offered as the thing to upgrade to.
+  assert.ok(!/[Uu]pgrade to Voice Studio/.test(markup), 'there is no plan called "Voice Studio"');
+  for (const name of [...markup.matchAll(/(?:upgrade to|move to|Upgrade to) ([A-Z][A-Za-z ]+?)(?:[.,]| for)/g)]) {
+    assert.ok(PRODUCTS.some(product => product.name.startsWith(name[1].trim())),
+      `the page offers an upgrade to "${name[1].trim()}", which is not a plan we sell`);
+  }
 });
