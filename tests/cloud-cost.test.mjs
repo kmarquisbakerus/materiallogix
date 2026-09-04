@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   recordCostFixture, COST_FIXTURES, costCentsPerUnit, unmeasuredLanes, indicativeLanes, priceFloorCents
-} from '../studio/js/cloud-cost.js';
+} from './lib/cloud-cost.mjs';
 import { CLOUD_PRICING } from '../studio/js/pricing.js';
 
 const LANE_RATES = {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { covers, GRACE_DAYS } from '../studio/js/license.js';
 import { APP_VERSION, MINIMUM_COMPATIBLE, versionBehind } from '../studio/js/app-version.js';
-import { validateHealthAttempt, summarizeHealthAttempts } from '../studio/js/service-health.js';
+import { validateHealthAttempt, summarizeHealthAttempts } from './lib/service-health.mjs';
 import { normalizePrompt, screenPrompt } from '../studio/js/prompt-guard.js';
 
 test('a licence covers exactly what it paid for', () => {

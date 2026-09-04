@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
-  ENABLED_VIDEO_ENGINES, EDITORIAL_PROVENANCE, resolveVideoEngine
+  ENABLED_VIDEO_ENGINES, EDITORIAL_PROVENANCE, resolveVideoEngine, keepsUnrestrictedPromise
 } from '../studio/js/video-engine.js';
 import { EU_MEMBER_STATES, ENGINE_PREFERENCE_KEY } from '../studio/js/model-licence.js';
 
@@ -75,13 +75,60 @@ test('a standard plan never sees the restricted engine anywhere', () => {
   }
 });
 
-test('an unconfirmed region stops a generative render rather than guessing', () => {
-  for (const country of [null, '', 'ZZ', 'XX', 'usa', '1']) {
-    const decision = resolveVideoEngine({ country, pro: true, available: BOTH });
-    assert.equal(decision.blocked, true, `"${country}" is not a country we can decide on`);
-    assert.equal(decision.engineId, null);
-    assert.match(decision.notice, /could not confirm your region/);
+test('an unconfirmed region stops only the render that needs a territory', () => {
+  // An engine with no territorial condition raises no territorial question, so
+  // blocking it on an unknown region took generative video away from an
+  // offline or proxied customer for a licence reason that did not apply to
+  // them. The block is scoped to builds whose only engine is restricted.
+  const unknowns = [null, '', 'ZZ', 'XX', 'usa', '1'];
+  for (const country of unknowns) {
+    const restrictedOnly = resolveVideoEngine({ country, pro: true, available: ['hunyuan'] });
+    assert.equal(restrictedOnly.blocked, true, `"${country}" must not reach a territorial engine`);
+    assert.equal(restrictedOnly.engineId, null);
+    assert.match(restrictedOnly.notice, /could not confirm your region/);
+
+    for (const available of [BOTH, ['wan']]) {
+      for (const pro of [true, false]) {
+        const served = resolveVideoEngine({ country, pro, available });
+        assert.equal(served.blocked, false, `"${country}" pro=${pro} [${available}] was refused an unrestricted engine`);
+        assert.equal(served.engineId, 'wan');
+        assert.equal(served.lockReason, 'region_unknown');
+        assert.match(served.provenance, /no territorial restriction/);
+      }
+    }
   }
+});
+
+test('a build with only the unrestricted engine serves every customer', () => {
+  // The fallback was written backwards and then discarded: the branch that
+  // computed it could never be reached, and the function returned the engine
+  // that was not installed. A Pro customer in a permitted territory was
+  // refused video entirely when only the Apache-2.0 engine was present.
+  for (const country of ['US', 'CA', 'JP', 'IE', 'GB', 'KR']) {
+    for (const pro of [true, false]) {
+      const decision = resolveVideoEngine({ country, pro, available: ['wan'] });
+      assert.equal(decision.blocked, false, `${country} pro=${pro} was refused`);
+      assert.equal(decision.engineId, 'wan');
+      assert.equal(decision.offered, false, 'one engine is not a choice');
+      assert.match(decision.provenance, /no territorial restriction/);
+    }
+  }
+});
+
+test('the terms promise an unrestricted engine beside any restricted one, and the build is checked against it', () => {
+  // terms.html: "Whenever a restricted engine is offered, an unrestricted one
+  // is available to every customer on every plan beside it." Nothing enforced
+  // that sentence, so a build shipping only the restricted engine would have
+  // made it false with no test failing.
+  for (const country of ['US', 'IE', 'JP', 'GB', 'KR']) {
+    assert.equal(keepsUnrestrictedPromise(country, []), true, 'no engines, no promise to break');
+    assert.equal(keepsUnrestrictedPromise(country, ['wan']), true);
+    assert.equal(keepsUnrestrictedPromise(country, BOTH), true);
+    assert.equal(keepsUnrestrictedPromise(country, ['hunyuan']), false,
+      `${country} would be offered a restricted engine with no unrestricted one beside it`);
+  }
+  assert.equal(keepsUnrestrictedPromise('US', ENABLED_VIDEO_ENGINES), true,
+    'the shipped build must keep the promise the terms make');
 });
 
 test('a build that ships only the restricted engine refuses the excluded territory instead of running it', () => {

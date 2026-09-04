@@ -18,7 +18,7 @@
 
 import {
   ENGINE_LICENCES, ENGINE_PREFERENCE_KEY, PRO_VIDEO_ENGINE, STANDARD_VIDEO_ENGINE,
-  engineChoice, engineChoiceLabel, engineProvenance, usableCountry
+  engineChoice, engineChoiceLabel, engineProvenance, usableCountry, unrestrictedEngineIn
 } from './model-licence.js';
 import { customerCountry } from './region.js';
 
@@ -77,22 +77,44 @@ export function resolveVideoEngine({ country = null, pro = false, preference = n
     };
   }
 
-  // The territory decision is `model-licence.js`'s, not ours. We only narrow it
-  // to what this build can run, and we narrow AFTER the licence has spoken so
-  // that a build shipping only the restricted engine still refuses it in an
-  // excluded territory rather than falling back to something it cannot run.
+  // The engines this build can run that carry no territorial condition. The
+  // terms promise one of these sits beside any restricted engine we offer, so
+  // this list is what makes that sentence true rather than aspirational.
+  const unrestricted = enabled.filter(id => !ENGINE_LICENCES[id].excludedTerritories.length);
+  const substitute = unrestricted[0] || null;
+
   const choice = engineChoice(country, { pro, preference });
+
   if (choice.blocked) {
+    // The region could not be confirmed. That is only a reason to refuse when
+    // the only thing we could run is territorially licensed - an Apache-2.0
+    // engine raises no territorial question, and refusing it would take
+    // generative video off an offline or proxied customer for a licence reason
+    // that does not apply to them.
+    if (!substitute) {
+      return {
+        generative: false, engineId: null, offered: false, locked: true,
+        lockReason: choice.reason, blocked: true,
+        notice: engineChoiceLabel(choice), provenance: ''
+      };
+    }
     return {
-      generative: false, engineId: null, offered: false, locked: true,
-      lockReason: choice.reason, blocked: true,
-      notice: engineChoiceLabel(choice), provenance: ''
+      generative: true, engineId: substitute, offered: false, locked: true,
+      lockReason: 'region_unknown', blocked: false,
+      notice: 'We could not confirm your region, so your video renders on the engine that carries no territorial restriction. The result is yours to use anywhere.',
+      provenance: engineProvenance(substitute)
     };
   }
+
   if (!enabled.includes(choice.chosen)) {
-    const fallback = enabled.includes(STANDARD_VIDEO_ENGINE) && choice.chosen !== PRO_VIDEO_ENGINE
-      ? STANDARD_VIDEO_ENGINE : null;
-    if (!fallback) {
+    // The licence permits an engine this build cannot run. Substituting the
+    // installed unrestricted one keeps the customer working; refusing would
+    // contradict the promise that an unrestricted engine is always available.
+    //
+    // There is no substitute when the only installed engine is the restricted
+    // one and the customer's territory excludes it - then refusing is correct,
+    // because running it would be unlicensed use.
+    if (!substitute) {
       return {
         generative: false, engineId: null, offered: false, locked: true,
         lockReason: 'engine_not_installed', blocked: true,
@@ -100,6 +122,12 @@ export function resolveVideoEngine({ country = null, pro = false, preference = n
         provenance: ''
       };
     }
+    return {
+      generative: true, engineId: substitute, offered: false, locked: true,
+      lockReason: 'engine_not_installed', blocked: false,
+      notice: `Your video renders on the ${ENGINE_LICENCES[substitute].label} engine, which carries no territorial restriction.`,
+      provenance: engineProvenance(substitute)
+    };
   }
 
   // A switch is only real when there are two engines the customer may pick
@@ -112,6 +140,19 @@ export function resolveVideoEngine({ country = null, pro = false, preference = n
     blocked: false, notice: engineChoiceLabel(choice),
     provenance: engineProvenance(choice.chosen)
   };
+}
+
+/**
+ * Does this build honour the terms' promise that an unrestricted engine is
+ * available to every customer, in every territory, alongside any restricted
+ * one? A build that offers only a territorially licensed engine breaks that
+ * sentence, so the invariant is asserted rather than assumed.
+ */
+export function keepsUnrestrictedPromise(countryCode, available = ENABLED_VIDEO_ENGINES) {
+  const enabled = [...available].filter(id => ENGINE_LICENCES[id]);
+  if (!enabled.some(id => ENGINE_LICENCES[id].excludedTerritories.length)) return true;
+  const licensedHere = unrestrictedEngineIn(countryCode);
+  return Boolean(licensedHere && enabled.includes(licensedHere.id));
 }
 
 /**

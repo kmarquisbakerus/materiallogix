@@ -174,9 +174,16 @@ test('the free lane can never deliver a clean file, and a paid lane always can',
 });
 
 test('a suspended or missing licence has no monthly allowance', () => {
+  // This test asserted the opposite of its own name: it required the
+  // `suspended:` prefix to be stripped, which handed a customer suspended for
+  // non-payment their entire monthly allowance and said so on the usage page.
   assert.equal(planRemaining(null), 0);
-  assert.equal(planRemaining({ plan: 'suspended:full' }), MONTHLY_UNITS.full, 'the suffix is stripped, not treated as a new plan');
   assert.equal(planRemaining({ plan: 'not-a-plan' }), 0);
+  for (const plan of Object.keys(MONTHLY_UNITS)) {
+    assert.ok(MONTHLY_UNITS[plan] > 0, `${plan} should have an allowance to lose`);
+    assert.equal(planRemaining({ plan: `suspended:${plan}` }), 0,
+      `a suspended ${plan} keeps its allowance`);
+  }
 });
 
 test('the upscale wall is a gate, not a sentence', () => {
@@ -254,9 +261,24 @@ test('a free preview never gets more than a paying tier', () => {
   // benefit if the free tier keeps them too.
   assert.equal(voiceProfileLimit(null), 0);
   assert.equal(voiceProfileLimit({ plan: 'suspended:pro' }), 0);
-  for (const plan of ['voice_starter', 'single', 'single_pro', 'full', 'pro']) {
-    assert.ok(voiceProfileLimit({ plan }) >= 1, `${plan} keeps no voice profile`);
-    assert.ok(voiceProfileLimit({ plan }) > voiceProfileLimit(null), `free out-ranks ${plan}`);
+  const covering = [
+    { plan: 'voice_starter' },
+    { plan: 'single', selected_product: 'voice' },
+    { plan: 'single_pro', selected_product: 'voice' },
+    { plan: 'full' }, { plan: 'pro' }, { plan: 'payg' }
+  ];
+  for (const licence of covering) {
+    const label = `${licence.plan}${licence.selected_product ? '/' + licence.selected_product : ''}`;
+    assert.ok(voiceProfileLimit(licence) >= 1, `${label} covers voice and keeps no profile`);
+    assert.ok(voiceProfileLimit(licence) > voiceProfileLimit(null), `free out-ranks ${label}`);
+  }
+  // The limit was indexed by plan name alone, so a Single Studio that bought
+  // Photo was handed a voice profile it never paid for.
+  for (const product of ['photo', 'video']) {
+    for (const plan of ['single', 'single_pro']) {
+      assert.equal(voiceProfileLimit({ plan, selected_product: product }), 0,
+        `a ${product}-only ${plan} is given a voice profile`);
+    }
   }
 
   const markup = read('studio/voice.html');

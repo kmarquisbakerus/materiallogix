@@ -518,7 +518,12 @@ export function voiceProfileLimit(license) {
   if (!license) return 0;
   const plan = String(license.plan);
   if (plan.startsWith('suspended:')) return 0;
-  return PREMIUM_VOICE.personalClones[plan] || 0;
+  // Indexing by plan name alone ignored which Studio was bought: a Photo-only
+  // Single got a voice profile it never paid for, a Photo-or-Video Single Pro
+  // got five, and payg - which does cover voice - got none. The lane already
+  // knows; ask it.
+  if (laneFor(license, 'voice') === LANES.free) return 0;
+  return PREMIUM_VOICE.personalClones[plan] ?? PREMIUM_VOICE.personalClones.full ?? 0;
 }
 
 /**
@@ -607,7 +612,13 @@ export function recordExport(units = 1) {
 /** Units remaining this month for any licensed plan. Free tier has none. */
 export function planRemaining(license) {
   if (!license) return 0;
-  const plan = String(license.plan).replace('suspended:', '');
+  // A suspended licence keeps its signature and its plan name, and nothing
+  // else. Stripping the prefix here handed a customer suspended for
+  // non-payment their full monthly allowance, and told them so on the usage
+  // page. Every other capability function refuses a `suspended:` plan; this
+  // one un-suspended it.
+  const plan = String(license.plan);
+  if (plan.startsWith('suspended:')) return 0;
   const cap = MONTHLY_UNITS[plan];
   if (!cap) return 0;
   const bonus = usageThisMonth().bonus || 0;      // purchased overage packs

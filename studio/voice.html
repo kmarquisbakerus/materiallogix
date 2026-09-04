@@ -150,7 +150,7 @@ import { count } from './js/plural.js';
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
 import { laneFor, scriptAllowance, allowsMultiSourceVoicePack, plansCovering, voiceProfileLimit } from './js/pricing.js';
-import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-client.js';
+import { authorizeOutbound, settleOutbound, stagePendingUsageRelease, voidOutbound } from './js/billing-client.js';
 import { bridgeFetch } from './js/generate.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
 import { voiceReferenceConsent } from './js/voice-quality.js';
@@ -381,26 +381,35 @@ function offerDownload(buffer) {
 
 async function playAndCheck(arrayBuffer) {
   const ctx = new AudioContext();
+  let authorization = null;
   try {
   let decoded = await ctx.decodeAudioData(arrayBuffer);
   const lic = await activeLicense();
   let preview = false;
-  let authorization = null;
   if (covers(lic, 'voice')) {
     const units = Math.max(1, Math.ceil(decoded.duration / 60));
     authorization = await authorizeOutbound({ product: 'voice', artifactKind: 'clean_export', quantity: units });
     if (!authorization.ok) {
       $('#status').textContent = `Online production authorization failed (${authorization.reason}). A marked preview may be played but cannot be downloaded.`;
       preview = true;
+    } else {
+      // Staged before the finishing work starts, so a crash or a closed tab
+      // between here and settlement is returned by the boot-time flush instead
+      // of stranding minutes the customer never spent.
+      stagePendingUsageRelease(authorization.authorization.id);
     }
   }
+  // The audible stamp is the paywall in Voice, so one place applies it and both
+  // callers use it: the free lane, and a paid take that never settled.
+  const stampBuffer = async buffer => {
+    const stampRes = await fetch('assets/preview-stamp.wav');
+    if (!stampRes.ok) throw new Error(`preview_stamp_${stampRes.status}`);
+    return stampPreview(buffer, await ctx.decodeAudioData(await stampRes.arrayBuffer()));
+  };
   if (preview || !covers(lic, 'voice')) {
     // Free tier: spoken stamps at start, middle, and end - uncroppable by design.
     try {
-      const stampRes = await fetch('assets/preview-stamp.wav');
-      if (!stampRes.ok) throw new Error(`preview_stamp_${stampRes.status}`);
-      const stampBuf = await ctx.decodeAudioData(await stampRes.arrayBuffer());
-      decoded = await stampPreview(decoded, stampBuf);
+      decoded = await stampBuffer(decoded);
       preview = true;
     } catch {
       $('#status').textContent = 'Preview unavailable because the required audible preview mark could not be applied. No unstamped audio was played or offered.';
@@ -414,33 +423,46 @@ async function playAndCheck(arrayBuffer) {
   if (preview) $('#planSummary').textContent += ' · PREVIEW (licensed renders are clean)';
   await analyse(humanized);
   let url = null;
+  let playable = humanized;
   if (authorization?.ok) {
     try {
       await settleOutbound(authorization.authorization.id);
       url = offerDownload(humanized);
     } catch (error) {
       const release = await releaseVoiceUsage(authorization.authorization.id, 'download_failed');
-      $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: `Download withheld because settlement could not be verified online. ${release}` }));
+      // Withholding only the download link left the clean take in the player,
+      // where "Save audio as…" retrieves it - the whole paid file, unpaid for.
+      // An unsettled render is marked like a preview, or it is not kept at all.
+      playable = await stampBuffer(humanized).catch(() => null);
+      if (playable) $('#planSummary').textContent += ' · PREVIEW (licensed renders are clean)';
+      $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: `Download withheld because settlement could not be verified online. ${release} ${playable ? 'The take below is marked.' : 'The take could not be marked and was not kept.'}` }));
     }
   } else {
     $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: 'Preview playback only. Sign in with an active license and connect online to download.' }));
   }
-  if (!url) {
+  if (!url && playable) {
     // Playback remains local and is not an outbound artifact.
-    const len = humanized.length, sr = humanized.sampleRate;
+    const len = playable.length, sr = playable.sampleRate;
     const wav = new ArrayBuffer(44 + len * 2), view = new DataView(wav);
     const write = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
     write(0, 'RIFF'); view.setUint32(4, 36 + len * 2, true); write(8, 'WAVEfmt ');
     view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
     view.setUint32(24, sr, true); view.setUint32(28, sr * 2, true); view.setUint16(32, 2, true);
     view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, len * 2, true);
-    const channel = humanized.getChannelData(0);
+    const channel = playable.getChannelData(0);
     for (let i = 0; i < len; i++) view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, channel[i])) * 32767, true);
     url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
   }
-  $('#player').src = url;
-  $('#player').hidden = false;
-  $('#status').textContent = 'quality analysis complete — review the finished take below';
+  if (url) {
+    $('#player').src = url;
+    $('#player').hidden = false;
+  } else {
+    $('#player').removeAttribute('src');
+    $('#player').hidden = true;
+  }
+  $('#status').textContent = url
+    ? 'quality analysis complete — review the finished take below'
+    : 'quality analysis complete — no playable take was left in the page';
 
   // Every keep/reject is a labeled example: the gate's thresholds learn
   // the owner's taste from these.
@@ -476,6 +498,13 @@ async function playAndCheck(arrayBuffer) {
   }
   row.prepend(label);
   $('#dl').after(row);
+  } catch (error) {
+    // Finishing, analysis and encoding all sit between the reservation and
+    // settlement, and any of them can throw. Without this the customer keeps
+    // the charge for a take the product never handed over.
+    if (!authorization?.ok) throw error;
+    const release = await releaseVoiceUsage(authorization.authorization.id, 'render_failed');
+    $('#status').textContent = `Voice finishing failed: ${error.message}. ${release}`;
   } finally {
     ctx.close().catch(() => {});
   }
@@ -593,27 +622,33 @@ async function savePack(blob, assessment) {
     $('#recState').textContent = `Online voice-reference authorization failed (${authorization.reason || 'authorization_required'}). Nothing was uploaded.`;
     return;
   }
-  $('#recState').textContent = 'Preparing the reference — reducing noise and selecting the strongest twelve seconds…';
-  const res = await bridgeFetch(`${BRIDGE}/voicepack?name=${encodeURIComponent(name)}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob
-  });
-  if (!res.ok) {
-    const release = await releaseVoiceUsage(authorization.authorization.id, 'upload_failed');
-    $('#recState').textContent = `Save failed: ${(await res.json().catch(() => ({}))).error || res.status}. ${release}`;
-    return;
-  }
   let j;
+  // A bridge that is simply not running rejects rather than answering, so the
+  // upload has to sit inside the guarded region with the settle: an unreachable
+  // engine used to leave the reservation taken and blame the customer's file.
+  let uploaded = false;
   try {
+    stagePendingUsageRelease(authorization.authorization.id);
+    $('#recState').textContent = 'Preparing the reference — reducing noise and selecting the strongest twelve seconds…';
+    const res = await bridgeFetch(`${BRIDGE}/voicepack?name=${encodeURIComponent(name)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+    uploaded = true;
     j = await res.json();
     await settleOutbound(authorization.authorization.id);
   } catch (error) {
     let removed = false;
-    try {
-      const deletion = await bridgeFetch(`${BRIDGE}/voicepack/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
-      removed = deletion.ok;
-    } catch { /* status below remains explicit */ }
+    if (uploaded) {
+      try {
+        const deletion = await bridgeFetch(`${BRIDGE}/voicepack/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
+        removed = deletion.ok;
+      } catch { /* status below remains explicit */ }
+    }
     const release = await releaseVoiceUsage(authorization.authorization.id, 'upload_failed');
-    $('#recState').textContent = `${removed ? 'The unverified reference was removed.' : 'The reference could not be finalized; remove it from local Voice settings before reuse.'} ${release}`;
+    $('#recState').textContent = uploaded
+      ? `${removed ? 'The unverified reference was removed.' : 'The reference could not be finalized; remove it from local Voice settings before reuse.'} ${release}`
+      : `Save failed: ${error.message}. ${release}`;
     return;
   }
   // Listen-before-trust: play the cleaned reference, keep or discard.

@@ -420,14 +420,14 @@ try {
   // ── Coming back from Stripe ──────────────────────────────────────────────
   step('Return from checkout with a paid claim');
   {
-    // checkout-result.js sat in the repository and was loaded by no page at
-    // all: a customer who paid was redirected back and never licensed. This
-    // drives the real return URL and reads the licence the app actually gates
-    // on, rather than trusting that the file exists.
+    // checkout-result.js sat in the repository loaded by no page at all: a
+    // customer who paid was redirected back and never licensed. Then, once it
+    // ran, it failed in silence and kept the only copy of the one-time claim
+    // in sessionStorage - so a customer whose webhook trailed the redirect saw
+    // nothing, and closing the tab stranded the payment.
     const bought = await mintLicence('full');
     let fulfilled = null;                       // the webhook has not landed yet
     const buyer = await studioContext(browser, { comfyBase: COMFY, checkoutLicenceKey: () => fulfilled });
-    // The minted key only verifies against the public key swapped at the edge.
     await buyer.context.route('**/studio/js/license-key.js', route => route.fulfill({
       status: 200, contentType: 'text/javascript',
       body: `export const LICENSE_PUBLIC_JWK = ${JSON.stringify(bought.jwk)};`
@@ -441,33 +441,43 @@ try {
     await settle(page, 2500);
     const lagging = await page.evaluate(() => ({
       licensed: !!globalThis.lic,
-      held: JSON.parse(sessionStorage.getItem('materiallogix:pending-checkout') || 'null'),
-      search: location.search
+      held: JSON.parse(localStorage.getItem('materiallogix:pending-checkout') || 'null'),
+      search: location.search,
+      told: document.getElementById('materiallogixCheckoutNotice')?.textContent || ''
     }));
     ok('a claim the service cannot fulfil yet is held, not lost',
       !lagging.licensed && lagging.held?.claim === 'clm_journey_001',
       `licensed=${lagging.licensed}, held=${JSON.stringify(lagging.held)}`);
+    ok('the customer is told the payment landed rather than shown nothing',
+      /payment received/i.test(lagging.told), lagging.told.slice(0, 90) || '(nothing on screen)');
     ok('the one-time claim leaves the address bar but the page keeps its own query',
       !/claim|session_id|checkout=/.test(lagging.search) && /dev=1/.test(lagging.search) && /entry=0/.test(lagging.search),
       `search was "${lagging.search}"`);
 
-    // 2. The webhook lands. The next ordinary page load must finish the job
-    //    with no claim in the URL at all.
+    // 2. The customer gives up and closes the tab. A fresh page in the same
+    //    browser must still finish the purchase once the webhook lands - this
+    //    is the case that stranded a real payment, because the claim used to
+    //    live in sessionStorage and the URL had already been scrubbed.
     fulfilled = bought.key;
-    await page.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
-    await page.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
-    await page.waitForFunction(() => !!globalThis.lic, null, { timeout: 20000 }).catch(() => {});
-    await settle(page, 1500);
-    const redeemed = await page.evaluate(() => ({
+    await page.close();
+    const reopened = await buyer.context.newPage();
+    await reopened.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
+    await reopened.waitForFunction(() => !!window.__cros, null, { timeout: 25000 });
+    await reopened.waitForFunction(() => !!globalThis.lic, null, { timeout: 25000 }).catch(() => {});
+    await settle(reopened, 1500);
+    const redeemed = await reopened.evaluate(() => ({
       plan: globalThis.lic?.plan || null,
-      keyMatches: localStorage.getItem('cros:license'),
-      held: sessionStorage.getItem('materiallogix:pending-checkout')
+      key: localStorage.getItem('cros:license'),
+      held: localStorage.getItem('materiallogix:pending-checkout'),
+      told: document.getElementById('materiallogixCheckoutNotice')?.textContent || ''
     }));
-    ok('the held claim is redeemed on the next visit and the licence goes live',
-      redeemed.plan === 'full' && redeemed.keyMatches === bought.key,
+    ok('a payment survives the customer closing the tab, and finishes on the next visit',
+      redeemed.plan === 'full' && redeemed.key === bought.key,
       `plan ${redeemed.plan}`);
     ok('the spent claim is not kept once it has been used', redeemed.held === null,
-      `sessionStorage held ${redeemed.held}`);
+      `still held: ${redeemed.held}`);
+    ok('the customer is told the licence went live', /licence is active/i.test(redeemed.told),
+      redeemed.told.slice(0, 80) || '(nothing on screen)');
 
     allErrors.push(...buyer.errors);
     await buyer.context.close();
