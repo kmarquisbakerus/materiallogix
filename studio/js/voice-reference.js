@@ -11,6 +11,15 @@ export function supportedVoiceReference({ name = '', type = '' } = {}) {
 const FINE_TUNE_MINIMUM_SECONDS = 30 * 60;
 
 const VOICE_PLANS = Object.freeze({
+  // No licence, an unrecognised one, or a suspended one. Below the cheapest
+  // paid tier on purpose: falling back to Voice Starter's limits handed a free
+  // preview exactly what a paying customer bought.
+  preview: {
+    method: 'prompt',
+    minimumSeconds: 10,
+    recommendedSeconds: 60,
+    maximumSeconds: 60
+  },
   voice_starter: {
     method: 'prompt',
     minimumSeconds: 10,
@@ -23,7 +32,23 @@ const VOICE_PLANS = Object.freeze({
     recommendedSeconds: FINE_TUNE_MINIMUM_SECONDS,
     maximumSeconds: 3600
   },
+  // The Pro tiers were added to the price list and never added here, so they
+  // fell through to the fallback and a $39 Pro Studio customer could not train
+  // a voice at all while a $15 Single Studio customer could. A tier must never
+  // be worse than the one beneath it.
+  single_pro: {
+    method: 'train',
+    minimumSeconds: 10,
+    recommendedSeconds: 2 * 3600,
+    maximumSeconds: 2 * 3600
+  },
   full: {
+    method: 'train',
+    minimumSeconds: 10,
+    recommendedSeconds: 2 * 3600,
+    maximumSeconds: 2 * 3600
+  },
+  pro: {
     method: 'train',
     minimumSeconds: 10,
     recommendedSeconds: 2 * 3600,
@@ -31,8 +56,14 @@ const VOICE_PLANS = Object.freeze({
   }
 });
 
+/** Every plan the price list sells, so a new tier cannot fall through unseen. */
+export const VOICE_LADDER_PLANS = Object.freeze(Object.keys(VOICE_PLANS));
+
 export function voiceSampleLimits(plan) {
-  return VOICE_PLANS[plan] || VOICE_PLANS.voice_starter;
+  const id = String(plan ?? '');
+  if (id.startsWith('suspended:')) return VOICE_PLANS.preview;
+  // The fallback is the least a licence can buy, never the cheapest paid tier.
+  return VOICE_PLANS[id] || VOICE_PLANS.preview;
 }
 
 /**

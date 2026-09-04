@@ -1,4 +1,7 @@
 import { apiUrl } from './api-root.js';
+import { readableServiceError } from './service-error.js';
+import { count } from './plural.js';
+import { downloadBlob } from './download.js';
 
 const status = document.querySelector('#opsStatus');
 const cards = document.querySelector('#opsCards');
@@ -83,7 +86,7 @@ async function load() {
     status.textContent = `${data.period} · identifiers are pseudonymous; no media, prompts, filenames, keys, or raw emails are collected here.`;
     render();
   } catch (error) {
-    status.textContent = `Operations access unavailable: ${error.message}. This view requires the team Access policy and admin allowlist.`;
+    status.textContent = `Operations access unavailable: ${readableServiceError(error)}. This view requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -130,7 +133,7 @@ async function loadPrivacyQueue() {
   } catch (error) {
     privacyQueue = [];
     renderPrivacyQueue();
-    privacySupportStatus.textContent = `Privacy support unavailable: ${error.message}. This queue requires the team Access policy and admin allowlist.`;
+    privacySupportStatus.textContent = `Privacy support unavailable: ${readableServiceError(error)}. This queue requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -179,12 +182,12 @@ async function loadCustomerCare() {
       if (!refundForm.elements.purchaseSourceId.value) refundForm.elements.purchaseSourceId.value = firstPurchase.source_id || '';
       if (!refundForm.elements.stripePaymentIntentId.value) refundForm.elements.stripePaymentIntentId.value = firstPurchase.stripe_payment_intent_id || '';
     }
-    customerCareStatus.textContent = `${(data.licenses || []).length} license record(s), ${(data.purchases || []).length} purchase record(s), ${(data.actions || []).length} prior action(s).`;
+    customerCareStatus.textContent = `${count((data.licenses || []).length, 'license record')}, ${count((data.purchases || []).length, 'purchase record')}, ${count((data.actions || []).length, 'prior action')}.`;
     renderCustomerCare();
   } catch (error) {
     customerCareSnapshot = null;
     renderCustomerCare();
-    customerCareStatus.textContent = `Customer care unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+    customerCareStatus.textContent = `Customer care unavailable: ${readableServiceError(error)}. This requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -205,7 +208,7 @@ async function submitCareForm(form, path, buildPayload, successLabel) {
     form.elements.confirm.checked = false;
     await loadCustomerCare();
   } catch (error) {
-    customerCareStatus.textContent = `${successLabel} failed: ${error.message}. Nothing is assumed; check the record before retrying.`;
+    customerCareStatus.textContent = `${successLabel} failed: ${readableServiceError(error)}. Nothing is assumed; check the record before retrying.`;
   } finally {
     button.disabled = false;
   }
@@ -244,7 +247,7 @@ privacyRequestTable.addEventListener('click', async event => {
     privacyTicketReference.value = '';
     await loadPrivacyQueue();
   } catch (error) {
-    privacySupportStatus.textContent = `Privacy support action failed: ${error.message}. No completion is assumed; refresh before retrying.`;
+    privacySupportStatus.textContent = `Privacy support action failed: ${readableServiceError(error)}. No completion is assumed; refresh before retrying.`;
     button.disabled = false;
   }
 });
@@ -284,8 +287,7 @@ document.querySelector('#exportCsv').addEventListener('click', () => {
   const rows = [['period','product','activity','status','operations','artifacts','billable_units'],
     ...filteredProducts.map(item => [snapshot.period,item.product,item.artifact_kind,item.status,item.operations,item.artifacts,item.billable_units])];
   const blob = new Blob([rows.map(row => row.map(quote).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
-  link.download = `materiallogix-operations-${snapshot.period}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  downloadBlob(blob, `materiallogix-operations-${snapshot.period}.csv`);
 });
 const promoStatus = document.querySelector('#promoStatus');
 const promoTable = document.querySelector('#promoTable');
@@ -316,12 +318,12 @@ async function loadPromoCodes() {
     const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
     if (!response.ok) throw new Error(data.error || 'promo_codes_unavailable');
     promoCodes = data.promoCodes || [];
-    promoStatus.textContent = `${promoCodes.length} promo code(s); ${promoCodes.filter(item => item.active).length} active.`;
+    promoStatus.textContent = `${count(promoCodes.length, 'promo code')}; ${promoCodes.filter(item => item.active).length} active.`;
     renderPromoCodes();
   } catch (error) {
     promoCodes = [];
     renderPromoCodes();
-    promoStatus.textContent = `Promo codes unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+    promoStatus.textContent = `Promo codes unavailable: ${readableServiceError(error)}. This requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -358,7 +360,7 @@ promoForm.addEventListener('submit', async event => {
     promoForm.elements.oncePerCustomer.checked = true;
     await loadPromoCodes();
   } catch (error) {
-    promoStatus.textContent = `Promo code not created: ${error.message}.`;
+    promoStatus.textContent = `Promo code not created: ${readableServiceError(error)}.`;
   } finally {
     button.disabled = false;
   }
@@ -382,7 +384,7 @@ promoTable.addEventListener('click', async event => {
     if (!response.ok) throw new Error(data.error || 'promo_deactivate_failed');
     await loadPromoCodes();
   } catch (error) {
-    promoStatus.textContent = `Deactivation failed: ${error.message}.`;
+    promoStatus.textContent = `Deactivation failed: ${readableServiceError(error)}.`;
     button.disabled = false;
   }
 });
@@ -396,14 +398,14 @@ async function loadFeatureFlags() {
     const data = response.headers.get('Content-Type')?.includes('application/json') ? await response.json() : {};
     if (!response.ok) throw new Error(data.error || 'feature_flags_unavailable');
     const flags = data.flags || [];
-    flagsStatus.textContent = `${flags.length} flag(s); ${flags.filter(item => item.enabled).length} enabled.`;
+    flagsStatus.textContent = `${count(flags.length, 'flag')}; ${flags.filter(item => item.enabled).length} enabled.`;
     flagsTable.innerHTML = renderTable(
       ['Flag', 'Audience', 'Note', 'State', ''],
       flags.map(item => `<tr data-flag-key="${safe(item.key)}" data-flag-enabled="${item.enabled ? 1 : 0}"><td>${safe(item.key)}</td><td>${safe(item.audience)}</td><td>${safe(item.note || '')}</td><td>${item.enabled ? 'ON' : 'off'}</td><td><button class="btn" type="button" data-flag-toggle>${item.enabled ? 'Disable' : 'Enable'}</button></td></tr>`)
     );
   } catch (error) {
     flagsTable.innerHTML = '';
-    flagsStatus.textContent = `Feature flags unavailable: ${error.message}. This requires the team Access policy and admin allowlist.`;
+    flagsStatus.textContent = `Feature flags unavailable: ${readableServiceError(error)}. This requires the team Access policy and admin allowlist.`;
   }
 }
 
@@ -426,7 +428,7 @@ flagsTable.addEventListener('click', async event => {
     if (!response.ok) throw new Error(data.error || 'feature_flag_update_failed');
     await loadFeatureFlags();
   } catch (error) {
-    flagsStatus.textContent = `Flag update failed: ${error.message}.`;
+    flagsStatus.textContent = `Flag update failed: ${readableServiceError(error)}.`;
     button.disabled = false;
   }
 });

@@ -1,11 +1,12 @@
 // Campaign package builder: renders approved crops, writes the decision
 // record, and zips the lot.
 
-import { SURFACE_BY_ID, QA_BY_ID, STATUS_BY_ID, PRESET_BY_ID, PROVIDERS } from './model.js';
+import { SURFACE_BY_ID, QA_BY_ID, STATUS_BY_ID, PRESET_BY_ID, ASSET_SOURCES, DEFAULT_ASSET_SOURCE } from './model.js';
 import { renderCrop, canvasToBytes, loadImage, grabVideoFrame, defaultCrop, yieldToLoop, applyProofWatermark, proofSurface } from './crop.js';
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { objectUrl, getBlob } from './store.js';
 import { makeZip } from './zip.js';
+import { count } from './plural.js';
 
 export const slug = s => (s || '')
   .toLowerCase()
@@ -37,6 +38,27 @@ function exportName(project, asset, surface) {
   return `${brand}_${campaign}_${surface.id}_${slug(asset.filename)}_${surface.w}x${surface.h}`;
 }
 
+/**
+ * Where the work in this package actually happened, read from the assets
+ * themselves rather than from a list of configured intentions. Someone
+ * defending this delivery needs the truth, not a settings dump.
+ */
+export function executionSummary(assets) {
+  const counts = new Map();
+  for (const asset of assets || []) {
+    const id = ASSET_SOURCES[asset?.source] ? asset.source : DEFAULT_ASSET_SOURCE;
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  const used = [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, assetCount]) => ({ id, label: ASSET_SOURCES[id].label, ranOn: ASSET_SOURCES[id].where, assets: assetCount }));
+  const offDevice = used.filter(entry => entry.ranOn !== 'this computer');
+  return {
+    ranEntirelyOnThisComputer: offDevice.length === 0,
+    sources: used,
+    offDevice: offDevice.map(entry => entry.id)
+  };
+}
+
 // --- documents -------------------------------------------------------------
 
 export function decisionsJson(project, assets) {
@@ -50,9 +72,7 @@ export function decisionsJson(project, assets) {
       brief: project.brief,
       surfaces: project.surfaces,
       qaPreset: project.qaPreset,
-      providers: Object.fromEntries(
-        PROVIDERS.map(p => [p.id, project.providers?.[p.id]?.enabled ? 'enabled (no key stored)' : 'off'])
-      )
+      execution: executionSummary(assets)
     },
     assets: assets.map(a => ({
       id: a.id,
@@ -243,9 +263,9 @@ export function teamNotes(project, assets) {
   L.push('');
 
   L.push('## Before launch', '');
-  if (missingAlt) L.push(`- ⚠️ ${missingAlt} approved placement(s) have no alt text.`);
+  if (missingAlt) L.push(`- ⚠️ ${count(missingAlt, 'approved placement')} ${missingAlt === 1 ? 'has' : 'have'} no alt text.`);
   if (videos.length) {
-    L.push(`- ${videos.length} video placement(s) ship as source file plus crop and trim notes.`,
+    L.push(`- ${count(videos.length, 'video placement')} ship as source file plus crop and trim notes.`,
       '  This build does not re-encode video — hand `video/VIDEO_NOTES.md` to the editor.');
   }
   L.push('- Re-check platform policy against live ad rules before spending.',

@@ -5,23 +5,35 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v19';
+const CACHE = 'materiallogix-shell-v26';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
+// Every module the four pages import, plus the stylesheets they link. An
+// installed copy that is missing one of these does not degrade - it fails to
+// start. `npm test` walks the real import graph and fails if this list drifts.
 const SHELL = [
   './', 'index.html', 'voice.html', 'usage.html', 'admin.html', 'manifest.webmanifest', 'icon.svg',
-  'css/app.css', 'css/studio-entry.css', 'assets/preview-stamp.wav',
+  'css/app.css', 'css/studio-entry.css', 'css/usage.css', 'css/admin.css',
+  'assets/preview-stamp.wav',
   'js/bootstrap.js', 'js/studio-shell.js', 'js/studio-nav.js', 'js/api-root.js', 'js/activity.js', 'js/privacy.js',
-  'js/studio-entry.js',
+  'js/studio-entry.js', 'js/app-version.js', 'js/features.js', 'js/prompt-guard.js', 'js/account-providers.js',
   'js/app.js', 'js/model.js', 'js/store.js', 'js/crop.js', 'js/analyze.js',
-  'js/export.js', 'js/clientpage.js', 'js/history.js', 'js/zip.js',
-  'js/generate.js', 'js/inpaint-foundation.js', 'js/cloud-video.js', 'js/spin-viewer.js', 'js/geometry.js', 'js/human-geometry.js', 'js/device.js', 'js/raw.js', 'js/voice.js',
+  'js/export.js', 'js/clientpage.js', 'js/history.js', 'js/zip.js', 'js/download.js',
+  'js/generate.js', 'js/inpaint-foundation.js', 'js/cloud-video.js', 'js/spin-viewer.js', 'js/geometry.js', 'js/human-geometry.js', 'js/device.js', 'js/raw.js', 'js/raw-preview.js', 'js/voice.js',
+  'js/capture-guidance.js', 'js/capture-pacer.js', 'js/video-plan.js',
   'js/editing.js', 'js/print.js', 'js/house-voices.js', 'js/voice-quality.js', 'js/voice-reference.js', 'js/color-management.js',
-  'js/pricing.js', 'js/pricing-catalog.js', 'js/license.js', 'js/license-key.js'
-  ,'js/billing-client.js', 'js/usage.js', 'js/admin.js',
-  'assets/raw/worker.js',
-  'site/media/studio-entry-photo.webp', 'site/media/studio-entry-video.webp', 'site/media/studio-entry-voice.webp'
+  'js/plural.js', 'js/service-error.js', 'js/site-links.js',
+  'js/pricing.js', 'js/license.js', 'js/license-key.js',
+  'js/billing-client.js', 'js/usage.js', 'js/admin.js', 'js/checkout-result.js',
+  'js/video-engine.js', 'js/model-licence.js', 'js/region.js',
+  'assets/raw/worker.js'
 ];
-const SHELL_PATHS = new Set(SHELL.map(path => new URL(path, self.location.origin).pathname));
+
+// Paths resolve against this worker's own directory, which is where `addAll`
+// stores them. Resolving against the origin instead would build a lookup set
+// of `/js/app.js` while the cache held `/studio/js/app.js`, and the fetch
+// handler would never match a single shell request.
+const shellPath = path => new URL(path, self.location.href).pathname;
+const SHELL_PATHS = new Set(SHELL.map(shellPath));
 // Proof-only candidate assets are warmed only when the explicit parity suite
 // runs. Keeping 14 MiB out of the mandatory shell protects normal installs.
 const PEOPLE_ASSETS = [
@@ -33,7 +45,7 @@ const PEOPLE_ASSETS = [
   'assets/human/models/movenet-lightning.json', 'assets/human/models/movenet-lightning.bin',
   'assets/human/models/blazepose-full.json', 'assets/human/models/blazepose-full.bin'
 ];
-const PEOPLE_PATHS = new Set(PEOPLE_ASSETS.map(path => new URL(path, self.location.origin).pathname));
+const PEOPLE_PATHS = new Set(PEOPLE_ASSETS.map(shellPath));
 const NETWORK_TIMEOUT_MS = 1200;
 
 async function networkFirst(request, event, cacheName = CACHE) {
@@ -57,7 +69,19 @@ async function networkFirst(request, event, cacheName = CACHE) {
 }
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  // addAll is all-or-nothing: one unreachable entry leaves the cache empty and
+  // the app with no offline shell at all. Add each entry on its own, then fail
+  // the install only if something the app cannot start without is missing.
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    const results = await Promise.allSettled(SHELL.map(path => cache.add(path)));
+    const failed = SHELL.filter((_, index) => results[index].status === 'rejected');
+    if (failed.length) {
+      // Report every missing entry at once; a partial shell is a broken shell.
+      throw new Error(`Offline shell incomplete: ${failed.join(', ')}`);
+    }
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', event => {

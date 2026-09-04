@@ -176,13 +176,6 @@ export function flushPendingUsageReleases() {
   return releaseFlushPromise;
 }
 
-export async function beginAddOnCheckout(sku = 'export_one') {
-  const licenseKey = activeLicenseKey();
-  if (!licenseKey) throw new Error('license_required');
-  const result = await billingRequest('checkout/session', { sku, licenseKey }, crypto.randomUUID());
-  location.assign(result.url);
-}
-
 export async function openBillingPortal() {
   const licenseKey = activeLicenseKey();
   if (!licenseKey) throw new Error('license_required');

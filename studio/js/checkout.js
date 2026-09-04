@@ -44,30 +44,40 @@ function setStatus(message) {
   if (node) node.textContent = message;
 }
 
-function selectedTerm() {
-  return document.querySelector('#billingTerm')?.value || 'monthly';
+// One control decides the term. There used to be two - a radio switch that
+// changed the displayed price and a select that decided the SKU - so a customer
+// could read the yearly price and be charged the monthly one.
+function termRadios() {
+  return [...document.querySelectorAll('.term-radio')];
 }
 
+function selectedTerm() {
+  const checked = termRadios().find(input => input.checked);
+  const id = checked?.dataset.term || TERMS[0].id;
+  return TERMS.some(term => term.id === id) ? id : TERMS[0].id;
+}
+
+/**
+ * The markup and its stylesheet own which price is on screen. This only marks
+ * the plans that term cannot buy, so the button never offers a price the
+ * customer is not looking at.
+ */
 function updatePricing(termId) {
   const term = TERMS.find(item => item.id === termId) || TERMS[0];
   for (const button of document.querySelectorAll('[data-checkout-plan]')) {
-    const planId = button.dataset.checkoutPlan;
-    const product = PRODUCTS.find(item => item.id === planId);
-    const amount = price(planId, term.id);
-    const card = button.closest('.tier, .plan');
-    if (!product || !card) continue;
-    if (!amount) {
-      button.disabled = true;
-      button.textContent = `${product.name} is monthly only`;
-      continue;
-    }
-    button.disabled = false;
-    const priceNode = card.querySelector('.price');
-    if (priceNode) priceNode.innerHTML = `$${amount.total}<small>/${term.months === 1 ? 'mo' : `${term.months} mo`}</small>`;
-    button.textContent = `Choose ${product.name}`;
+    const product = PRODUCTS.find(item => item.id === button.dataset.checkoutPlan);
+    if (!product) continue;
+    const amount = price(product.id, term.id);
+    button.disabled = !amount;
+    button.textContent = amount
+      ? (button.dataset.label || `Choose ${product.name}`)
+      : `${product.name} is monthly only`;
   }
   try { localStorage.setItem(TERM_STORAGE, term.id); } catch { /* unavailable */ }
 }
+
+/** Re-read the buttons after another script relabels or replaces them. */
+globalThis.addEventListener('materiallogix:checkout-buttons-changed', () => updatePricing(selectedTerm()));
 
 async function beginCheckout(button) {
   const consent = document.querySelector('#purchaseConsent');
@@ -121,12 +131,13 @@ const checkoutSelector = '[data-checkout-plan], [data-checkout-sku]';
 const promoRow = document.querySelector('#promoRow');
 if (promoRow && document.querySelector(checkoutSelector)) promoRow.hidden = false;
 
-const selector = document.querySelector('#billingTerm');
-if (selector) {
+const terms = termRadios();
+if (terms.length) {
   const remembered = localStorage.getItem(TERM_STORAGE);
-  if (TERMS.some(term => term.id === remembered)) selector.value = remembered;
-  selector.addEventListener('change', () => updatePricing(selector.value));
-  updatePricing(selector.value);
+  const restore = terms.find(input => input.dataset.term === remembered);
+  if (restore) restore.checked = true;
+  for (const input of terms) input.addEventListener('change', () => updatePricing(selectedTerm()));
+  updatePricing(selectedTerm());
 }
 attribution();
 sendAnalytics('page_view');

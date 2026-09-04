@@ -1,0 +1,58 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Studio and site checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the unit suite
+        run: npm test
+
+      # The unit suite proves declarations. Every defect this project has
+      # shipped - a paid checkout that licensed nobody, a watermark the
+      # renderer was never told about, a page that charged a different price
+      # from the one it showed - passed the unit suite and would only have
+      # been caught here, in a real browser driving the real application.
+      # playwright-core is a declared devDependency, so this is the copy npm ci
+      # just installed - not a floating fetch that could drift from the version
+      # the suite runs against.
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Run the browser journey
+        run: npm run journey
+
+      - name: Verify the deploy package ships only the site
+        run: |
+          python3 - <<'PY'
+          import re, pathlib, subprocess, sys, tempfile
+          wf = pathlib.Path('.github/workflows/package-cloudflare-upload.yml').read_text()
+          start = wf.index("python - <<'PY'") + len("python - <<'PY'")
+          body = wf[start:wf.index("          PY\n", start)]
+          script = "\n".join(l[10:] if l.startswith(' ' * 10) else l for l in body.split("\n"))
+          # Run the real packaging step and let its own guard fail the build.
+          out = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+          print(out.stdout, out.stderr)
+          sys.exit(out.returncode)
+          PY

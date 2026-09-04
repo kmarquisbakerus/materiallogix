@@ -23,6 +23,7 @@ import { assessInpaintMaskedBoundary, blendInpaintMaskedCandidate,
   CPU_PRESETS, cpuJobSettings, estimateCpuSeconds, recordCpuPace, waitLabel } from './generate.js';
 import { probeDevice, deviceSummary } from './device.js';
 import { featureEnabled } from './features.js';
+import { enabledAccountProviders, providerStartUrl } from './account-providers.js';
 import { guidanceFor, ensureGuardianAck } from './capture-guidance.js';
 import { screenPrompt } from './prompt-guard.js';
 import { wordBudgetForSeconds } from './voice.js';
@@ -30,13 +31,20 @@ import { paceTrace, paceTraceSvg, runPaceGuide, paceTarget } from './capture-pac
 import { analyzeGeometry } from './geometry.js';
 import { CURVE_IDENTITY, buildLuminanceLut, ensureEditState, pixelGridReview, pixelGridOverlay } from './editing.js';
 import { authorizeOutbound, settleOutbound, settleOutboundBeforeDelivery, voidOutbound } from './billing-client.js';
+import { readableServiceError } from './service-error.js';
+import { count } from './plural.js';
+import { DEFAULT_VIDEO_SPEC, deliveryFrame, resolveVideoTrim } from './video-plan.js';
 import { COLOR_PIPELINE, colorExportDecision, decodeColorManagedBlob } from './color-management.js';
 import { PRINT_PPI, PRINT_PRESETS, encodePrintJpeg, planPrint, printColorDecision, renderPrint } from './print.js';
 import { normalizeSpinIndex, stepSpinIndex, spinIndexFromDrag, spinStepFromWheel, spinAngleLabel } from './spin-viewer.js';
 import { makeInpaintJobSpec, createInpaintBenchmark } from './inpaint-foundation.js';
-import { quoteCloudJob, recordExport } from './pricing.js';
+import { quoteCloudJob, recordExport, includedCloudCents, exportForProduct, exportPrice, plansCovering, planLabel,
+  laneFor, upscaleModelsForLane, LANES, unitsForDeliveries, deliveryRulesFor, requiresWatermark } from './pricing.js';
 import { cloudVideoAvailability, submitCloudVideoPackage, watchCloudVideoJob, downloadCloudVideo } from './cloud-video.js';
+import { videoEngineForThisCustomer, rememberEnginePreference, EDITORIAL_PROVENANCE } from './video-engine.js';
+import { PRO_VIDEO_ENGINE, STANDARD_VIDEO_ENGINE } from './model-licence.js';
 import { isImportableMediaFile, isRadianceFile, isRawCameraFile, prepareRawCameraImport } from './raw.js';
+import { pricingUrl } from './site-links.js';
 
 const $ = sel => document.querySelector(sel);
 const el = (tag, props = {}, ...kids) => {
@@ -117,6 +125,12 @@ const btn = (label, cls = 'btn', onclick) => {
 };
 /** Names a control whose visible label is a glyph. */
 const aria = (node, label) => { node.setAttribute('aria-label', label); node.title = label; return node; };
+
+/** Close a fragment so two messages read as two sentences, never a run-on. */
+const sentence = text => {
+  const trimmed = String(text ?? '').trim();
+  return !trimmed || /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+};
 
 const svgEl = (tag, attrs = {}, ...kids) => {
   const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -308,7 +322,7 @@ async function analyzeAll() {
   const pending = state.assets.filter(a => !a.auto);
   if (!pending.length) return toast('Every asset has already been analysed.');
   const bar = el('i');
-  const status = el('p', {}, `Analysing ${pending.length} asset(s)…`);
+  const status = el('p', {}, `Analysing ${count(pending.length, 'asset')}…`);
   dialog('Automated checks', el('div', {}, status, el('div', { className: 'progress' }, bar)),
     [btn('Close', 'btn', closeDialog)]);
   try {
@@ -326,7 +340,7 @@ async function analyzeAll() {
     toast(error?.message || 'Analysis stopped early. Already-analysed assets kept their results.', true);
     return;
   }
-  status.textContent = `Done. ${pending.length} asset(s) analysed.`;
+  status.textContent = `Done. ${count(pending.length, 'asset')} analysed.`;
   render();
 }
 
@@ -353,7 +367,7 @@ async function importFiles(fileList) {
   if (!files.length) return toast('No supported photo or video files in that drop.', true);
 
   const bar = el('i');
-  const status = el('p', {}, `Importing ${files.length} file(s)…`);
+  const status = el('p', {}, `Importing ${count(files.length, 'file')}…`);
   dialog('Import', el('div', {}, status, el('div', { className: 'progress' }, bar)), [btn('Close', 'btn', closeDialog)]);
 
   let imported = 0, blocked = 0;
@@ -411,7 +425,7 @@ async function importFiles(fileList) {
   state.assets = await store.listAssets(state.project.id);
   closeDialog();
   render();
-  toast(`Imported and analysed ${imported} file(s).${blocked ? ` ${blocked} file(s) were blocked.` : ''}`);
+  toast(`Imported and analysed ${count(imported, 'file')}.${blocked ? ` ${count(blocked, 'file')} ${blocked === 1 ? 'was' : 'were'} blocked.` : ''}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -876,7 +890,7 @@ function renderSidebar() {
     el('div', { style: 'display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap' }, addBtn, analyzeBtn, demoBtn),
     el('div', { className: 'dropzone' }, 'or drop images and video anywhere'),
     el('p', { className: 'hint', style: 'margin-top:12px;margin-bottom:0' },
-      `${state.assets.length} asset(s) · ${state.assets.filter(a => a.auto).length} analysed`),
+      `${count(state.assets.length, 'asset')} · ${state.assets.filter(a => a.auto).length} analysed`),
     storageLine
   );
 
@@ -926,7 +940,7 @@ function renderSidebar() {
     if (lic) {
       licBox.append(
         el('p', { className: 'hint', style: 'margin-bottom:6px' },
-          `Licensed \u2014 ${String(lic.plan).replaceAll('_', ' ')}${lic.selected_product ? ` / ${lic.selected_product}` : ''} (${lic.email}). Clean exports require online authorization and verified remaining usage.`),
+          `Licensed \u2014 ${planLabel(lic.plan)}${lic.selected_product ? ` / ${String(lic.selected_product).replace(/^./, c => c.toUpperCase())}` : ''} (${lic.email}). Clean exports require online authorization and verified remaining usage.`),
         btn('Deactivate on this device', 'btn sm', () => { deactivate(); render(); }));
     } else {
       const input = el('input', { type: 'text', placeholder: 'ML1.\u2026 license key' });
@@ -935,7 +949,7 @@ function renderSidebar() {
       licBox.append(input, el('div', { style: 'height:6px' }),
         btn('Activate', 'btn sm', async () => {
           const lic = await activate(input.value);
-          if (lic) { toast(`Licensed: ${lic.plan}.`); render(); }
+          if (lic) { toast(`Licensed: ${planLabel(lic.plan)}.`); render(); }
           else {
             const reason = activationFailureReason();
             msg.textContent = reason === 'online_verification_required' || reason === 'verification_unavailable'
@@ -946,6 +960,15 @@ function renderSidebar() {
           }
         }), msg);
     }
+    // Google and Apple stay hidden until the server enables their flag, so an
+    // unapproved provider never shows a button that cannot complete.
+    enabledAccountProviders().then(providers => {
+      if (!providers.length) return;
+      licBox.append(
+        el('p', { className: 'hint', style: 'margin:12px 0 6px' }, 'Or sign in to your MaterialLogix account'),
+        el('div', { className: 'account-providers' }, ...providers.map(provider =>
+          btn(provider.label, 'btn sm', () => { location.assign(providerStartUrl(provider.id)); }))));
+    });
   });
 
   const deliver = panel('Deliver', false,
@@ -1020,7 +1043,7 @@ function renameProject() {
 
 function deleteProjectFlow() {
   dialog('Delete project',
-    el('p', {}, `Delete "${state.project.name}" and its ${state.assets.length} asset(s)? Back up first — this cannot be undone.`),
+    el('p', {}, `Delete "${state.project.name}" and its ${count(state.assets.length, 'asset')}? Back up first — this cannot be undone.`),
     [btn('Cancel', 'btn', closeDialog),
      btn('Delete', 'btn primary', async () => {
        await store.deleteProject(state.project.id);
@@ -1049,7 +1072,7 @@ async function backupProject() {
       }
     });
     downloadBlob(makeZip(entries), `${slug(state.project.name)}-recovery.zip`);
-    toast(`Recovery file saved with ${entries.length - 1} media file(s).`);
+    toast(`Recovery file saved with ${count(entries.length - 1, 'media file')}.`);
   } catch (error) {
     toast(error?.message || 'The recovery file could not be created. Nothing was saved.', true);
   }
@@ -1079,7 +1102,7 @@ async function restoreProject(file) {
       }
     });
     await boot(projectId);
-    toast(`Recovered ${backup.assets.length} media file(s) and all project decisions.`);
+    toast(`Recovered ${count(backup.assets.length, 'media file')} and all project decisions.`);
   } catch (error) {
     toast(`Recovery failed: ${error.message}`, true);
   }
@@ -1884,43 +1907,33 @@ function videoBlock(asset) {
   return wrap;
 }
 
-function parseVideoTime(value) {
-  if (value === '' || value == null) return null;
-  if (typeof value === 'number') return value;
-  const parts = String(value).trim().split(':').map(Number);
-  if (parts.some(Number.isNaN)) return null;
-  return parts.reduce((total, part) => total * 60 + part, 0);
-}
 
-function videoRenderPlan(asset) {
+function videoRenderPlan(asset, lane = LANES.paid, engine = null) {
   const v = asset.video;
-  const trimStart = parseVideoTime(v.trimStart);
-  const trimEnd = parseVideoTime(v.trimEnd);
-  if (v.trimStart && trimStart == null) throw new Error('Enter the in point as seconds or timecode, for example 0:03.5.');
-  if (v.trimEnd && trimEnd == null) throw new Error('Enter the out point as seconds or timecode, for example 0:12.');
-  if (trimEnd != null && trimEnd <= (trimStart || 0)) throw new Error('The out point must be later than the in point.');
-  const deliveryFrames = {
-    vertical: { w: 1080, h: 1920 }, portrait: { w: 1080, h: 1350 },
-    square: { w: 1080, h: 1080 }, wide: { w: 1920, h: 1080 }
-  };
-  const frame = deliveryFrames[v.spec] || deliveryFrames.vertical;
+  const trim = resolveVideoTrim({ trimStart: v.trimStart, trimEnd: v.trimEnd, duration: asset.duration, speed: v.speed || 1 });
+  const frame = deliveryFrame(v.spec);
   const activePlacement = state.activeSurface ? ensurePlacement(asset, state.activeSurface) : null;
   const crop = snapToRatio(
     activePlacement?.crop || defaultCrop(asset.width, asset.height, frame),
     asset.width, asset.height, frame
   );
-  const speed = v.speed || 1;
-  const sourceEnd = trimEnd ?? asset.duration;
-  const outputSeconds = Math.max(0, (sourceEnd - (trimStart || 0)) / speed);
-  if (!Number.isFinite(outputSeconds) || outputSeconds <= 0) throw new Error('The selected video range has no renderable duration.');
   return {
-    outputSeconds,
+    outputSeconds: trim.outputSeconds,
     opts: {
-      trimStart: trimStart || 0, trimEnd, spec: v.spec || 'vertical', speed,
+      trimStart: trim.start, trimEnd: trim.end, spec: v.spec || DEFAULT_VIDEO_SPEC, speed: trim.speed,
       fadeIn: v.fadeIn || 0, fadeOut: v.fadeOut || 0, rotate: v.rotate || 0,
       volumeDb: v.volumeDb || 0, denoise: !!v.denoise, audioEq: v.audioEq || 'flat',
-      burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments
-    }
+      burnCaptions: !!v.burnCaptions, crop, adjustments: ensureEditState(asset).adjustments,
+      // The engine must mark an unlicensed render. Photo exports are stopped at
+      // the paywall and voice previews are audibly stamped; video had nothing.
+      delivery: deliveryRulesFor(lane, 'video'),
+      // Which generative engine may serve this customer, decided by their
+      // region rather than by whatever the renderer happens to have loaded.
+      // `null` is the honest answer today - no model touches the pixels - and
+      // it travels with the job so the renderer cannot substitute one.
+      engine: engine?.engineId || null
+    },
+    provenance: engine?.provenance || EDITORIAL_PROVENANCE
   };
 }
 
@@ -1971,15 +1984,63 @@ window.addEventListener('materiallogix:cancel-job', event => {
 });
 window.dispatchEvent(new Event('materiallogix:cancel-ready'));
 
+/**
+ * What the customer is told about the engine, and the switch when there is one.
+ *
+ * Three shapes, and the difference between them matters:
+ *   - nothing generative is enabled: say what did produce the file;
+ *   - the engine is fixed by their region: say which one and why, no control;
+ *   - both engines are licensed where they are: give them the choice.
+ *
+ * The control is a convenience, not the enforcement. `resolveVideoEngine`
+ * resolves the preference against the territory on every render, so a stored
+ * preference for an engine that is not licensed where the customer is has no
+ * effect even if this control is never drawn.
+ */
+function engineRow(engine) {
+  if (!engine.generative) return el('p', { className: 'hint' }, engine.provenance);
+  if (!engine.offered) {
+    return el('p', { className: 'hint' }, engine.notice || engine.provenance);
+  }
+  const wrap = el('div', { className: 'engine-choice' },
+    el('p', {}, el('b', {}, 'Motion engine')));
+  const note = el('p', { className: 'hint' }, engine.notice);
+  for (const [id, label] of [[PRO_VIDEO_ENGINE, 'Pro Motion Engine'], [STANDARD_VIDEO_ENGINE, 'Standard engine']]) {
+    const input = el('input', { type: 'radio', name: 'ml-video-engine', value: id });
+    input.checked = engine.engineId === id;
+    input.onchange = () => {
+      if (!input.checked) return;
+      rememberEnginePreference(id);
+      // Re-resolve rather than trusting the click: the answer shown must be the
+      // answer the render will actually use.
+      videoEngineForThisCustomer({ pro: true }).then(next => { note.textContent = next.notice; });
+    };
+    wrap.append(el('label', { className: 'checkline' }, input, el('span', {}, label)));
+  }
+  wrap.append(note);
+  return wrap;
+}
+
 async function reviewCloudVideoRender(asset) {
   const availability = await cloudVideoAvailability();
   if (!availability.available) return dialog('Cloud render is not open yet', el('div', {},
     el('p', {}, 'Use this device to render your video for now.')),
   [btn('Close', 'btn', closeDialog), btn('Use local render', 'btn primary', () => { closeDialog(); renderEditedVideo(asset); })]);
+  const lane = laneFor(await activeLicense(), 'video');
+  // The engine gate applies to the cloud exactly as it does to this device.
+  // Where our GPUs sit is not what the licence turns on - it turns on where the
+  // customer is - so sending the job away cannot route around it.
+  const engine = await videoEngineForThisCustomer({ pro: lane.motionEngine === 'pro' });
+  if (engine.blocked) return toast(engine.notice, true);
   let plan;
-  try { plan = videoRenderPlan(asset); }
+  // The cloud render carries the same delivery rules as the local one, so a
+  // licence cannot be bypassed by sending the job to our GPUs instead.
+  try { plan = videoRenderPlan(asset, lane, engine); }
   catch (error) { return toast(error.message, true); }
   const quote = quoteCloudJob({ kind: 'video', durationSeconds: plan.outputSeconds });
+  // What the licence includes is known here; what remains this period is the
+  // server's to report, so the split is never guessed on this side.
+  const includedCredit = includedCloudCents(globalThis.lic);
   const consent = el('input', { type: 'checkbox' });
   const continueButton = btn('Compile and send package', 'btn primary', async () => {
     if (!consent.checked) return;
@@ -1993,6 +2054,7 @@ async function reviewCloudVideoRender(asset) {
         source: { filename: asset.filename, contentType: source.type || 'application/octet-stream',
           size: source.size, durationSeconds: asset.duration },
         outputSeconds: plan.outputSeconds, edit: plan.opts,
+        engine: { id: plan.opts.engine, region: engine.country || null, provenance: plan.provenance },
         brandOverlay: state.project.brandOverlay || null
       };
       const result = await busy(() => submitCloudVideoPackage({ source, manifest,
@@ -2022,7 +2084,11 @@ async function reviewCloudVideoRender(asset) {
   continueButton.disabled = true;
   consent.onchange = () => { continueButton.disabled = !consent.checked; };
   dialog('Review cloud render', el('div', {},
-    el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds; included Video credit is used first.`),
+    el('p', {}, `Estimated charge: $${(quote.amountCents / 100).toFixed(2)} for ${quote.billedSeconds} seconds.`),
+    engineRow(engine),
+    el('p', { className: 'hint' }, includedCredit
+      ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo, video or voice. It is used before your wallet; the server settles the actual amount.`
+      : 'This job is paid from your prepaid wallet. The server settles the actual amount.'),
     el('label', { className: 'checkline' }, consent,
       el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are scheduled for deletion within 24 hours.'))),
   [btn('Cancel', 'btn', closeDialog), btn('Use local render', 'btn', () => { closeDialog(); renderEditedVideo(asset); }), continueButton]);
@@ -2034,9 +2100,20 @@ async function renderEditedVideo(asset) {
   if (asset.video.burnCaptions && !bridge.video?.whisper) {
     return toast('Captions need the optional Video pack; add it or turn captions off.', true);
   }
+  const lane = laneFor(await activeLicense(), 'video');
+  // Which engine may serve this customer. Today no generative engine is
+  // enabled, so this resolves to "none" and no region lookup is made; when one
+  // is enabled it is the only route to it, and an unconfirmed region stops the
+  // render rather than guessing in the direction that breaks the licence.
+  const engine = await videoEngineForThisCustomer({ pro: lane.motionEngine === 'pro' });
+  if (engine.blocked) return toast(engine.notice, true);
   let plan;
-  try { plan = videoRenderPlan(asset); }
+  try { plan = videoRenderPlan(asset, lane, engine); }
   catch (error) { return toast(error.message, true); }
+  // An engine that cannot mark the file must not be handed an unmarked one.
+  if (requiresWatermark(lane, 'video') && !bridge.video?.watermark) {
+    return toast('This device cannot add the preview watermark that an unlicensed render requires. Activate a Video plan, or update the Video pack.', true);
+  }
   const opts = { ...plan.opts, resume: true };
   const authorization = await authorizeOutbound({ product: 'video', artifactKind: 'upload', quantity: 1 });
   if (!authorization.ok) return toast(`Online render authorization failed: ${authorization.reason || 'authorization_required'}.`, true);
@@ -2062,7 +2139,12 @@ async function renderEditedVideo(asset) {
       await settleOutbound(authorization.authorization.id, await blobEvidenceHash(blob));
       const file = new File([blob], asset.filename.replace(/\.[^.]+$/, '') + '-edited.mp4', { type: 'video/mp4' });
       const rendered = newAsset(state.project.id, file);
-      rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings.`;
+      rendered.source = 'rendered-local';
+      // The terms promise the customer can always tell what produced a file.
+      // That promise is only kept if the line says so even when the answer is
+      // "no model at all".
+      rendered.provenance = `Rendered locally from ${asset.filename} with the saved non-destructive edit settings. ${plan.provenance}`;
+      rendered.engine = plan.opts.engine;
       await store.addAsset(rendered, file);
       const url = await store.objectUrl(rendered.id);
       Object.assign(rendered, await probe(file, url));
@@ -2626,6 +2708,8 @@ async function generativeFillDialog(asset) {
   const status = el('p', { className: 'hint', role: 'status' }, 'The result will be added as a new candidate.');
   const body = el('div', {},
     el('p', { className: 'hint', style: 'color:var(--warn)' }, 'Beta: review edges, anatomy, fabric, skin, and lighting at 100% before approval.'),
+    !covers(lic, 'photo') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
+      'Generative Fill runs on this computer and draws no cloud balance, but it is a licensed Photo capability. Activate a Photo Single Studio or Full Studio licence in Deliver.') : null,
     el('p', { className: 'hint' }, 'Draw around the area, then describe the change; your original stays unchanged.'),
     preview,
     el('h4', { className: 'editor-group-title' }, 'Selection'), selectionActions, selectionStatus,
@@ -2644,6 +2728,15 @@ async function generativeFillDialog(asset) {
     if (!requested) return toast('Describe the intended result first.', true);
     run.disabled = true;
     let fillBoundaryQuality = null;
+    // Generative Fill is a local production job, metered exactly like Photo
+    // enhancement: the licence is confirmed online and the operation is
+    // recorded in Usage. Local work never draws from the cloud balance.
+    const authorization = await authorizeOutbound({ product: 'photo', artifactKind: 'upload', quantity: 1 });
+    if (!authorization.ok) {
+      run.disabled = false;
+      status.textContent = `Generative Fill authorization failed: ${readableServiceError(authorization.reason || 'authorization_required')}.`;
+      return;
+    }
     try {
       await busy(async () => {
         const source = document.createElement('canvas'); source.width = decoded.w; source.height = decoded.h;
@@ -2674,6 +2767,7 @@ async function generativeFillDialog(asset) {
         const blended = await blendInpaintMaskedCandidate(source, result.blob, selectionMask, 16);
         const boundaryQuality = await assessInpaintMaskedBoundary(source, blended, selectionMask);
         fillBoundaryQuality = boundaryQuality;
+        await settleOutbound(authorization.authorization.id, await blobEvidenceHash(blended));
         const file = new File([blended], `fill_${mode.value}_${result.seed}.png`, { type: 'image/png' });
         const created = newAsset(state.project.id, file);
         created.source = 'generated-fill-local';
@@ -2696,7 +2790,10 @@ async function generativeFillDialog(asset) {
       closeDialog(); render(); toast(fillBoundaryQuality?.status === 'pass'
         ? 'Generative Fill Beta candidate created — automated boundary continuity passed; complete human review.'
         : 'Generative Fill Beta candidate created and flagged for boundary review.', fillBoundaryQuality?.status !== 'pass');
-    } catch (err) { status.textContent = `Failed: ${err.message}`; }
+    } catch (err) {
+      const release = await releaseUsage(authorization.authorization.id, 'render_failed');
+      status.textContent = `Failed: ${sentence(err.message)} ${release.message}`;
+    }
     finally { run.disabled = false; }
   });
   dialog('Generative Fill Beta', body, [btn('Cancel', 'btn', closeDialog), run]);
@@ -3256,20 +3353,27 @@ async function upscaleAsset(asset) {
       return toast('Add the Photo enhancement pack in Workspace, then try again.', true);
     }
   }
+  // The licence decides which models are on the menu. The dialog used to list
+  // everything installed and preselect 4x for everyone, with a line of text
+  // claiming a plan was required - a sentence where a gate belonged.
+  const lane = laneFor(lic, 'photo');
+  const entitled = upscaleModelsForLane(lane, models);
+  if (!entitled.length) {
+    return toast(covers(lic, 'photo')
+      ? 'This device does not have the enhancement model your plan uses. Add the Photo enhancement pack in Workspace.'
+      : `Free preview enhances at ${lane.upscale.factor}, and that model is not installed on this device.`, true);
+  }
   const pick = el('select', {});
-  const preferredModel = models.find(m => /realesrgan-x4plus$/.test(m))
-    || models.find(m => /cpu-lanczos-x4$/.test(m))
-    || models[0];
-  for (const [index, m] of models.entries()) pick.append(el('option', {
+  for (const [index, m] of entitled.entries()) pick.append(el('option', {
     value: m,
-    selected: m === preferredModel
+    selected: index === 0
   }, `Enhancement quality ${index + 1}`));
   dialog('Enhance photo',
     el('div', {},
       el('p', { className: 'hint' },
         'Choose the final size; MaterialLogix will add a linked copy and check it automatically.'),
       !covers(lic, 'photo') ? el('p', { className: 'hint', style: 'color:var(--warn)' },
-        'Preview supports 2×; licensed Photo plans unlock 4×.') : null,
+        `Free preview enhances at ${LANES.free.upscale.factor}; licensed Photo plans unlock ${LANES.paid.upscale.factor}.`) : null,
       el('label', { className: 'field' }, el('span', {}, 'Quality'), pick)),
     [btn('Cancel', 'btn', closeDialog),
      btn('Upscale', 'btn primary', async () => {
@@ -3289,6 +3393,7 @@ async function upscaleAsset(asset) {
            await settleOutbound(authorization.authorization.id, await blobEvidenceHash(out.blob));
            const file = new File([out.blob], asset.filename.replace(/(\.[a-z0-9]+)?$/i, '_up$1'), { type: out.blob.type || 'image/png' });
            const up = newAsset(state.project.id, file);
+           up.source = 'enhanced-local';
            up.labels = { ...asset.labels };
            up.altText = asset.altText;
            up.provenance = `Upscaled from ${asset.filename} with ${model} on ${completedEngine}. ` + (asset.provenance || '');
@@ -3305,7 +3410,7 @@ async function upscaleAsset(asset) {
          toast('Enhanced photo added to Library.');
        } catch (err) {
          const release = await releaseUsage(authorization.authorization.id, 'render_failed');
-         toast(`Upscale failed: ${err.message}. ${release.message}`, true);
+         toast(`Upscale failed: ${sentence(err.message)} ${release.message}`, true);
        }
      })]);
 }
@@ -3356,7 +3461,7 @@ function fixBlock(asset) {
   }
   if (asset.fixes.length) {
     wrap.append(el('p', { className: 'hint', style: 'margin:10px 0 0' },
-      `${asset.fixes.length} fix(es) \u2014 saved with the asset and exported as a precise RETOUCH_LIST.md work order. Appearance changes remain previews until the pictured person approves them.`));
+      `${count(asset.fixes.length, 'fix', 'fixes')} \u2014 saved with the asset and exported as a precise RETOUCH_LIST.md work order. Appearance changes remain previews until the pictured person approves them.`));
   }
   return wrap;
 }
@@ -3545,8 +3650,8 @@ function preflightDialog(onProceed) {
   const body = el('div', {});
   body.append(el('p', { className: 'hint' },
     result.blocks
-      ? `${result.blocks} blocking issue(s) and ${result.warns} warning(s). Blocking issues are the ones that get an ad rejected or a client angry.`
-      : `No blocking issues. ${result.warns} warning(s) to look at.`));
+      ? `${count(result.blocks, 'blocking issue')} and ${count(result.warns, 'warning')}. Blocking issues are the ones that get an ad rejected or a client angry.`
+      : `No blocking issues. ${count(result.warns, 'warning')} to look at.`));
   body.append(issueList(result.items.slice(0, 60), 'Everything checks out.'));
   if (result.items.length > 60) body.append(el('p', { className: 'hint' }, `…and ${result.items.length - 60} more, all listed in the package.`));
 
@@ -3604,7 +3709,13 @@ async function openPrintDelivery() {
       !color.allowed ? el('p', { style: 'color:var(--bad);margin-top:6px' },
         'This photo needs an accepted sRGB conversion before print delivery.') : null);
     download.disabled = !currentPlan.canExport || !color.allowed;
-    status.textContent = download.disabled ? 'Choose a smaller print size or prepare the color first.' : '';
+    // Name the blocker that actually applies; the summary above already says
+    // which one it is, and two different explanations read as a fault.
+    status.textContent = !color.allowed
+      ? 'Prepare an accepted sRGB conversion before this photo can be printed.'
+      : !currentPlan.canExport
+        ? 'This photo does not have the detail for that print size. Choose a smaller size.'
+        : '';
   };
 
   for (const control of [preset, orientation, fit, bleed]) control.onchange = update;
@@ -3662,18 +3773,25 @@ async function doExport(exportOpts = {}) {
   const product = state.assets.some(asset => asset.kind === 'video') ? 'video' : 'photo';
   const lic = await activeLicense();
   if (!covers(lic, product)) {
+    // Name every plan that covers this Studio, and the single export that does
+    // not need a plan at all, rather than a fixed two.
+    const singleExport = exportForProduct(product);
+    const quote = singleExport ? exportPrice(singleExport.id) : null;
     return dialog('A matching license is required to download',
       el('div', {},
         el('p', {}, 'Free preview lets you edit, compare, and review inside MaterialLogix. It does not create downloadable files.'),
         el('p', { className: 'hint', style: 'margin-top:10px' },
-          `Activate a ${product === 'video' ? 'Video' : 'Photo'} Single Studio or Full Studio license in Deliver, then reconnect for usage confirmation.`)),
-      [btn('Close', 'btn primary', closeDialog)]);
+          `Activate ${plansCovering(product).join(', ')} in Deliver, then reconnect for usage confirmation.`),
+        quote ? el('p', { className: 'hint', style: 'margin-top:6px' },
+          `Or buy this one on its own: ${quote.label.toLowerCase()} costs $${quote.total.toFixed(2)}, no plan.`) : null),
+      [btn('Close', 'btn', closeDialog),
+       btn('See plans and single exports', 'btn primary', () => { closeDialog(); location.assign(pricingUrl()); })]);
   }
   preflightDialog(async () => {
     const pairs = approvedPairs(state.assets);
     let authorizationId = null;
     const bar = el('i');
-    const status = el('p', {}, `Rendering ${pairs.length} placement(s)…`);
+    const status = el('p', {}, `Rendering ${count(pairs.length, 'placement')}…`);
     dialog(exportOpts.proof ? 'Export proof package — watermarked, 960px' : 'Export campaign package',
       el('div', {}, status, el('div', { className: 'progress' }, bar),
         exportOpts.proof ? el('p', { className: 'hint' }, 'Proofs carry a full-frame watermark and capped resolution — safe to send before payment clears. The licensed export renders clean.') : null),
@@ -3689,19 +3807,24 @@ async function doExport(exportOpts = {}) {
           bar.style.width = `${(done / total) * 100}%`;
         }, extra, exportOpts));
       const evidenceHash = await blobEvidenceHash(blob);
+      // Each approved placement renders its own file, and a video file costs by
+      // its length. Billing `pairs.length` charged a ten-minute cut the same as
+      // a still.
       const authorization = await authorizeOutbound({
         product,
         artifactKind: exportOpts.proof ? 'proof_export' : 'clean_export',
-        quantity: pairs.length,
+        quantity: unitsForDeliveries(pairs.map(pair => ({
+          kind: pair.asset.kind, seconds: pair.asset.duration || 0
+        }))),
         operationId: evidenceHash
       });
       if (!authorization.ok) throw new Error(authorization.reason || 'authorization_required');
       authorizationId = authorization.authorization.id;
       await settleOutboundBeforeDelivery(authorizationId, evidenceHash, () => downloadBlob(blob, filename));
       if (!exportOpts.proof) recordExport(pairs.length);
-      status.textContent = `Done — ${stats.placements} placement(s), ${stats.files} files, ${(blob.size / 1048576).toFixed(1)} MB.`;
+      status.textContent = `Done — ${count(stats.placements, 'placement')}, ${count(stats.files, 'file')}, ${(blob.size / 1048576).toFixed(1)} MB.`;
       if (stats.failures.length) {
-        status.after(el('p', { style: 'color:var(--warn)' }, `${stats.failures.length} render(s) failed. See EXPORT_WARNINGS.txt inside the zip.`));
+        status.after(el('p', { style: 'color:var(--warn)' }, `${count(stats.failures.length, 'render')} failed. See EXPORT_WARNINGS.txt inside the zip.`));
       }
     } catch (err) {
       const release = authorizationId ? await releaseUsage(authorizationId, 'export_failed') : null;
@@ -3742,7 +3865,7 @@ async function exportClientPage() {
     if (!authorization.ok) throw new Error(authorization.reason || 'online_authorization_required');
     await settleOutboundBeforeDelivery(authorization.authorization.id, evidenceHash,
       () => downloadBlob(blob, `${slug(state.project.name)}-client-review.html`));
-    status.textContent = `Done — ${(blob.size / 1048576).toFixed(1)} MB, ${pairs.length} placement(s).`;
+    status.textContent = `Done — ${(blob.size / 1048576).toFixed(1)} MB, ${count(pairs.length, 'placement')}.`;
   } catch (err) {
     const release = authorization?.ok ? await releaseUsage(authorization.authorization.id, 'export_failed') : null;
     status.textContent = `Not downloaded: ${err.message}.${release ? ` ${release.message}` : ''}`;
@@ -3756,7 +3879,7 @@ async function importVerdict(file) {
     const { applied, missing, changed } = applyClientVerdict(json, state.assets);
     for (const a of changed) { log(a, `client decisions imported`, 'client'); await store.saveAsset(a); }
     render();
-    toast(`Applied ${applied} client decision(s)${missing ? `, ${missing} skipped (asset not in this project)` : ''}.`);
+    toast(`Applied ${count(applied, 'client decision')}${missing ? `, ${missing} skipped (asset not in this project)` : ''}.`);
   } catch (err) {
     toast('Could not read that file: ' + err.message, true);
   }

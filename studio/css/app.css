@@ -988,3 +988,22 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
 .pace-dial { flex: 0 0 auto; min-width: 160px; min-height: 160px; }
 .pace-dial svg { display: block; }
 @media (max-width: 560px) { .pace-row { justify-content: center; text-align: center; } }
+
+/* The capture consent gate. It builds its own dialog rather than reusing #dlg,
+   because it has to be able to appear over one - so it needs its own layout to
+   match the rest of the application. */
+dialog.guardian-ack { width: min(460px, 92vw); padding: 22px 24px 18px; }
+dialog.guardian-ack h2 { margin: 0 0 14px; font: 300 19px/1.25 var(--serif); }
+dialog.guardian-ack label {
+  display: flex; gap: 10px; align-items: flex-start;
+  font-size: 13px; line-height: 1.5; color: var(--ink-soft, var(--ink));
+}
+dialog.guardian-ack label input { margin-top: 3px; flex: none; }
+dialog.guardian-ack .foot {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hair);
+}
+
+/* Sign-in providers appear only when the server enables them. */
+.account-providers { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-providers .btn { flex: 1 1 auto; justify-content: center; }

@@ -1,6 +1,8 @@
 import { activeLicense, covers } from './license.js';
 import { newProject } from './model.js';
 import { listProjects, saveProject } from './store.js';
+import { entranceLinks, pricingUrl } from './site-links.js';
+import { planLabel } from './pricing.js';
 
 const PRODUCTS = [
   {
@@ -67,17 +69,22 @@ export function entranceAccess(license, accessMode = 'local') {
     return [id, covers(license, id) ? 'included' : 'locked'];
   }));
   const selected = license?.selected_product || license?.selectedProduct || null;
+  const capitalize = word => word[0].toUpperCase() + word.slice(1);
+  // A single-Studio plan reads better with the Studio it bought in the name.
+  const named = planLabel(plan);
   const label = suspended ? 'Reconnect your account'
-    : plan === 'full' ? 'Full Studio'
-      : plan === 'single' ? `${selected ? selected[0].toUpperCase() + selected.slice(1) : 'Single'} Studio`
-        : plan === 'voice_starter' ? 'Voice Starter'
-          : plan === 'payg' ? 'Pay per export'
-            : accessMode === 'demo' ? 'Free Preview' : 'Studio Preview';
+    : !license ? (accessMode === 'demo' ? 'Free Preview' : 'Studio Preview')
+      : named === 'No active plan' ? 'Studio'
+        : selected && named.startsWith('Single Studio') ? `${named} — ${capitalize(selected)}`
+          : named;
+  // What is ready is what the licence covers, not a list of plan ids that has
+  // to be extended every time a tier is added.
+  const included = PRODUCTS.filter(({ id }) => states[id] === 'included').length;
   const message = suspended
     ? 'Reconnect once to restore the products on your plan.'
-    : plan === 'full' || plan === 'payg'
+    : included === PRODUCTS.length
       ? 'Photo, Video, and Voice are ready when you are.'
-      : plan === 'single' || plan === 'voice_starter'
+      : included > 0
         ? 'Your Studio is ready. Other products stay in view for whenever you want more.'
         : 'Explore every Studio. A plan unlocks clean delivery.';
   return { plan, label, message, states };
@@ -119,20 +126,8 @@ export function makeStarterProject(productId, starterId) {
   return project;
 }
 
-export function entranceLinks(pathname, href) {
-  const hostedStudio = /\/studio(?:\/|$)/.test(pathname);
-  return {
-    pricing: new URL(hostedStudio ? '../#pricing' : 'site/index.html#pricing', href).href,
-    mediaBase: new URL(hostedStudio ? '../media/' : 'site/media/', href).href
-  };
-}
-
 function currentEntranceLinks() {
   return entranceLinks(location.pathname, location.href);
-}
-
-function pricingUrl() {
-  return currentEntranceLinks().pricing;
 }
 
 function preserveDemo(path) {

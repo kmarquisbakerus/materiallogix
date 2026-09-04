@@ -314,6 +314,69 @@ export function classifyIccRgbColorants(colorants, tolerance = 0.035) {
   return best && best.error <= tolerance ? best.profile : null;
 }
 
+
+// --- HDR signalling --------------------------------------------------------
+// Colour signalling lives in named container structures, so it is read from
+// those structures. Scanning the whole file as text for short markers such as
+// "HLG" matches compressed image bytes by luck: measured against ordinary
+// one-megabyte images, that approach flagged more than half of them as HDR and
+// blocked them from export.
+
+// SMPTE ST 2084 (PQ) and ARIB STD-B67 (HLG) transfer characteristics.
+const HDR_TRANSFER = Object.freeze(new Set([16, 18]));
+
+/** Contents of the first PNG chunk of `type`, or null. Colour chunks precede IDAT. */
+function pngChunk(bytes, type) {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length < 8 || signature.some((byte, index) => bytes[index] !== byte)) return null;
+  let offset = 8;
+  while (offset + 12 <= bytes.length) {
+    const length = readU32(bytes, offset);
+    if (!Number.isSafeInteger(length) || length < 0 || offset + 12 + length > bytes.length + 12) return null;
+    const name = ascii(bytes, offset + 4, 4);
+    if (name === type) return bytes.subarray(offset + 8, Math.min(bytes.length, offset + 8 + length));
+    if (name === 'IDAT' || name === 'IEND') return null;
+    offset += 12 + length;
+  }
+  return null;
+}
+
+/** The nclx payload of an ISOBMFF `colr` box (HEIF, AVIF, MP4), or null. */
+function isobmffNclx(bytes) {
+  // A colr box is `size(4) 'colr' colour_type(4) …`; requiring the exact eight
+  // bytes "colrnclx" makes a chance match effectively impossible.
+  for (let index = 0; index + 8 <= bytes.length; index++) {
+    if (bytes[index] !== 0x63 || bytes[index + 1] !== 0x6f || bytes[index + 2] !== 0x6c || bytes[index + 3] !== 0x72) continue;
+    if (ascii(bytes, index + 4, 4) !== 'nclx') continue;
+    return bytes.subarray(index + 8, Math.min(bytes.length, index + 8 + 7));
+  }
+  return null;
+}
+
+/** PQ or HLG named in an ICC profile's own description, not in pixel data. */
+function iccDescribesHdr(profile) {
+  if (!(profile instanceof Uint8Array) || !profile.length) return false;
+  const text = new TextDecoder('latin1').decode(profile);
+  return /PQ\s*Transfer|\bHLG\b|SMPTE\s*ST\s*2084|ARIB\s*STD-B67/i.test(text);
+}
+
+/**
+ * Does this file declare high dynamic range? Evidence only - detecting it never
+ * tone-maps anything, it only stops an untone-mapped file being delivered.
+ */
+export function detectHdrSignal(bytes, { radiance = null, iccProfile = null } = {}) {
+  if (radiance) return true;
+  if (!(bytes instanceof Uint8Array)) return false;
+
+  const cicp = pngChunk(bytes, 'cICP');
+  if (cicp && cicp.length >= 2 && HDR_TRANSFER.has(cicp[1])) return true;
+
+  const nclx = isobmffNclx(bytes);
+  if (nclx && nclx.length >= 4 && HDR_TRANSFER.has((nclx[2] << 8) | nclx[3])) return true;
+
+  return iccDescribesHdr(iccProfile);
+}
+
 export async function inspectColorMetadata(blob, colorTransform = null) {
   if (!blob?.slice) return { profile: 'unknown', embedded: false, hdrSignaled: false, delivery: COLOR_PIPELINE.deliverySpace };
   const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
@@ -327,9 +390,7 @@ export async function inspectColorMetadata(blob, colorTransform = null) {
   const p3 = /Display[ _-]?P3|DCI[ _-]?P3/i.test(text);
   const adobeRgb = /Adobe[ _-]?RGB/i.test(text);
   const cmyk = /prtrCMYK|COLOR_REP\s+["']?CMYK|\bCMYK_(?:C|M|Y|K)\b/i.test(text);
-  // cICP/nclx are explicit color-volume signaling used by modern HDR-capable
-  // image/video containers. Detection is evidence only, never a tone-map.
-  const hdrSignaled = Boolean(radiance) || /\bcICP\b|\bnclx\b|PQ Transfer|HLG/i.test(text);
+  const hdrSignaled = detectHdrSignal(bytes, { radiance, iccProfile: jpegIcc });
   let profile = 'untagged-srgb-fallback';
   if (radiance) profile = 'bt2020-linear';
   else if (cmyk) profile = 'cmyk';

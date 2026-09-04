@@ -26,21 +26,75 @@ jobs:
 
           root = Path('.')
           output = root / 'materiallogix-cloudflare-upload.zip'
-          excluded_roots = {'.git', '.github'}
-          excluded_names = {output.name}
 
+          # An allow-list, not an exclusion list.
+          #
+          # This used to zip everything except .git, .github and tests, which
+          # meant every file added to the repository was published by default.
+          # That put KNOWN_LIMITATIONS.md - which names every unshipped feature
+          # and says "Do not sell the Pro plans until both ship" - on the public
+          # marketing domain, and would have shipped node_modules to it as well
+          # on any checkout that had them. Adding a file to the site is now a
+          # deliberate act.
+          site_dirs = ('studio/', 'legal/', 'media/', 'demo/')
+          site_files = {
+              'index.html', '404.html', 'contact.html', 'checkout-site.js', '_worker.js',
+              'robots.txt', 'sitemap.xml', 'logo.svg', 'CNAME',
+              'indexnow-key.txt', 'cc89cc851acf64485c1280baa77eab1b.txt',
+          }
+
+          def is_site(rel: str) -> bool:
+              if rel in site_files:
+                  return True
+              return rel.startswith(site_dirs)
+
+          shipped = []
           with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
               for path in sorted(root.rglob('*')):
                   if not path.is_file():
                       continue
-                  rel = path.relative_to(root)
-                  if rel.parts and rel.parts[0] in excluded_roots:
+                  rel = path.relative_to(root).as_posix()
+                  if not is_site(rel):
                       continue
-                  if path.name in excluded_names:
-                      continue
-                  archive.write(path, rel.as_posix())
+                  archive.write(path, rel)
+                  shipped.append(rel)
 
-          print(f'Created {output} ({output.stat().st_size} bytes)')
+          # Fail the build rather than publish something internal.
+          leaked = [r for r in shipped
+                    if r.endswith(('.md', '.mjs', '.yml', '.yaml'))
+                    or r.startswith(('node_modules/', 'tests/', '.'))
+                    or Path(r).name in {'package.json', 'package-lock.json'}]
+          if leaked:
+              raise SystemExit('refusing to publish internal files: ' + ', '.join(leaked))
+          if not any(r == 'index.html' for r in shipped):
+              raise SystemExit('the homepage is missing from the package')
+
+          # An allow-list drops a new page silently, which is how contact.html -
+          # linked from the nav, the footer and sitemap.xml - was left out. Every
+          # page the site links to itself has to be in the package.
+          import re
+          have = set(shipped)
+          missing = set()
+          for rel in shipped:
+              if not rel.endswith('.html'):
+                  continue
+              base = rel.rsplit('/', 1)[0] if '/' in rel else ''
+              html = Path(rel).read_text(errors='ignore')
+              for href in re.findall(r'href="([^"#?:]+\.html)"', html):
+                  target = href.lstrip('/') if href.startswith('/') else (f'{base}/{href}' if base else href)
+                  target = str(Path(target).resolve().relative_to(Path('.').resolve()))
+                  if target not in have:
+                      missing.add(f'{rel} -> {target}')
+          for loc in re.findall(r'<loc>https://materiallogix\.com/([^<]*)</loc>', Path('sitemap.xml').read_text()):
+              target = loc or 'index.html'
+              if target.endswith('/'):
+                  target += 'index.html'
+              if target not in have:
+                  missing.add(f'sitemap.xml -> {target}')
+          if missing:
+              raise SystemExit('the package links to pages it does not ship: ' + ', '.join(sorted(missing)))
+
+          print(f'Created {output} ({output.stat().st_size} bytes) with {len(shipped)} files')
           PY
 
       - name: Upload deployable ZIP

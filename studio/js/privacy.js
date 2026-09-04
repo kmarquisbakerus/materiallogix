@@ -1,4 +1,5 @@
 import { apiUrl } from './api-root.js';
+import { downloadBlob } from './download.js';
 
 const API = apiUrl('/api/privacy/preferences');
 const DIAGNOSTIC_API = apiUrl('/api/diagnostics/event');
@@ -252,12 +253,8 @@ function installPrivacyDialog(initial) {
     exportButton.disabled = true;
     try {
       const accountData = await privacyAccountRequest(PRIVACY_EXPORT_API);
-      const url = URL.createObjectURL(new Blob([JSON.stringify(accountData, null, 2)], { type: 'application/json' }));
-      const link = make('a', { href: url, download: `materiallogix-account-data-${new Date().toISOString().slice(0, 10)}.json` });
-      document.body.append(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      downloadBlob(new Blob([JSON.stringify(accountData, null, 2)], { type: 'application/json' }),
+        `materiallogix-account-data-${new Date().toISOString().slice(0, 10)}.json`);
       status.textContent = 'Your account data download is ready.';
     } catch {
       status.textContent = 'We could not prepare your account data. Try again.';
