@@ -345,7 +345,40 @@ function qaChecksForAsset(asset) {
 // ---------------------------------------------------------------------------
 // decode + analysis
 
+// Five decodes, but bounded by what they weigh rather than by how many there
+// are: a decode is held as RGBA, so one 100 MP photograph is about 400 MB and
+// five of them are two gigabytes. Counting entries made the ceiling depend
+// entirely on the customer's camera.
 const DECODE_CACHE = 5;
+const DECODE_CACHE_BYTES = 512 * 1024 * 1024;
+const decodedWeight = entry => (Number(entry?.w) || 0) * (Number(entry?.h) || 0) * 4;
+
+/** Drop decodes until the cache is within both bounds, oldest first. */
+function trimDecodeCache() {
+  let held = 0;
+  for (const entry of state.decoded.values()) held += decodedWeight(entry);
+  while (state.decoded.size > DECODE_CACHE || (held > DECODE_CACHE_BYTES && state.decoded.size > 1)) {
+    const oldest = state.decoded.keys().next().value;
+    held -= decodedWeight(state.decoded.get(oldest));
+    releaseDecoded(oldest);
+  }
+}
+
+/** Forget one decode, and let go of the object URL it was holding. */
+function releaseDecoded(assetId) {
+  const entry = state.decoded.get(assetId);
+  if (!entry) return;
+  state.decoded.delete(assetId);
+  // The bitmap is the expensive part and only the collector can free it, but
+  // closing it tells the engine now rather than at the next collection.
+  entry.source?.close?.();
+}
+
+/** Everything the current asset set no longer covers. */
+function forgetDecodesOutside(assetIds) {
+  const live = new Set(assetIds);
+  for (const id of [...state.decoded.keys()]) if (!live.has(id)) releaseDecoded(id);
+}
 
 async function decode(asset) {
   const hit = state.decoded.get(asset.id);
@@ -391,7 +424,7 @@ async function decode(asset) {
   }
   if (repaired) await store.saveAsset(asset);
   state.decoded.set(asset.id, d);
-  if (state.decoded.size > DECODE_CACHE) state.decoded.delete(state.decoded.keys().next().value);
+  trimDecodeCache();
   return d;
 }
 
@@ -528,13 +561,21 @@ async function importFiles(fileList) {
       const measured = rawImport?.ok && rawImport.width && rawImport.height
         ? { width: rawImport.width, height: rawImport.height, duration: 0, reason: '' }
         : await probe(file, url);
-      // A clip that yields no frame cannot be reviewed, cropped or exported.
-      // Keeping it means a library row with a blank stage forever, so it is
-      // refused here, with the reason, rather than stored and forgotten.
-      if (asset.kind === 'video' && !(measured.width && measured.height)) {
+      // Nothing without pixels can be reviewed, cropped or exported. Keeping it
+      // means a library row with a blank stage forever, so it is refused here,
+      // with the reason, rather than stored and forgotten.
+      //
+      // This used to say `asset.kind === 'video'`, and a photograph past the
+      // browser's decode ceiling took the other branch: stored at 0x0, never
+      // analysed, reporting no issues because there were no pixels to find any
+      // in - under a toast that said it had been imported and analysed.
+      if (!(measured.width && measured.height)) {
         await store.deleteAsset(asset.id).catch(() => {});
         blocked += 1;
-        lastBlockedMessage = `${sourceFile.name} was not imported. ${measured.reason || 'No frame could be decoded from it.'} Convert it and re-import.`;
+        const why = measured.reason || (asset.kind === 'video'
+          ? 'No frame could be decoded from it.'
+          : 'The browser could not decode it — very large photographs can exceed its limit.');
+        lastBlockedMessage = `${sourceFile.name} was not imported. ${why} ${asset.kind === 'video' ? 'Convert it' : 'Reduce its dimensions'} and re-import.`;
         status.textContent = lastBlockedMessage;
         continue;
       }
@@ -558,6 +599,7 @@ async function importFiles(fileList) {
     return;
   }
   state.assets = await store.listAssets(state.project.id);
+  forgetDecodesOutside(state.assets.map(a => a.id));
   closeDialog();
   render();
   toast(`Imported and analysed ${count(imported, 'file')}.${blocked ? ` ${count(blocked, 'file')} ${blocked === 1 ? 'was' : 'were'} blocked.` : ''}`);
@@ -796,6 +838,7 @@ function generatePanel() {
           }
         });
         state.assets = await store.listAssets(state.project.id);
+        forgetDecodesOutside(state.assets.map(a => a.id));
         status.textContent = `Done \u2014 ${count} photo${count === 1 ? '' : 's'} added and checked.`;
         render();
         const dlg = $('#dlg');
@@ -1283,14 +1326,18 @@ async function restoreProject(file) {
 
 function renderBoard() {
   const f = state.filters;
+  // The placeholder option reads as the label to anyone looking at the control
+  // and as nothing at all to anyone listening to it: six filters in a row
+  // announced as an unnamed combo box. The same word names it either way.
   const mk = (key, label, options) => {
-    const s = el('select', {});
+    const s = el('select', { 'aria-label': label });
     s.append(el('option', { value: '' }, label));
     for (const o of options) s.append(el('option', { value: o.id, selected: f[key] === o.id }, o.label));
     s.onchange = () => { f[key] = s.value; state.index = 0; render(); };
     return s;
   };
-  const search = el('input', { type: 'text', placeholder: 'Search files, notes, labels', value: f.q });
+  const search = el('input', { type: 'text', 'aria-label': 'Search files, notes, labels',
+    placeholder: 'Search files, notes, labels', value: f.q });
   search.oninput = () => { f.q = search.value; renderBoardList(); };
 
   const toolbar = el('div', { className: 'toolbar' },
@@ -1299,7 +1346,9 @@ function renderBoard() {
     mk('kind', 'Stills and video', [{ id: 'image', label: 'Stills' }, { id: 'video', label: 'Video' }]),
     mk('surface', 'Any surface', activeSurfaces().map(s => ({ id: s.id, label: `Approved · ${s.label}` }))),
     (() => {
-      const sel = el('select', {});
+      // The rating filter is hand-rolled rather than built by `mk`, which is
+      // how it kept its placeholder-only label after the other five were named.
+      const sel = el('select', { 'aria-label': 'Any rating' });
       sel.append(el('option', { value: '0' }, 'Any rating'));
       for (const n of [1, 2, 3, 4, 5]) sel.append(el('option', { value: String(n), selected: f.rating === n }, '★'.repeat(n) + ' and up'));
       sel.onchange = () => { f.rating = Number(sel.value); state.index = 0; render(); };
@@ -2056,7 +2105,7 @@ function videoBlock(asset) {
     scrub.oninput = () => { readout.textContent = `${Number(scrub.value).toFixed(2)}s of ${asset.duration.toFixed(1)}s`; };
     scrub.onchange = async () => {
       mutate(asset, `poster frame → ${Number(scrub.value).toFixed(2)}s`, () => { v.posterTime = Number(scrub.value); });
-      state.decoded.delete(asset.id);
+      releaseDecoded(asset.id);
       await runAnalysis(asset);
       renderReview();
     };
@@ -2510,6 +2559,7 @@ async function extractIdentityPack(asset) {
        });
        if (!extracted) return;
        state.assets = await store.listAssets(state.project.id);
+       forgetDecodesOutside(state.assets.map(a => a.id));
        render();
 
        // Coverage check: did the turn actually sweep the angles?
@@ -2992,6 +3042,7 @@ async function generativeFillDialog(asset) {
         created.inpaintBenchmark = benchmark.finish();
         await store.saveAsset(created);
         state.assets = await store.listAssets(state.project.id);
+        forgetDecodesOutside(state.assets.map(a => a.id));
         state.index = Math.max(0, visibleAssets().findIndex(item => item.id === created.id));
       });
       closeDialog(); render(); toast(fillBoundaryQuality?.status === 'pass'
@@ -3613,6 +3664,7 @@ async function upscaleAsset(asset) {
            await runAnalysis(up, { quiet: true });
          });
          state.assets = await store.listAssets(state.project.id);
+         forgetDecodesOutside(state.assets.map(a => a.id));
          render();
          toast('Enhanced photo added to Library.');
        } catch (err) {
@@ -4295,6 +4347,7 @@ async function boot(selectId) {
   }
   localStorage.setItem('cros:project', state.project.id);
   state.assets = await store.listAssets(state.project.id);
+  forgetDecodesOutside(state.assets.map(a => a.id));
   state.index = 0;
   state.decoded.clear();
   state.activeSurface = state.project.surfaces[0] || null;

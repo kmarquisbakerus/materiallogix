@@ -327,3 +327,45 @@ test('the people-review promise is not made unconditionally', () => {
   // And the status it branches on has to be the one the analyser writes.
   assert.match(source, /status: asset\.geometry \? 'complete' : 'manual-review-needed'/);
 });
+
+test('a file the browser cannot decode is refused, whatever kind it is', () => {
+  // The guard read `asset.kind === 'video'`, so a photograph past the browser's
+  // decode ceiling took the other branch: stored at 0x0, never analysed, and
+  // reporting no issues because there were no pixels to find any in - under a
+  // toast that said it had been imported and analysed. Measured at the break:
+  // 500 MP imported, 600 MP produced the silent 0x0 row.
+  assert.ok(!/asset\.kind === 'video' && !\(measured\.width && measured\.height\)/.test(app),
+    'the decode guard is video-only again');
+  assert.match(app, /if \(!\(measured\.width && measured\.height\)\) \{/,
+    'anything without pixels must be refused');
+  // And the reason has to fit what was imported.
+  assert.match(app, /very large photographs can exceed its limit/);
+  assert.match(app, /No frame could be decoded from it\./);
+});
+
+test('a decode cache bounded by count is bounded by the customer camera', () => {
+  // Five entries held as RGBA is 40 MB of phone photos or two gigabytes of
+  // 100 MP stills. Renderer RSS went 173 -> 769 MB holding decodes of assets
+  // that were no longer in the library at all.
+  assert.match(app, /const DECODE_CACHE_BYTES = /, 'the cache needs a weight bound, not only a count');
+  assert.match(app, /function trimDecodeCache\(\)/);
+  assert.match(app, /held > DECODE_CACHE_BYTES/, 'the weight bound has to be enforced');
+  assert.match(app, /function forgetDecodesOutside\(/, 'decodes must not outlive their assets');
+  assert.match(app, /entry\.source\?\.close\?\.\(\)/, 'a dropped bitmap should be closed, not just dereferenced');
+  // Every reload of the asset list is a chance the cache outlived its assets.
+  const reloads = (app.match(/state\.assets = await store\.listAssets\(state\.project\.id\);/g) || []).length;
+  const sweeps = (app.match(/forgetDecodesOutside\(state\.assets\.map\(a => a\.id\)\);/g) || []).length;
+  assert.equal(sweeps, reloads, `${reloads} asset reloads but ${sweeps} cache sweeps`);
+});
+
+test('every board filter says what it filters, to a listener as well as a reader', () => {
+  // Six filters in a row, each labelled only by its placeholder option, so
+  // Chromium's accessibility tree reported six unnamed comboboxes. Driven on
+  // the board: 6 unnamed before, 0 after.
+  assert.match(app, /const mk = \(key, label, options\) => \{\s*\n\s*const s = el\('select', \{ 'aria-label': label \}\)/,
+    'the filter helper must name what it builds');
+  // The rating filter is hand-rolled and was missed when the other five were named.
+  assert.match(app, /const sel = el\('select', \{ 'aria-label': 'Any rating' \}\)/);
+  assert.match(app, /el\('input', \{ type: 'text', 'aria-label': 'Search files, notes, labels'/,
+    'a placeholder is not an accessible name');
+});
