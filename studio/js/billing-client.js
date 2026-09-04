@@ -180,6 +180,10 @@ export async function openBillingPortal() {
   const licenseKey = activeLicenseKey();
   if (!licenseKey) throw new Error('license_required');
   const result = await billingRequest('billing/portal', { licenseKey });
+  // A response without a url sent the customer to `/studio/undefined` and a
+  // "not found" page, on the one control that cancels a subscription. The
+  // checkout path guards the identical shape; this one did not.
+  if (typeof result?.url !== 'string' || !/^https:\/\//.test(result.url)) throw new Error('billing_portal_unavailable');
   location.assign(result.url);
 }
 

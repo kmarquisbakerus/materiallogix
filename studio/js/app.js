@@ -1141,7 +1141,20 @@ function renderSidebar() {
       licBox.append(
         el('p', { className: 'hint', style: 'margin-bottom:6px' },
           `Licensed \u2014 ${planLabel(lic.plan)}${lic.selected_product ? ` / ${String(lic.selected_product).replace(/^./, c => c.toUpperCase())}` : ''} (${lic.email}). Clean exports require online authorization and verified remaining usage.`),
-        btn('Deactivate on this device', 'btn sm', () => { deactivate(); render(); }));
+        // Deleting the project asks first; removing the licence did not, and
+        // it is the less recoverable of the two - the key is gone from this
+        // device and has to be found again to get back in.
+        btn('Deactivate on this device', 'btn sm', () => dialog('Remove this licence from this device?',
+          el('div', {},
+            el('p', {}, `${planLabel(lic.plan)} (${lic.email}) will be removed from this browser. Your projects and files stay where they are.`),
+            el('p', { className: 'hint' }, 'You will need the licence key again to download anything from this device.')),
+          [btn('Keep it', 'btn', closeDialog),
+            btn('Remove licence', 'btn primary', () => {
+              deactivate();
+              closeDialog();
+              render();
+              toast('Licence removed from this device. Your work is untouched.');
+            })])));
     } else {
       const input = el('input', { type: 'text', placeholder: 'ML1.\u2026 license key' });
       const msg = el('p', { className: 'hint', style: 'margin:6px 0 0' },

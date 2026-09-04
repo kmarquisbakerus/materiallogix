@@ -990,6 +990,28 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
   }
 }
 
+/* The review head is one 50px row: index, title, dimensions, spacer, and a
+   250px view switcher. On a 390px phone the switcher is pushed past the right
+   edge and clipped, so Placement and Compare - two thirds of the review loop -
+   cannot be reached at all, and Full source sits under the floating "Review
+   tools" button. Let the head take the height it needs and give the switcher
+   its own row, clear of the floating control. */
+@media (max-width: 720px) {
+  .stage-head {
+    height: auto;
+    min-height: 50px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 8px 14px 10px;
+  }
+  .stage-head .spacer { display: none; }
+  .stage-head .title { flex: 1 1 auto; }
+  .stage-head .seg { flex: 1 0 100%; display: flex; }
+  .stage-head .seg button { flex: 1; min-height: 44px; }
+  /* The floating toggle overlaps whatever the head's last row is. */
+  .review .review-rail-toggle { bottom: auto; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important;
     animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

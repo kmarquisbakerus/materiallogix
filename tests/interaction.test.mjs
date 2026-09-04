@@ -17,6 +17,7 @@ import { preflight } from '../studio/js/analyze.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const app = readFileSync(resolve(ROOT, 'studio/js/app.js'), 'utf8');
+const read = file => readFileSync(resolve(ROOT, file), 'utf8');
 
 // --- a video frame ----------------------------------------------------------
 
@@ -368,4 +369,39 @@ test('every board filter says what it filters, to a listener as well as a reader
   assert.match(app, /const sel = el\('select', \{ 'aria-label': 'Any rating' \}\)/);
   assert.match(app, /el\('input', \{ type: 'text', 'aria-label': 'Search files, notes, labels'/,
     'a placeholder is not an accessible name');
+});
+
+test('the review switcher gets its own row where the head cannot hold it', () => {
+  // At 390x844 the 50px head could not fit a 250px switcher beside the title:
+  // Placement and Compare were clipped off-screen and Full source sat under
+  // the floating "Review tools" button. Measured with elementFromPoint at each
+  // button's own centre - three unreachable before, three reachable after,
+  // desktop unchanged at a 50px head.
+  const css = read('studio/css/app.css');
+  const phone = /@media \(max-width: 720px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] || '';
+  assert.ok(phone, 'the phone rule for the review head is gone');
+  assert.match(phone, /\.stage-head \{[\s\S]*?flex-wrap: wrap;/, 'the head must be allowed to wrap');
+  assert.match(phone, /\.stage-head \.seg \{ flex: 1 0 100%/, 'the switcher needs a row of its own');
+  assert.match(phone, /\.stage-head \.seg button \{ flex: 1; min-height: 44px/, 'a tap target needs 44px');
+  // The desktop head stays one fixed row.
+  assert.match(css, /\.stage-head \{\s*\n\s*display: flex; align-items: center; gap: 14px; padding: 0 20px; height: 50px;/);
+});
+
+test('the two controls that undo a purchase ask, or check, before they act', () => {
+  // "Manage billing" called location.assign(result.url) with no guard, so a
+  // response without a url sent the customer to /studio/undefined and a
+  // "not found" page - on the one control that cancels a subscription.
+  const billing = read('studio/js/billing-client.js');
+  assert.match(billing, /if \(typeof result\?\.url !== 'string' \|\| !\/\^https:\\\/\\\/\/\.test\(result\.url\)\) throw new Error\('billing_portal_unavailable'\)/,
+    'the portal url must be checked before it is navigated to');
+  assert.ok(billing.indexOf('billing_portal_unavailable') < billing.indexOf('location.assign(result.url)'),
+    'the guard must come before the navigation');
+
+  // Deleting a project asks first. Removing the licence did not, and it is the
+  // less recoverable of the two.
+  assert.ok(!/btn\('Deactivate on this device', 'btn sm', \(\) => \{ deactivate\(\); render\(\); \}\)/.test(app),
+    'deactivation is unconfirmed again');
+  assert.match(app, /btn\('Deactivate on this device', 'btn sm', \(\) => dialog\('Remove this licence from this device\?'/);
+  assert.match(app, /btn\('Keep it', 'btn', closeDialog\)/, 'the customer needs a way out of the dialog');
+  assert.match(app, /Your projects and files stay where they are\./, 'say what is not being deleted');
 });
