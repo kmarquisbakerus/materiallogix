@@ -30,7 +30,8 @@
   .voice-consent { border:1px solid var(--hair); padding:12px; margin:0 0 14px; }
   .voice-consent label { display:flex; align-items:flex-start; gap:9px; min-height:44px; padding:8px 0; font-size:12px; line-height:1.45; cursor:pointer; }
   .voice-consent input[type=checkbox] { width:18px; height:18px; margin-top:1px; }
-  .voice-more-status { margin:0; padding:6px 8px; color:var(--muted); font-size:11px; line-height:1.45; }
+  .engine-state { margin:10px 0 0; color:var(--muted); font-size:11.5px; line-height:1.5; }
+  .engine-state + .btn { margin-top:8px; }
   .topbar-more-menu a.btn { color:var(--ink-2); }
   body[data-voice-mode="guided"] .voice-advanced { display:none !important; }
   @media (max-width: 1280px) { .studio { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } }
@@ -62,7 +63,6 @@
     <details class="topbar-more">
       <summary aria-label="Open more Voice Studio options">More</summary>
       <div class="topbar-more-menu">
-        <p class="voice-more-status" id="engineState" role="status" aria-live="polite">Checking local engine…</p>
         <a class="btn sm" href="index.html" style="text-decoration:none">Photo &amp; Video workspace</a>
         <a class="btn sm" href="usage.html" style="text-decoration:none">Usage &amp; wallet</a>
       </div>
@@ -127,6 +127,11 @@ Create with freedom. Finish with *confidence*.</textarea>
         <input type="file" id="wavIn" accept="audio/*" hidden>
         <span class="note" id="status" role="status" aria-live="polite"></span>
       </div>
+      <!-- Why Render voice is greyed out, and the way out of it, belong beside
+           the button. This line used to sit inside the collapsed More menu in
+           the opposite corner, so the primary action of the whole Studio was
+           disabled with no reason anywhere near it. -->
+      <p class="engine-state" id="engineState" role="status" aria-live="polite">Checking the local voice engine…</p>
       <audio id="player" controls hidden aria-label="Rendered voice preview"></audio>
       <div id="dl"></div>
     </section>
@@ -146,7 +151,7 @@ Create with freedom. Finish with *confidence*.</textarea>
 <script type="module" src="js/studio-nav.js"></script>
 <script type="module" src="js/activity.js"></script>
 <script type="module">
-import { count } from './js/plural.js';
+import { count, nounFor } from './js/plural.js';
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
 import { laneFor, scriptAllowance, allowsMultiSourceVoicePack, plansCovering, voiceProfileLimit } from './js/pricing.js';
@@ -258,6 +263,9 @@ async function checkEngine() {
     rebuildVoiceOptions();
   }
   $('#render').disabled = !engineReady;
+  // A disabled control with no tooltip and no adjacent message is a dead end.
+  if (engineReady) $('#render').removeAttribute('title');
+  else $('#render').title = $('#engineState').textContent;
 }
 
 function activeScriptText() {
@@ -317,11 +325,14 @@ function paintPlan() {
   if (target > 0) {
     const planned = planDuration(plan);
     const ratio = planned / target;
-    fitStatus.textContent = ratio > 1.12
-      ? `cut ~${Math.ceil(plan.totalWords - plan.totalWords / ratio)} words`
-      : ratio < 0.88
-        ? `room for ~${Math.floor(plan.totalWords / ratio - plan.totalWords)} more words`
-        : 'fits';
+    // An empty script reads for zero seconds, so `ratio` is 0 and every word
+    // delta is 0/0: "room for ~NaN more words" reached the screen. There is
+    // nothing to fit yet, and the readout should say that instead.
+    const room = Math.floor(plan.totalWords / ratio - plan.totalWords);
+    fitStatus.textContent = !plan.totalWords ? 'add a script'
+      : ratio > 1.12 ? `cut ~${count(Math.ceil(plan.totalWords - plan.totalWords / ratio), 'word')}`
+        : ratio < 0.88 ? `room for ~${room} more ${nounFor(room, 'word')}`
+          : 'fits';
   } else {
     fitStatus.textContent = '';
   }
@@ -486,7 +497,7 @@ async function playAndCheck(arrayBuffer) {
         })
       });
       const j = await r.json();
-      label.textContent = `Quality preference saved (${j.total} rating${j.total === 1 ? '' : 's'}).`;
+      label.textContent = `Quality preference saved (${count(j.total, 'rating')}).`;
       row.querySelectorAll('button').forEach(b => b.remove());
     } catch { label.textContent = 'Could not reach the bridge to record that.'; }
   };
