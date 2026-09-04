@@ -8,10 +8,12 @@ import { webcrypto } from 'node:crypto';
 
 const b64u = bytes => Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-export async function mintLicence(plan = 'full') {
+export async function mintLicence(plan = 'full', selectedProduct = null) {
   const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
   const jwk = await webcrypto.subtle.exportKey('jwk', pair.publicKey);
   const payload = { v: 1, net: 1, plan, lid: 'lic_journeyRun0001', email: 'journey@materiallogix.test', iss: 'journey' };
+  // A single-Studio licence has to say which Studio, or it covers nothing.
+  if (selectedProduct) payload.selected_product = selectedProduct;
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
   const signature = await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair.privateKey, bytes);
   return { key: `ML1.${b64u(bytes)}.${b64u(new Uint8Array(signature))}`, jwk: { kty: jwk.kty, x: jwk.x, y: jwk.y, crv: jwk.crv } };
@@ -65,6 +67,28 @@ export async function studioContext(browser, { licence = null, features = {}, au
     await context.addInitScript(key => { try { localStorage.setItem('cros:license', key); } catch { /* private mode */ } }, licence.key);
   }
 
+  // The local engine bridge, so a render can be observed rather than assumed.
+  // Every request it receives is recorded, which is the only way to see what
+  // the client actually sent - a grep for the line that builds the options
+  // proves the line exists, not that it runs.
+  const bridge = [];
+  await context.route('http://*:8189/**', route => {
+    const url = new URL(route.request().url());
+    bridge.push({ path: url.pathname, opts: url.searchParams.get('opts') });
+    if (url.pathname === '/health') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        upscale: { available: true, models: ['RealESRGAN_x4plus.pth', 'realesr-animevideov3-x2.pth'] },
+        voice: { available: false, packs: [] },
+        video: { ffmpeg: true, whisper: true, watermark: true },
+        lan: []
+      }) });
+    }
+    if (url.pathname === '/video/render') {
+      return route.fulfill({ status: 200, contentType: 'video/mp4', body: 'rendered' });
+    }
+    return route.fulfill({ status: 404, body: '' });
+  });
+
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(`PAGEERROR: ${error.message.split('\n')[0]}`));
   page.on('console', message => {
@@ -72,7 +96,7 @@ export async function studioContext(browser, { licence = null, features = {}, au
     if (message.type() === 'error' && !/ERR_CONNECTION|ERR_TUNNEL|Failed to load resource/.test(text)) errors.push(`CONSOLE: ${text.slice(0, 150)}`);
   });
   page.on('download', download => downloads.push(download.suggestedFilename()));
-  return { context, page, api, downloads, errors };
+  return { context, page, api, downloads, errors, bridge };
 }
 
 /** A synthetic photograph: a gradient, a subject, and enough texture to analyse. */

@@ -403,6 +403,71 @@ try {
   }
 
   // ── Offline ──────────────────────────────────────────────────────────────
+  // ── What the renderer is actually told ───────────────────────────────────
+  step('Watch what a render sends the engine');
+  {
+    // The watermark rule was guarded by a grep for the line that builds it.
+    // This drives a real render and reads what the client put on the wire.
+    const sendsFor = async (plan, product) => {
+      const licence = await mintLicence(plan, product);
+      const ctx = await studioContext(browser, { licence });
+      await ctx.page.goto(`${BASE}/index.html?dev=1&entry=0`, { waitUntil: 'domcontentloaded' });
+      await settle(ctx.page, 3000);
+      await ctx.page.evaluate(async () => {
+        const canvas = document.createElement('canvas'); canvas.width = 640; canvas.height = 360;
+        const context = canvas.getContext('2d');
+        const recorder = new MediaRecorder(canvas.captureStream(25), { mimeType: 'video/webm' });
+        const chunks = []; recorder.ondataavailable = e => chunks.push(e.data); recorder.start();
+        for (let i = 0; i < 20; i++) {
+          context.fillStyle = `hsl(${(i * 12) % 360},55%,42%)`;
+          context.fillRect(0, 0, 640, 360);
+          await new Promise(r => setTimeout(r, 40));
+        }
+        await new Promise(r => { recorder.onstop = r; recorder.stop(); });
+        await window.__cros.importFiles([new File([new Blob(chunks, { type: 'video/webm' })], 'engine-check.webm', { type: 'video/webm' })]);
+      });
+      await settle(ctx.page, 4000);
+      await closeDialog(ctx.page);
+      await ctx.page.evaluate(() => {
+        const asset = window.__cros.state.assets.find(a => a.kind === 'video');
+        window.__cros.state.selected = asset.id;
+        window.__cros.render();
+      });
+      await settle(ctx.page, 800);
+      await ctx.page.evaluate(() => {
+        const open = [...document.querySelectorAll('button')].find(b => /Edit video|Open video/i.test(b.textContent));
+        open?.click();
+      });
+      await settle(ctx.page, 1200);
+      await ctx.page.evaluate(() => {
+        const go = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Render video');
+        go?.click();
+      });
+      await settle(ctx.page, 2500);
+      const sent = ctx.bridge.filter(entry => entry.path === '/video/render').map(entry => JSON.parse(entry.opts || '{}'));
+      const errors = [...ctx.errors];
+      await ctx.context.close();
+      return { sent, errors };
+    };
+
+    const photoOnly = await sendsFor('single', 'photo');
+    const marked = photoOnly.sent.find(opts => opts.delivery);
+    ok('a licence that does not cover video sends the watermark rule',
+      !!marked && marked.delivery.clean === false
+        && marked.delivery.watermark?.visual === true
+        && marked.delivery.watermark?.audible === true
+        && marked.delivery.maxHeight === 720,
+      marked ? JSON.stringify(marked.delivery) : `no render reached the engine (${photoOnly.sent.length} calls)`);
+
+    const covered = await sendsFor('full', null);
+    const clean = covered.sent.find(opts => opts.delivery);
+    ok('a licence that covers video sends a clean render',
+      !!clean && clean.delivery.clean === true && clean.delivery.watermark === null,
+      clean ? JSON.stringify(clean.delivery) : `no render reached the engine (${covered.sent.length} calls)`);
+
+    allErrors.push(...photoOnly.errors, ...covered.errors);
+  }
+
   // ── The free preview is short ────────────────────────────────────────────
   step('Preview voice without a licence');
   {
