@@ -1,60 +1,22 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 4,
   "brand": "LibraSide Technologies",
-  "generatedAt": "2026-09-04",
+  "recordedAt": "2026-09-04",
   "policy": {
     "actualInterfaceCaption": "Actual product interface",
-    "sideofInterfaceCaption": "Actual product interface · fictional demo data",
-    "illustrativeCaption": "Illustrative campaign scene",
-    "note": "Campaign scenes may provide context around product evidence. Visible product interfaces are derived only from verified product captures."
+    "sideofInterfaceCaption": "Actual product interface · fictional demonstration data",
+    "campaignCaption": "Illustrative campaign scene",
+    "campaignStatus": "New campaign photography is held outside the public site until identity, anatomy, lighting, metadata, and founder-review gates pass.",
+    "rawQualification": "Camera RAW is a development intake path; production decoder qualification remains in progress.",
+    "note": "Interfaces are direct product captures. Illustrative scenes are disclosed and are never presented as documented employees, customers, adoption, or company events."
   },
   "assets": [
     {
-      "file": "libraside-investor-hero.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "82a9ba0553a167b971bc4f2e00466004c5d3c63ab00b5bd166b04bba916e73fb"
-    },
-    {
-      "file": "libraside-investor-hero-proof.webp",
-      "classification": "illustrative-setting-with-actual-product-interface",
-      "product": "MaterialLogix Studio",
-      "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
-      "disclosure": "The setting is illustrative. The interface on the monitor is a verified product capture.",
-      "sha256": "0d4512251dc311fa2971ff3262532d90271dae2781e312f71103072c49458160"
-    },
-    {
-      "file": "founder-kevin-baker.webp",
-      "classification": "editorial-campaign-portrait-based-on-founder-likeness",
-      "sha256": "1cb7f383f60ee90be7593b27a9f2b620562c8599cad4cee03f1e9eaf9379c53a"
-    },
-    {
-      "file": "sideof-real-world-connection.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "3c71e46cfdb2833fce34b84d4512625125de126dfee18401e8efa3859fa2c936"
-    },
-    {
-      "file": "studio-finishing-environment.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "e474563c48390cfb6781b3feffe8bea7a575edcf40f835c821556487bcdf099d"
-    },
-    {
-      "file": "sideof-founder-connection.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "cf07626535807811c93e56a1c955e2be78d589f654f0ccd8e1e73cd5520e37e5"
-    },
-    {
-      "file": "studio-founder-review-actual.webp",
-      "classification": "actual-product-interface",
-      "product": "MaterialLogix Studio",
-      "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
-      "state": "awaiting-review",
-      "sha256": "0330164c166402e236a8e8f89cfdb47b2ac20637084f89927b2a1f6b2fba3808"
-    },
-    {
       "file": "studio-video-interface-actual.webp",
-      "classification": "actual-product-interface",
+      "classification": "actual-product-interface-with-demonstration-media",
       "product": "MaterialLogix Studio",
       "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
+      "state": "video-finishing-development-view",
       "sha256": "11e5e5720fff1c679b6c2ec782ea434c96a1d0879943b4f2b050923db8223ef2"
     },
     {
@@ -62,30 +24,26 @@
       "classification": "actual-product-interface",
       "product": "MaterialLogix Studio",
       "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
-      "disclosure": "The captured interface visibly reports that the local voice engine is offline.",
+      "state": "voice-direction-development-view",
+      "disclosure": "The visible local-engine-offline state is preserved. Rendering is not shown or claimed.",
       "sha256": "4d70460f2d634cbdb5dc161070ba40520fb9e003edf4d86198df51fd307704e9"
     },
     {
       "file": "sideof-home-actual.webp",
-      "classification": "actual-product-interface-with-fictional-demo-data",
+      "classification": "actual-product-interface-with-fictional-demonstration-data",
       "product": "sideof",
       "sourceRevision": "f3cf31415dd5518c514299465b33eff5593e56fa",
+      "disclosure": "Profiles, plans, locations, counts, and messages are controlled fictional review data.",
       "sha256": "5e5817c6c92fa8435aaf25ed3b86bc28fb9298ef5ca1c74bd5b0a0f2951c5820"
     },
     {
-      "file": "sideof-group-chat-actual.webp",
-      "classification": "actual-product-interface-with-fictional-demo-data",
+      "file": "sideof-approximate-map-current.png",
+      "classification": "actual-product-interface-with-fictional-demonstration-data",
       "product": "sideof",
       "sourceRevision": "f3cf31415dd5518c514299465b33eff5593e56fa",
-      "disclosure": "The interface shows an unsent fictional demo draft, not a delivered message.",
-      "sha256": "94e7f779aee04ea6894c6140edb583090ad05073733fb5d32d878a21c7a47c04"
-    },
-    {
-      "file": "sideof-boundaries-actual.webp",
-      "classification": "actual-product-interface-with-fictional-demo-data",
-      "product": "sideof",
-      "sourceRevision": "f3cf31415dd5518c514299465b33eff5593e56fa",
-      "sha256": "629fb8e1d62b3cdd4726d42a0b5ebeb3070759e3d77715ef49c77f91b1ead507"
+      "state": "approximate-location-map",
+      "disclosure": "Pins are privacy-shifted fixture positions, not live locations.",
+      "sha256": "c5bd4bf5825c01f4d3cafdbda6f57630d638c65cc8760e4aa94712896992cca5"
     }
   ]
 }

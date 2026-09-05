@@ -33,20 +33,60 @@ jobs:
           test -f company-site/styles.css
           test -f company-site/site.js
           test -f company-site/.assetsignore
-          test -f company-site/media/libraside-investor-hero.webp
-          test -f company-site/media/libraside-investor-hero-proof.webp
-          test -f company-site/media/studio-founder-review-actual.webp
-          test -f company-site/media/sideof-group-chat-actual.webp
+          test -f company-site/media/studio-video-interface-actual.webp
+          test -f company-site/media/studio-voice-interface-actual.webp
+          test -f company-site/media/sideof-home-actual.webp
+          test -f company-site/media/sideof-approximate-map-current.png
           test -f company-site/media/evidence-manifest.json
           test -f wrangler.libraside.jsonc
           node -e "JSON.parse(require('fs').readFileSync('wrangler.libraside.jsonc', 'utf8'))"
-          node -e "JSON.parse(require('fs').readFileSync('company-site/media/evidence-manifest.json', 'utf8'))"
-          grep -Fq 'Technology<br> with boundaries.' company-site/index.html
-          grep -Fq 'Proof before promise.' company-site/index.html
-          grep -Fq 'libraside-investor-hero-proof.webp' company-site/index.html
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const manifest = JSON.parse(fs.readFileSync('company-site/media/evidence-manifest.json', 'utf8'));
+          const expectedFiles = [
+            'sideof-approximate-map-current.png',
+            'sideof-home-actual.webp',
+            'studio-video-interface-actual.webp',
+            'studio-voice-interface-actual.webp'
+          ].sort();
+          const actualFiles = manifest.assets.map(asset => asset.file).sort();
+          if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+            throw new Error('The evidence manifest does not match the approved public media set.');
+          }
+          for (const asset of manifest.assets) {
+            const file = path.join('company-site', 'media', asset.file);
+            const digest = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+            if (digest !== asset.sha256) throw new Error(`Evidence hash mismatch: ${asset.file}`);
+          }
+          NODE
+          grep -Fq 'For what you make.<br>For how you connect.' company-site/index.html
+          grep -Fq 'A DC-founded technology company' company-site/index.html
+          grep -Fq 'Source / generated' company-site/index.html
+          grep -Fq 'Package + deliver' company-site/index.html
+          grep -Fq 'Camera RAW qualification and external delivery integrations remain in progress' company-site/index.html
           grep -Fq 'Actual product interface' company-site/index.html
-          grep -Fq 'fictional demo data' company-site/index.html
+          grep -Fq 'Fictional demonstration data' company-site/index.html
+          grep -Fq 'Local-first direction' company-site/index.html
+          grep -Fq 'verified short-lived controls before release' company-site/index.html
+          grep -Fq 'MaterialLogix Builder' company-site/index.html
+          grep -Fq 'In development' company-site/index.html
+          grep -Fq 'Coming soon' company-site/index.html
+          grep -Fq 'Kevin Baker' company-site/index.html
           grep -Fq 'LibraSide Technologies LLC' company-site/index.html
+          grep -Fq 'media/evidence-manifest.json' company-site/.assetsignore
+          test ! -e company-site/media/founder-kevin-baker.webp
+          test ! -e company-site/media/libraside-investor-hero.webp
+          test ! -e company-site/media/libraside-investor-hero-proof.webp
+          test ! -e company-site/media/sideof-founder-connection.webp
+          test ! -e company-site/media/studio-kevin-approved-current.png
+          test ! -e company-site/media/studio-kevin-review-current.png
+          test ! -e company-site/media/materiallogix-fashion-design-canvas-current.png
+          if grep -Eiq 'Kevin Marquis|Douglass|artificial intelligence|AI-generated|Proof before promise|Technology<br> with boundaries' company-site/index.html; then
+            echo '::error::Retired name, product, or campaign language remains in the public page.'
+            exit 1
+          fi
           if grep -Eiq 'beforeinstallprompt|serviceWorker|manifest\.json|add to home screen' company-site/index.html company-site/site.js; then
             echo '::error::Web-app installation behavior is not permitted on this corporate website.'
             exit 1
@@ -103,11 +143,19 @@ jobs:
               if curl --fail --silent --show-error --location --max-time 30 \
                 -H 'Cache-Control: no-cache' \
                 "${url}?publish_verify=${GITHUB_RUN_ID}-${attempt}" > "$body" 2>/tmp/curl-error.txt \
-                && grep -Fq 'Technology<br> with boundaries.' "$body" \
-                && grep -Fq 'Proof before promise.' "$body" \
-                && grep -Fq 'libraside-investor-hero-proof.webp' "$body" \
+                && grep -Fq 'For what you make.<br>For how you connect.' "$body" \
+                && grep -Fq 'A DC-founded technology company' "$body" \
+                && grep -Fq 'Source / generated' "$body" \
+                && grep -Fq 'Package + deliver' "$body" \
+                && grep -Fq 'Camera RAW qualification and external delivery integrations remain in progress' "$body" \
                 && grep -Fq 'Actual product interface' "$body" \
-                && grep -Fq 'fictional demo data' "$body" \
+                && grep -Fq 'Fictional demonstration data' "$body" \
+                && grep -Fq 'Local-first direction' "$body" \
+                && grep -Fq 'verified short-lived controls before release' "$body" \
+                && grep -Fq 'MaterialLogix Builder' "$body" \
+                && grep -Fq 'In development' "$body" \
+                && grep -Fq 'Coming soon' "$body" \
+                && grep -Fq 'Kevin Baker' "$body" \
                 && grep -Fq 'LibraSide Technologies LLC' "$body" \
                 && normalize_hosted_html "$body" "$normalized" \
                 && [ "$(sha256sum "$normalized" | awk '{print $1}')" = "$expected_hash" ]; then
@@ -120,8 +168,32 @@ jobs:
             sed -n '1,20p' /tmp/curl-error.txt || true
             return 1
           }
+          verify_assets() {
+            local base="$1"
+            local path
+            local expected
+            local actual
+            for path in \
+              styles.css \
+              site.js \
+              media/sideof-approximate-map-current.png \
+              media/sideof-home-actual.webp \
+              media/studio-video-interface-actual.webp \
+              media/studio-voice-interface-actual.webp; do
+              expected="$(sha256sum "company-site/$path" | awk '{print $1}')"
+              actual="$(curl --fail --silent --show-error --location --max-time 30 \
+                -H 'Cache-Control: no-cache' \
+                "${base}${path}?publish_verify=${GITHUB_RUN_ID}" | sha256sum | awk '{print $1}')"
+              if [ "$actual" != "$expected" ]; then
+                echo "::error::${base}${path} does not match the approved source asset."
+                return 1
+              fi
+            done
+          }
           verify 'https://librasidetechnologies.com/'
+          verify_assets 'https://librasidetechnologies.com/'
           verify 'https://www.librasidetechnologies.com/'
+          verify_assets 'https://www.librasidetechnologies.com/'
 
       - name: Record successful publication
         if: success()
