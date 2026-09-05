@@ -12,9 +12,9 @@
 // beside the engine. It therefore has to run on a machine with ComfyUI up on
 // 127.0.0.1:8188 and at least one checkpoint installed.
 //
-//   node tools/render-site-photography.mjs --dry-run
-//   node tools/render-site-photography.mjs --preset draft
-//   node tools/render-site-photography.mjs --only gown --preset full
+//   node company-site/tools/render-site-photography.mjs --dry-run
+//   node company-site/tools/render-site-photography.mjs --preset draft
+//   node company-site/tools/render-site-photography.mjs --only gown --preset full
 //
 // Run with --help for the full flag list.
 
@@ -103,7 +103,7 @@ const DEFAULT_BASE = 'http://127.0.0.1:8188';
 const USAGE = `Render the librasidetechnologies.com photography through MaterialLogix Studio.
 
 Usage
-  node tools/render-site-photography.mjs [options]
+  node company-site/tools/render-site-photography.mjs [options]
 
 Options
   --studio <path>     materiallogix checkout holding studio/js/generate.js.
@@ -113,7 +113,7 @@ Options
   --only <key>        Render one shot: ${SHOTS.map(s => s.key).join(', ')}.
                       Repeatable, or comma-separated.
   --ckpt <name>       Checkpoint filename. Default: the first one the engine reports.
-  --out <dir>         Where to write. Default: <studio>/company-site/media.
+  --out <dir>         Where to write. Default: the media/ directory beside this script.
   --seed <n>          Fixed seed, for a reproducible re-render. Default: random per shot.
   --base <url>        Engine address. Must stay on this machine. Default: ${DEFAULT_BASE}.
   --timeout <min>     Per-shot wait before giving up. Default: 30.
@@ -198,8 +198,9 @@ async function resolveStudio(explicit) {
     );
   }
 
-  // Nothing specified: walk up from this script (tools/ sits at the root),
-  // then try the working directory.
+  // Nothing specified: walk up from this script. That finds the engine while
+  // the site still sits inside the materiallogix checkout; once the site has
+  // its own repository, --studio (or $MATERIALLOGIX_STUDIO) is required.
   const tried = [];
   const candidates = [];
   for (let dir = HERE, i = 0; i < 6; i++) {
@@ -348,9 +349,12 @@ async function main() {
   const engine = await import(pathToFileURL(modulePath).href);
   console.log(`Studio engine   ${modulePath}`);
 
+  // Default output is the media directory of the site this script sits in, so
+  // it stays correct whether the site lives inside the Studio checkout or in a
+  // repository of its own. --studio only ever locates the engine.
   const outDir = opts.out
     ? resolve(process.cwd(), opts.out)
-    : resolve(root, 'company-site/media');
+    : resolve(HERE, '../media');
   await mkdir(outDir, { recursive: true });
   console.log(`Output          ${outDir}`);
 
