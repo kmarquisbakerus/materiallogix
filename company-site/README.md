@@ -46,11 +46,15 @@ how the company is governed.
 ### Outstanding: the site photography
 
 The four photographs this site uses are rendered by
-`tools/render-site-photography.mjs`, which imports `studio/js/generate.js` and
-drives the same engine the Studio UI drives. It has to run on a machine with
-ComfyUI up on `127.0.0.1:8188`: the engine refuses any address that is not on
-the local machine, and the model weights sit beside it. Neither CI nor a hosted
-agent can do it.
+`tools/render-site-photography.mjs`, which imports Studio's own
+`studio/js/generate.js` and drives the same engine the Studio UI drives. It has
+to run on a machine with ComfyUI up on `127.0.0.1:8188`: the engine refuses any
+address that is not on the local machine, and the model weights sit beside it.
+Neither CI nor a hosted agent can do it.
+
+The renderer lives beside the site rather than in the application repository,
+so it travels with the pictures it makes. Point `--studio` at a MaterialLogix
+checkout to give it an engine; from inside one it finds it on its own.
 
 `hero-collaboration.webp`, `studio-portrait.webp` and `fashion-maker.webp` are
 in the repository but carry no render record, so they are placeholders until
@@ -78,9 +82,21 @@ usable take looks like are kept in `docs/fashion-gown-render.md`.
 
 ## Deployment
 
-`librasidetechnologies.com` is served by the `sideof` Cloudflare Worker. That
-build copies this directory at a pinned commit and routes the apex host to it.
-Changing a filename here requires updating both `scripts/copy-libraside-site.cjs`
+This directory is self-contained: page, styles, script, media, docs and the
+renderer that produces its photography. Nothing outside it is needed to build
+the site, which is what lets it move.
+
+Today `librasidetechnologies.com` is served by the `sideof` Cloudflare Worker,
+which copies this directory from the `company/libraside-technologies` branch of
+the `materiallogix` repository at a pinned commit. That is two application
+repositories serving one corporate website, and it is why the site drifted from
+what is on `main`: the pin is old, and the deploy gate still asserts filenames
+and copy this directory no longer has.
+
+The intended arrangement is the `libraside-technologies-site` Worker serving
+this site from a repository of its own, with MaterialLogix keeping
+`materiallogix.com` and the Studio application. Until that repository exists,
+changing a filename here requires updating both `scripts/copy-libraside-site.cjs`
 and the `COMPANY_FILES` map in `workers/hostname-router.js` in the `sideof`
 repository.
 
