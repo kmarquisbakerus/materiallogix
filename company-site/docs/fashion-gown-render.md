@@ -10,11 +10,31 @@ checkpoints installed on the machine running it (`studio/js/generate.js`).
 It is local-first by design: nothing is generated on a server, and there is no
 hosted path to it. So this render has to come off the founder's own machine.
 
+## How to render it
+
+`tools/render-site-photography.mjs` in this repository does it, along with the
+other three site photographs. It imports `studio/js/generate.js` and calls the
+same functions the Studio UI calls, so what lands in `media/` is Studio output
+rather than an approximation of it.
+
+```
+node tools/render-site-photography.mjs --only gown --dry-run   # see the compiled prompt
+node tools/render-site-photography.mjs --only gown --preset full
+```
+
+The prompt below is the one the script carries; it is recorded here so the
+wording can be reviewed without reading the script.
+
 ## Prompt
 
 Studio composes the final prompt by appending its own guidance constants, so
 write the subject only and let `compilePhotoPrompt` add the rest. Style intent
 `natural`.
+
+Pass the subject alone to `generateOne`. It compiles the prompt itself, so
+handing it an already-compiled prompt appends the guidance twice -- and for
+this prompt the doubled text crosses the 1000-character guard in
+`buildTxt2Img` and throws.
 
 **Prompt**
 
@@ -44,6 +64,20 @@ hanger, clutter, text, logo, watermark, busy background, flat even lighting
 | Composition | Gown centred, tall and slender, generous negative space either side |
 | Steps / CFG | Studio defaults (22 / 6.5) are a good starting point |
 | Style intent | `natural` |
+
+## A heuristic to watch on this shot
+
+Studio decides whether a prompt is a human scene by matching words in it. This
+prompt trips that test twice -- on `silhouette` and on the `hand` in
+`hand-finished` -- so Studio appends its human-scene guidance: believable skin
+texture, gaze between people, complete credible hands, relaxed facial muscles.
+None of that belongs in a shot of an empty dress form, and it pulls against a
+negative that bans face, head, arms and hands.
+
+The render is still worth doing this way -- it is the product's own pipeline,
+and the negative is doing real work -- but check takes for an invented face,
+head, or hands at the neckline. `--dry-run` prints the compiled prompt so the
+added guidance is visible before anything renders.
 
 ## What a usable take looks like
 

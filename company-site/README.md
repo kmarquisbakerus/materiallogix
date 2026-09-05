@@ -35,24 +35,35 @@ how the company is governed.
 - Products without a shippable interface get a typographic panel, not a
   screenshot of an unfinished build.
 - Photography is produced in MaterialLogix Studio and centres Black subjects.
-  `hero-collaboration`, `studio-portrait` and `fashion-maker` all come from the
-  Studio photo matrix.
+- Provenance is recorded, not inferred. A picture counts as Studio output only
+  when there is a render record for it: checkpoint, seed, size, and the prompt
+  it was compiled from. `tools/render-site-photography.mjs` writes that record
+  to `media/render-provenance.json` as it renders.
 - Photography avoids third-party hardware branding in the frame.
 - SideOf consumer campaign photography does not appear here. The parent site
   shows the SideOf product, not its lifestyle marketing.
 
-### Outstanding: the MaterialLogix Fashion card
+### Outstanding: the site photography
 
-The Fashion card should carry a rendered evening gown on a brown dress form.
-That render has to be produced in MaterialLogix Studio, which generates through
-a local ComfyUI engine on the founder's own GPU, so it cannot be produced in
-CI or by a hosted agent. Until it exists the card carries `fashion-maker.webp`.
+The four photographs this site uses are rendered by
+`tools/render-site-photography.mjs`, which imports `studio/js/generate.js` and
+drives the same engine the Studio UI drives. It has to run on a machine with
+ComfyUI up on `127.0.0.1:8188`: the engine refuses any address that is not on
+the local machine, and the model weights sit beside it. Neither CI nor a hosted
+agent can do it.
 
-To swap it in: export at 1440x900 or wider, save as
-`media/fashion-gown.webp`, point the Fashion card's `<img>` at it, and add the
-filename to `scripts/copy-libraside-site.cjs` and the `COMPANY_FILES` map in
-`workers/hostname-router.js` in the `sideof` repository. A suggested Studio
-prompt is kept in `docs/fashion-gown-render.md`.
+`hero-collaboration.webp`, `studio-portrait.webp` and `fashion-maker.webp` are
+in the repository but carry no render record, so they are placeholders until
+they are re-rendered and recorded. Their provenance was read off their
+filenames rather than verified; do not describe them as Studio output until
+`media/render-provenance.json` covers them.
+
+`fashion-gown.webp` does not exist yet, so the Fashion card still carries
+`fashion-maker.webp`. Once the gown is rendered, point the card's `<img>` at
+it, rewrite the `alt` text, and add the filename to
+`scripts/copy-libraside-site.cjs` and the `COMPANY_FILES` map in
+`workers/hostname-router.js` in the `sideof` repository. The prompt and what a
+usable take looks like are kept in `docs/fashion-gown-render.md`.
 
 ## Boundaries
 
