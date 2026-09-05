@@ -46,7 +46,14 @@ export const NATURAL_PHOTO_AVOID = [
   'cut-out subject edges or plastic-looking bokeh'
 ].join(', ');
 
-const HUMAN_TERMS = /\b(person|people|human|humans|woman|women|man|men|girl|girls|boy|boys|child|children|kid|kids|baby|babies|toddler|teen|teenager|teenagers|adult|adults|elderly|senior|seniors|gentleman|lady|guy|guys|folks|someone|somebody|he|she|him|her|his|model|models|creator|artist|artists|designer|designers|team|colleague|colleagues|coworker|staff|crew|worker|workers|friends?|family|couple|pair|group|crowd|audience|face|faces|portrait|selfie|hands?|body|bodies|figure|silhouette|chef|barista|bartender|waiter|waitress|nurse|doctor|dancer|athlete|runner|cyclist|skater|musician|singer|student|teacher|customer|client|guest|shopper|passenger|player|stylist|photographer|engineer|farmer|builder|mechanic)\b/i;
+// A term inside a hyphenated compound describes a thing, not a person in the
+// frame: hand-finished seams, man-made fibre, body-con dress, figure-hugging
+// cut. Matching those pulled skin, gaze and hand guidance into pictures with
+// nobody in them. "silhouette" is out entirely: in apparel it names a garment
+// shape (trumpet, A-line), and even in its human sense it hides the skin,
+// expression and gaze these rules exist to get right -- a human silhouette
+// worth the guidance says so another way (figure, person, woman).
+const HUMAN_TERMS = /\b(person|people|human|humans|woman|women|man|men|girl|girls|boy|boys|child|children|kid|kids|baby|babies|toddler|teen|teenager|teenagers|adult|adults|elderly|senior|seniors|gentleman|lady|guy|guys|folks|someone|somebody|he|she|him|her|his|model|models|creator|artist|artists|designer|designers|team|colleague|colleagues|coworker|staff|crew|worker|workers|friends?|family|couple|pair|group|crowd|audience|face|faces|portrait|selfie|hands?|body|bodies|figure|chef|barista|bartender|waiter|waitress|nurse|doctor|dancer|athlete|runner|cyclist|skater|musician|singer|student|teacher|customer|client|guest|shopper|passenger|player|stylist|photographer|engineer|farmer|builder|mechanic)\b(?!-)/i;
 const DIRECTIVES = {
   camera: /\b(look(?:ing)? (?:at|into) (?:the )?camera|eye contact|direct gaze|camera-facing)\b/i,
   composition: /\b(centered|symmetrical|rule of thirds)\b/i,

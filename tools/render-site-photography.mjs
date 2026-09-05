@@ -249,8 +249,10 @@ async function renderShot(engine, shot, ckpt, opts, outDir) {
     console.log(`  note          ${opts.preset} renders below the size the markup declares;`);
     console.log('                use --preset full for the file that ships.');
   }
-  // The gown must contain no person at all. Studio reads "silhouette" as a
-  // human term, so it adds face/hands guidance that fights the negative.
+  // The gown must contain no person at all. Studio used to class it as a human
+  // scene -- "silhouette" and the "hand" in "hand-finished" both read as human
+  // terms -- and add face and hands guidance that fought the negative. That is
+  // fixed in HUMAN_TERMS; this stays as a tripwire in case it regresses.
   if (shot.key === 'gown' && compiled.appliedRules.includes('human-scene-integrity')) {
     console.log('  warning       Studio classed this as a human scene and added face/hands');
     console.log('                guidance. Check takes for an invented face, head, or hands.');
