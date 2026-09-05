@@ -65,19 +65,25 @@ hanger, clutter, text, logo, watermark, busy background, flat even lighting
 | Steps / CFG | Studio defaults (22 / 6.5) are a good starting point |
 | Style intent | `natural` |
 
-## A heuristic to watch on this shot
+## A heuristic this shot used to trip
 
 Studio decides whether a prompt is a human scene by matching words in it. This
-prompt trips that test twice -- on `silhouette` and on the `hand` in
-`hand-finished` -- so Studio appends its human-scene guidance: believable skin
-texture, gaze between people, complete credible hands, relaxed facial muscles.
-None of that belongs in a shot of an empty dress form, and it pulls against a
-negative that bans face, head, arms and hands.
+prompt used to trip that test twice -- on `silhouette`, and on the `hand` in
+`hand-finished` -- so Studio appended its human-scene guidance to a picture of
+an empty dress form: believable skin texture, gaze between people, complete
+credible hands, relaxed facial muscles. All of it pulled against a negative
+that bans face, head, arms and hands.
 
-The render is still worth doing this way -- it is the product's own pipeline,
-and the negative is doing real work -- but check takes for an invented face,
-head, or hands at the neckline. `--dry-run` prints the compiled prompt so the
-added guidance is visible before anything renders.
+`HUMAN_TERMS` in `studio/js/generate.js` no longer matches either. A term
+inside a hyphenated compound (`hand-finished`, `man-made`, `body-con`) is
+taken as describing a thing rather than naming a person, and `silhouette` is
+out of the list: in apparel it names a garment shape, and a silhouette hides
+the skin and expression that guidance is about. Prompts that do show people
+still get it -- they say so another way.
+
+The renderer still warns if this shot comes back classed as a human scene, as
+a tripwire against a regression. `--dry-run` prints the compiled prompt, so
+what the engine will be sent is visible before anything renders.
 
 ## What a usable take looks like
 
