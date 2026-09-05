@@ -12,6 +12,7 @@ import {
   analyzeAsset, assetIssues, placementIssues, preflight, smartCrop, captureCoverage, captureCoverageBody, cornerSignature, captureFrameQuality
 } from './analyze.js';
 import { analyzeBlobOffThread } from './analysis-worker.js';
+import { createVirtualList } from './virtual-list.js';
 import { buildPackage, decisionsMarkdown, approvedPairs, slug } from './export.js';
 import { buildClientPage, applyClientVerdict } from './clientpage.js';
 import { snapshot, snapshotProject, popUndo, clearUndo, log, logMarkdown } from './history.js';
@@ -570,8 +571,19 @@ async function runAnalysis(asset, { quiet = false } = {}) {
       lumaRange: Math.max(...samples.map(s => s.meanLuma)) - Math.min(...samples.map(s => s.meanLuma))
     };
   }
-  // Geometry is the one networked extra (MediaPipe from CDN). Null offline.
-  asset.geometry = await analyzeGeometry(d.source, d.w, d.h);
+  // Geometry is the one networked extra. With no CDN it falls back to the
+  // engine shipped in the install, which is 21 MB and takes about thirteen
+  // seconds to come up the first time in a session — long enough that silence
+  // reads as a hang. Say so, but only if it is actually taking that long: a
+  // message that flashes on every fast import is its own kind of noise.
+  const geometryNotice = setTimeout(() => {
+    if (!quiet) toast('Preparing the people check for offline use. This happens once.');
+  }, 2500);
+  try {
+    asset.geometry = await analyzeGeometry(d.source, d.w, d.h);
+  } finally {
+    clearTimeout(geometryNotice);
+  }
   asset.peopleReview = {
     status: asset.geometry ? 'complete' : 'manual-review-needed',
     faces: asset.geometry?.faces?.length || 0,
@@ -1515,20 +1527,50 @@ function renderBoard() {
   renderBoardList();
 }
 
+// The board's windowing, kept across renders so scrolling reuses cards rather
+// than rebuilding their images. Rebuilt only when the container is replaced.
+let boardList = null;
+let boardAssets = [];
+
+function releaseBoardList() {
+  boardList?.destroy();
+  boardList = null;
+}
+
 function renderBoardList() {
   const list = $('.board');
-  if (!list) return;
+  if (!list) { releaseBoardList(); boardAssets = []; return; }
   const assets = visibleAssets();
   if (!assets.length) {
+    releaseBoardList();
+    boardAssets = [];
     list.replaceChildren(el('div', { className: 'empty' },
       el('h2', {}, 'Nothing matches'),
       el('p', {}, 'Loosen the filters, or add files from the Library panel.')));
     return;
   }
-  const grid = el('div', { className: 'grid' });
-  list.replaceChildren(grid);
+  // Every asset used to be built on every state change: 652 ms at 200 assets,
+  // and 240 ms for one keystroke in the filter, because a filter is a state
+  // change. Only the rows on screen are built now.
+  // Set before the list is built: `renderItem` runs during construction, and
+  // it reads this. Clearing it in `releaseBoardList` handed every card an
+  // undefined asset and a placeholder with no click handler.
+  boardAssets = assets;
+  if (!boardList || boardList.element?.parentNode !== list) {
+    releaseBoardList();
+    boardList = createVirtualList(list, {
+      count: assets.length,
+      renderItem: index => boardCard(boardAssets[index], index)
+    });
+  } else {
+    boardList.update({ count: assets.length });
+  }
+}
 
-  for (const a of assets) {
+function boardCard(a, index) {
+  if (!a) return el('div', { className: 'card' });
+  const assets = boardAssets;
+  {
     const thumb = el('div', { className: 'thumb' });
     const c = issueCount(a);
     const card = el('div', { className: 'card' }, thumb,
@@ -1545,14 +1587,14 @@ function renderBoardList() {
             className: 'pdot ' + (a.placements?.[s.id]?.decision || 'pending'),
             title: `${s.label}: ${a.placements?.[s.id]?.decision || 'pending'}`
           }, s.label)))));
-    card.onclick = () => { state.index = assets.indexOf(a); state.mode = 'review'; render(); };
-    grid.append(card);
+    card.onclick = () => { state.index = index; state.mode = 'review'; render(); };
     store.objectUrl(a.id).then(url => {
       if (!url) return;
       thumb.append(a.kind === 'video'
         ? el('video', { src: url, muted: true, preload: 'metadata' })
         : el('img', { src: url, loading: 'lazy', alt: a.filename }));
     });
+    return card;
   }
 }
 

@@ -277,6 +277,42 @@ try {
   ok('a real trim is accepted and impossible ones are refused',
     /^ok/.test(trims.valid) && trims['negative in'] === 'refused' && trims.reversed === 'refused' && trims.nonsense === 'refused', JSON.stringify(trims));
 
+  step('The board with a real library');
+  {
+    // Every asset used to be built on every state change - 652 ms at 200
+    // assets, and a filter is a state change, so one keystroke cost 240 ms.
+    const board = await app.evaluate(async () => {
+      const s = window.__cros.state;
+      const real = s.assets.slice();
+      // Built through the product's own constructor. A hand-written object is
+      // missing fields the review view reads, and the resulting page error
+      // says more about the fixture than about the code under test.
+      const { newAsset } = await import('./js/model.js');
+      s.assets = Array.from({ length: 200 }, (_, i) => Object.assign(
+        newAsset(s.project.id, { name: `shot-${i}.png`, type: 'image/png', size: 2048 }),
+        { width: 4000, height: 3000 }));
+      // `auto` stays null: a half-built analysis record is not a state the
+      // product can reach, and inventing one only tests the fixture. Not yet
+      // analysed is a real state, and the board renders it.
+      s.mode = 'board';
+      window.__cros.render();
+      await new Promise(r => setTimeout(r, 400));
+      const windowed = document.querySelectorAll('.board .card').length;
+      // A card still has to open its asset.
+      const first = document.querySelector('.board .card');
+      first?.click();
+      await new Promise(r => setTimeout(r, 300));
+      const opened = s.mode;
+      s.assets = real; s.mode = 'review'; s.index = 0; s.filters.q = '';
+      window.__cros.render();
+      await new Promise(r => setTimeout(r, 300));
+      return { windowed, opened, restored: s.assets.length };
+    });
+    ok('a 200-asset library puts only its visible rows in the page',
+      board.windowed > 0 && board.windowed < 60, `${board.windowed} cards in the DOM`);
+    ok('a windowed card still opens the asset it names', board.opened === 'review', `mode ${board.opened}`);
+  }
+
   step('Approve everything, then deliver');
   await app.evaluate(() => {
     const s = window.__cros.state;
