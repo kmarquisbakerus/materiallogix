@@ -30,7 +30,7 @@
       "product": "MaterialLogix Studio",
       "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
       "disclosure": "The captured interface visibly reports that the local voice engine is offline.",
-      "sha256": "4d70460f2d634cbdb5dc161070ba40520fb9e003edf4d86198df51fd307704e9"
+      "sha256": "0b7e940a247f2f95e62c80b2e5214fcec26357f9392080797d718cd964477161"
     },
     {
       "file": "sideof-home-actual.webp",
