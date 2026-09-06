@@ -168,11 +168,25 @@ test('the pages a regulator opens first say something', () => {
   assert.match(terms, /WCAG 2\.2 Level AA/, 'the accessibility statement claims no standard');
 
   for (const heading of ['<h2>How long we keep things</h2>', '<h2>If there is a security incident</h2>',
-    '<h2>Our representatives in the EU and the UK</h2>']) {
+    '<h2>The European Union and the United Kingdom</h2>']) {
     assert.ok(privacy.includes(heading), `legal/privacy.html is missing ${heading}`);
   }
   assert.match(privacy, /within 72 hours/, 'the breach clause names no deadline');
-  assert.match(privacy, /Article 27/, 'no representative is named or marked as unappointed');
+  // A representative must be established in the territory it covers, so
+  // neither can be appointed from the United States. The lawful position is
+  // not to offer the service there, and the page has to say so plainly rather
+  // than leave a reader guessing why no representative is named.
+  assert.match(privacy, /Article 27/, 'the reason no representative is named has gone');
+  assert.match(privacy, /do not offer MaterialLogix Studio in the European Union or the United Kingdom/,
+    'the page must say the service is not offered there');
+  assert.match(privacy, /established in the territory it covers/,
+    'the page must say why a US company cannot appoint one');
+  // And the page must not have quietly become unreachable to the people it is
+  // written for: the Worker closes the Studio there, never the policy.
+  const worker = read('_worker.js');
+  assert.match(worker, /SERVICE_PATHS/, 'the geofence is gone');
+  assert.ok(!/\/legal\//.test(String(/const SERVICE_PATHS = [^;]+;/.exec(worker)?.[0] || '')),
+    'the geofence must not close the legal pages');
 });
 
 test('every blank left for outside counsel is visibly a blank', () => {
