@@ -265,9 +265,14 @@ test('every script tag the pages ship with carries the response nonce', async ()
     const nonce = response.headers.get('Content-Security-Policy').match(/'nonce-([^']+)'/)[1];
     const html = await response.text();
     const tags = html.match(/<script(?=[\s>])/gi) || [];
-    const stamped = html.match(new RegExp(`<script nonce="${nonce.replace(/[+/]/g, '\\$&')}"`, 'g')) || [];
+    // Counted by splitting on the literal rather than compiling the nonce into
+    // a pattern. Base64 carries `+` and `/` today and both were escaped, but an
+    // escape list is a list of the characters someone thought of: a generator
+    // that ever emitted a backslash would have turned this into a pattern that
+    // matched something else and still reported a number.
+    const stamped = html.split(`<script nonce="${nonce}"`).length - 1;
     assert.ok(tags.length > 0, `${page} has no script tags to stamp`);
-    assert.equal(stamped.length, tags.length, `${page} ships ${tags.length - stamped.length} script tags the policy will refuse`);
+    assert.equal(stamped, tags.length, `${page} ships ${tags.length - stamped} script tags the policy will refuse`);
   }
 });
 

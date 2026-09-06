@@ -28,6 +28,17 @@ globalThis.HTMLRewriter ??= class {
   transform(response) { this.handlers?.element?.({ append: () => undefined }); return response; }
 };
 
+// `policy[directive]` is the parsed source list, so membership is an exact
+// match on one source expression - never a substring of the header. Written
+// out rather than left as `.includes()` because on an array and on a string
+// those read identically and mean very different things, and here the
+// difference decides the assertion: `script-src` legitimately carries
+// `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/`, and a
+// substring test for `https://cdn.jsdelivr.net` would find it inside that and
+// report the whole CDN as a script source. Static analysis reads it the wrong
+// way round for the same reason a person would.
+const names = (sources, source) => (sources || []).some(value => value === source);
+
 const policyFor = async path => {
   const response = await worker.fetch(new Request('https://materiallogix.com' + path), env);
   return Object.fromEntries((response.headers.get('Content-Security-Policy') || '')
@@ -44,9 +55,9 @@ test('the pages that hold the licence key ship a script policy, not an open orig
     assert.ok(policy['script-src'], `${page} has no script-src`);
     assert.ok(policy['script-src'].some(source => source.startsWith("'nonce-")),
       `${page} allows scripts by origin alone, which an injection on this origin satisfies`);
-    assert.ok(!policy['script-src'].includes("'unsafe-inline'"),
+    assert.ok(!names(policy['script-src'], "'unsafe-inline'"),
       `${page} allows any inline script, which is the thing being contained`);
-    assert.ok(!policy['script-src'].includes("'unsafe-eval'"), `${page} allows eval`);
+    assert.ok(!names(policy['script-src'], "'unsafe-eval'"), `${page} allows eval`);
   }
 });
 
@@ -65,10 +76,10 @@ test('the policy accommodates the two things it was left out for', async () => {
     'the theme script that ships does not carry the nonce the policy names, so the Studio boots unstyled');
   // And it talks to a local engine bridge. Loopback is the whole of what an
   // https page can reach, and the whole of what the policy grants.
-  assert.ok(policy['connect-src'].includes('http://127.0.0.1:*'), 'the local engine is unreachable');
-  assert.ok(policy['connect-src'].includes('http://localhost:*'), 'the local engine is unreachable by name');
-  assert.ok(!policy['connect-src'].includes('http:'), 'a blanket http: source is an exfiltration channel');
-  assert.ok(policy['connect-src'].includes('https://materiallogix.com'),
+  assert.ok(names(policy['connect-src'], 'http://127.0.0.1:*'), 'the local engine is unreachable');
+  assert.ok(names(policy['connect-src'], 'http://localhost:*'), 'the local engine is unreachable by name');
+  assert.ok(!names(policy['connect-src'], 'http:'), 'a blanket http: source is an exfiltration channel');
+  assert.ok(names(policy['connect-src'], 'https://materiallogix.com'),
     'a preview deployment addresses the API absolutely and would lose it');
 });
 
@@ -81,22 +92,22 @@ test('the policy still allows everything the product actually loads', async () =
   // content from `/gh/<user>/<repo>@<ref>/<file>`, so naming the bare host
   // would let an injected `<script src>` load anything and skip the nonce - a
   // source list is a union, and the nonce closes only the inline vector.
-  assert.ok(policy['script-src'].includes('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/'),
+  assert.ok(names(policy['script-src'], 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/'),
     'the vision bundle is imported from jsdelivr');
-  assert.ok(!policy['script-src'].includes('https://cdn.jsdelivr.net'),
+  assert.ok(!names(policy['script-src'], 'https://cdn.jsdelivr.net'),
     'the whole of jsDelivr must not be a script source');
-  assert.ok(!policy['connect-src'].includes('https://cdn.jsdelivr.net'),
+  assert.ok(!names(policy['connect-src'], 'https://cdn.jsdelivr.net'),
     'the whole of jsDelivr must not be a connect source');
-  assert.ok(policy['script-src'].includes('blob:'), 'the verified people-mapping runtime is imported from a blob');
-  assert.ok(policy['script-src'].includes("'wasm-unsafe-eval'"), 'the vision backend instantiates WebAssembly');
-  assert.ok(policy['connect-src'].includes('https://storage.googleapis.com/mediapipe-models/'),
+  assert.ok(names(policy['script-src'], 'blob:'), 'the verified people-mapping runtime is imported from a blob');
+  assert.ok(names(policy['script-src'], "'wasm-unsafe-eval'"), 'the vision backend instantiates WebAssembly');
+  assert.ok(names(policy['connect-src'], 'https://storage.googleapis.com/mediapipe-models/'),
     'the landmark models are fetched from Google');
-  assert.ok(!policy['connect-src'].includes('https://storage.googleapis.com'),
+  assert.ok(!names(policy['connect-src'], 'https://storage.googleapis.com'),
     'every bucket on storage.googleapis.com must not be reachable');
-  assert.ok(policy['worker-src'].includes('blob:'), 'camera RAW decodes in a worker');
-  assert.ok(policy['media-src'].includes('blob:'), 'rendered audio and video play from a blob');
-  assert.ok(policy['img-src'].includes('blob:') && policy['img-src'].includes('data:'), 'previews are blobs and data URLs');
-  assert.ok(policy['style-src'].includes("'unsafe-inline'"), 'the checkout UI injects a stylesheet');
+  assert.ok(names(policy['worker-src'], 'blob:'), 'camera RAW decodes in a worker');
+  assert.ok(names(policy['media-src'], 'blob:'), 'rendered audio and video play from a blob');
+  assert.ok(names(policy['img-src'], 'blob:') && names(policy['img-src'], 'data:'), 'previews are blobs and data URLs');
+  assert.ok(names(policy['style-src'], "'unsafe-inline'"), 'the checkout UI injects a stylesheet');
 });
 
 // --- the operations console -------------------------------------------------
