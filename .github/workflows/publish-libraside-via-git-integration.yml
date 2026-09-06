@@ -33,8 +33,7 @@ jobs:
           test -f company-site/styles.css
           test -f company-site/site.js
           test -f company-site/.assetsignore
-          test -f company-site/media/libraside-investor-hero.webp
-          test -f company-site/media/libraside-investor-hero-proof.webp
+                    test -f company-site/media/studio-founder-review-actual.webp
           test -f company-site/media/studio-founder-review-actual.webp
           test -f company-site/media/sideof-group-chat-actual.webp
           test -f company-site/media/evidence-manifest.json
@@ -43,7 +42,7 @@ jobs:
           node -e "JSON.parse(require('fs').readFileSync('company-site/media/evidence-manifest.json', 'utf8'))"
           grep -Fq 'Technology<br> with boundaries.' company-site/index.html
           grep -Fq 'Proof before promise.' company-site/index.html
-          grep -Fq 'libraside-investor-hero-proof.webp' company-site/index.html
+          grep -Fq 'studio-founder-review-actual.webp' company-site/index.html
           grep -Fq 'Actual product interface' company-site/index.html
           grep -Fq 'fictional demo data' company-site/index.html
           grep -Fq 'LibraSide Technologies LLC' company-site/index.html
@@ -52,6 +51,10 @@ jobs:
             exit 1
           fi
           # The founder's full legal name belongs in executed corporate records.
+          if grep -Fq 'Illustrative' company-site/index.html; then
+            echo '::error::Every image on this site is a real product capture. Staged scenes are not permitted.'
+            exit 1
+          fi
           if grep -Fq 'Kevin Marquis Baker' company-site/index.html; then
             echo '::error::The founder middle name must not appear on a public page.'
             exit 1
@@ -117,7 +120,7 @@ jobs:
                 "${url}?publish_verify=${GITHUB_RUN_ID}-${attempt}" > "$body" 2>/tmp/curl-error.txt \
                 && grep -Fq 'Technology<br> with boundaries.' "$body" \
                 && grep -Fq 'Proof before promise.' "$body" \
-                && grep -Fq 'libraside-investor-hero-proof.webp' "$body" \
+                && grep -Fq 'studio-founder-review-actual.webp' "$body" \
                 && grep -Fq 'Actual product interface' "$body" \
                 && grep -Fq 'fictional demo data' "$body" \
                 && grep -Fq 'LibraSide Technologies LLC' "$body" \

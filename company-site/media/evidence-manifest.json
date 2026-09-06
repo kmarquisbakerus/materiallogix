@@ -4,44 +4,11 @@
   "generatedAt": "2026-09-04",
   "policy": {
     "actualInterfaceCaption": "Actual product interface",
-    "sideofInterfaceCaption": "Actual product interface · fictional demo data",
+    "sideofInterfaceCaption": "Actual product interface \u00b7 fictional demo data",
     "illustrativeCaption": "Illustrative campaign scene",
     "note": "Campaign scenes may provide context around product evidence. Visible product interfaces are derived only from verified product captures."
   },
   "assets": [
-    {
-      "file": "libraside-investor-hero.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "82a9ba0553a167b971bc4f2e00466004c5d3c63ab00b5bd166b04bba916e73fb"
-    },
-    {
-      "file": "libraside-investor-hero-proof.webp",
-      "classification": "illustrative-setting-with-actual-product-interface",
-      "product": "MaterialLogix Studio",
-      "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
-      "disclosure": "The setting is illustrative. The interface on the monitor is a verified product capture.",
-      "sha256": "0d4512251dc311fa2971ff3262532d90271dae2781e312f71103072c49458160"
-    },
-    {
-      "file": "founder-kevin-baker.webp",
-      "classification": "editorial-campaign-portrait-based-on-founder-likeness",
-      "sha256": "1cb7f383f60ee90be7593b27a9f2b620562c8599cad4cee03f1e9eaf9379c53a"
-    },
-    {
-      "file": "sideof-real-world-connection.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "3c71e46cfdb2833fce34b84d4512625125de126dfee18401e8efa3859fa2c936"
-    },
-    {
-      "file": "studio-finishing-environment.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "e474563c48390cfb6781b3feffe8bea7a575edcf40f835c821556487bcdf099d"
-    },
-    {
-      "file": "sideof-founder-connection.webp",
-      "classification": "illustrative-campaign-scene",
-      "sha256": "cf07626535807811c93e56a1c955e2be78d589f654f0ccd8e1e73cd5520e37e5"
-    },
     {
       "file": "studio-founder-review-actual.webp",
       "classification": "actual-product-interface",
