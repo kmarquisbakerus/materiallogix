@@ -20,7 +20,7 @@ concurrency:
 jobs:
   publish-and-verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out the approved corporate-site branch
         uses: actions/checkout@v5
@@ -51,8 +51,18 @@ jobs:
             echo '::error::Web-app installation behavior is not permitted on this corporate website.'
             exit 1
           fi
+          # The founder's full legal name belongs in executed corporate records.
+          if grep -Fq 'Kevin Marquis Baker' company-site/index.html; then
+            echo '::error::The founder middle name must not appear on a public page.'
+            exit 1
+          fi
+          # No equity, note or fundraising ask is authorised on a public surface.
+          if grep -Eiq '>[^<]*\b(investment|investors?|fundrais|valuation)\b' company-site/index.html; then
+            echo '::error::A financing ask is not authorised on this site.'
+            exit 1
+          fi
 
-      - name: Publish through Workers static assets when credentials are configured
+      - name: Publish through Workers static assets
         id: deploy
         shell: bash
         env:
@@ -60,15 +70,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if [ -n "${CLOUDFLARE_API_TOKEN:-}" ] && [ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-            npx --yes wrangler@4.128.0 deploy --config wrangler.libraside.jsonc
-            echo 'executed=true' >> "$GITHUB_OUTPUT"
-            echo 'mode=deployed-and-verified' >> "$GITHUB_OUTPUT"
-          else
-            echo '::warning::Cloudflare deployment credentials are not configured; running verification-only. This job will fail if production differs from the approved source.'
-            echo 'executed=false' >> "$GITHUB_OUTPUT"
-            echo 'mode=verified-existing-production' >> "$GITHUB_OUTPUT"
+          # Without credentials this job cannot publish. It used to warn and
+          # carry on, so a missing secret surfaced ten minutes later as a
+          # verification timeout that reads like a broken site. Say what is
+          # actually wrong, immediately.
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo '::error::Cannot publish: set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets. Until they exist every commit to this branch stays unpublished, whatever this workflow reports.'
+            exit 1
           fi
+          npx --yes wrangler@4.128.0 deploy --config wrangler.libraside.jsonc
+          echo 'executed=true' >> "$GITHUB_OUTPUT"
+          echo 'mode=deployed-and-verified' >> "$GITHUB_OUTPUT"
 
       - name: Verify the public root and www domains
         shell: bash
@@ -99,7 +111,7 @@ jobs:
             local url="$1"
             local body=/tmp/verify.html
             local normalized=/tmp/verify-source.html
-            for attempt in $(seq 1 60); do
+            for attempt in $(seq 1 120); do
               if curl --fail --silent --show-error --location --max-time 30 \
                 -H 'Cache-Control: no-cache' \
                 "${url}?publish_verify=${GITHUB_RUN_ID}-${attempt}" > "$body" 2>/tmp/curl-error.txt \
