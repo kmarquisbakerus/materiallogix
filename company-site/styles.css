@@ -1,21 +1,26 @@
 :root {
-  --paper: #f2efe9;
-  --paper-bright: #faf8f3;
-  --ink: #101719;
-  --ink-soft: #364145;
-  --navy: #122d35;
-  --navy-deep: #0a2027;
-  --teal: #164a57;
-  --signal: #c8ff55;
-  --coral: #ff6e4a;
-  --rule: rgba(16, 23, 25, 0.16);
-  --rule-light: rgba(255, 255, 255, 0.2);
-  --shadow: 0 32px 80px rgba(9, 28, 33, 0.16);
+  /* The house system, shared with materiallogix.com so the two sites read as
+     one company: warm paper, near-black, and a single gold that carries every
+     accent. Gold has three weights — flat on paper, lit on dark, bright for
+     fills — because one gold cannot hold contrast on both grounds. */
+  --paper: #f4f0e8;
+  --paper-bright: #fffdf8;
+  --ink: #171615;
+  --ink-soft: #4e4a44;
+  --ink-deep: #171615;
+  --black: #0f0e0c;
+  --gold: #7e5b21;
+  --gold-lit: #d4ad68;
+  --gold-bright: #c59a4a;
+  --rule: rgba(155, 112, 41, 0.22);
+  --rule-light: rgba(255, 255, 255, 0.16);
+  --shadow: 0 32px 80px rgba(40, 31, 18, 0.16);
   --page: min(1800px, calc(100vw - 48px));
-  --serif: "Newsreader", Georgia, serif;
-  --sans: "Manrope", Arial, sans-serif;
-  --mono: "DM Mono", monospace;
+  --serif: Fraunces, Georgia, "Times New Roman", serif;
+  --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
 
 *,
 *::before,
@@ -85,7 +90,7 @@ a {
 
 .site-header.is-scrolled {
   border-color: var(--rule);
-  background: rgba(242, 239, 233, 0.92);
+  background: rgba(244, 240, 232, 0.92);
   backdrop-filter: blur(18px);
 }
 
@@ -173,7 +178,7 @@ a {
 
 .eyebrow {
   margin: 0 0 20px;
-  color: var(--teal);
+  color: var(--gold);
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 500;
@@ -183,7 +188,14 @@ a {
 }
 
 .eyebrow-light {
-  color: var(--signal);
+  color: var(--gold-lit);
+}
+
+/* The portfolio band is near-black; the flat gold cannot be read on it. This
+   eyebrow was previously set in the same colour as the band behind it. */
+.roadmap .eyebrow,
+.story .eyebrow {
+  color: var(--gold-lit);
 }
 
 .hero h1,
@@ -252,19 +264,19 @@ a {
 .button-dark:hover,
 .button-dark:focus-visible {
   color: var(--ink);
-  background: var(--signal);
+  background: var(--gold-lit);
 }
 
 .button-light {
-  color: var(--navy-deep);
+  color: var(--black);
   border-color: var(--paper-bright);
   background: var(--paper-bright);
 }
 
 .button-light:hover,
 .button-light:focus-visible {
-  border-color: var(--signal);
-  background: var(--signal);
+  border-color: var(--gold-lit);
+  background: var(--gold-lit);
 }
 
 .text-link {
@@ -283,8 +295,8 @@ a {
 .hero-image-shell {
   position: relative;
   overflow: hidden;
-  border: 1px solid rgba(16, 23, 25, 0.18);
-  background: #ddd8ce;
+  border: 1px solid rgba(23, 22, 21, 0.18);
+  background: #e2dacc;
   box-shadow: var(--shadow);
 }
 
@@ -301,7 +313,7 @@ a {
   height: 48.3%;
   overflow: hidden;
   clip-path: polygon(0 4.2%, 100% 0, 100% 100%, 0 94.1%);
-  background: var(--navy-deep);
+  background: var(--black);
 }
 
 .hero-screen-proof img {
@@ -332,7 +344,7 @@ a {
   grid-template-columns: repeat(4, 1fr);
   align-items: center;
   color: #fff;
-  background: var(--navy-deep);
+  background: var(--black);
 }
 
 .signal-bar span {
@@ -399,7 +411,7 @@ a {
 .product-studio {
   grid-template-columns: 0.72fr 1.28fr;
   color: #fff;
-  background: var(--navy-deep);
+  background: var(--black);
 }
 
 .feature-copy {
@@ -452,7 +464,7 @@ a {
 }
 
 .workflow span {
-  color: var(--signal);
+  color: var(--gold-lit);
   font-family: var(--mono);
   font-size: 10px;
 }
@@ -484,27 +496,27 @@ a {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  background: #d8d3ca;
+  background: #e4dccd;
 }
 
 .feature-media img {
   width: 100%;
   height: auto;
-  border: 1px solid rgba(16, 23, 25, 0.2);
-  box-shadow: 0 22px 60px rgba(8, 27, 33, 0.25);
+  border: 1px solid rgba(23, 22, 21, 0.2);
+  box-shadow: 0 22px 60px rgba(40, 31, 18, 0.25);
 }
 
 .product-sideof {
   grid-template-columns: 1.2fr 0.8fr;
   color: var(--ink);
-  background: #d7ff91;
+  background: #f0e6cd;
 }
 
 .sideof-campaign-panel {
   position: relative;
   min-height: 760px;
   overflow: hidden;
-  background: #a7c6c2;
+  background: #e0d5c2;
 }
 
 .lifestyle-media {
@@ -525,7 +537,7 @@ a {
   left: 22px;
   padding: 8px 10px;
   color: #fff;
-  background: rgba(10, 32, 39, 0.8);
+  background: rgba(15, 14, 12, 0.8);
   backdrop-filter: blur(8px);
 }
 
@@ -538,8 +550,8 @@ a {
   padding: 11px;
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 18px;
-  background: rgba(247, 244, 237, 0.9);
-  box-shadow: 0 30px 60px rgba(10, 32, 39, 0.3);
+  background: rgba(255, 253, 248, 0.9);
+  box-shadow: 0 30px 60px rgba(40, 31, 18, 0.3);
   backdrop-filter: blur(15px);
 }
 
@@ -560,13 +572,13 @@ a {
 }
 
 .product-sideof .feature-copy > p {
-  color: #233034;
+  color: var(--ink-soft);
 }
 
 .principle-list {
   margin: 38px 0;
   padding: 0;
-  border-top: 1px solid rgba(16, 23, 25, 0.25);
+  border-top: 1px solid rgba(23, 22, 21, 0.25);
   list-style: none;
 }
 
@@ -575,7 +587,7 @@ a {
   display: grid;
   grid-template-columns: minmax(130px, 0.5fr) 1fr;
   gap: 16px;
-  border-bottom: 1px solid rgba(16, 23, 25, 0.25);
+  border-bottom: 1px solid rgba(23, 22, 21, 0.25);
   line-height: 1.45;
 }
 
@@ -598,7 +610,7 @@ a {
   grid-template-columns: 0.9fr 1.1fr;
   gap: clamp(60px, 10vw, 180px);
   color: #fff;
-  background: var(--teal);
+  background: var(--ink-deep);
 }
 
 .roadmap h2 {
@@ -619,7 +631,7 @@ a {
 }
 
 .roadmap-items span {
-  color: var(--signal);
+  color: var(--gold-lit);
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.06em;
@@ -670,7 +682,7 @@ a {
   width: 100%;
   max-height: 620px;
   object-fit: contain;
-  background: #e4e0d8;
+  background: #e6ded1;
 }
 
 .context-card img {
@@ -704,7 +716,7 @@ a {
   grid-template-columns: 1.2fr 0.8fr;
   gap: clamp(70px, 10vw, 190px);
   color: #fff;
-  background: var(--navy-deep);
+  background: var(--black);
 }
 
 .company-statement h2 {
@@ -724,7 +736,7 @@ a {
 }
 
 .company-principles span {
-  color: var(--signal);
+  color: var(--gold-lit);
   font-family: var(--mono);
   font-size: 10px;
 }
@@ -748,7 +760,7 @@ a {
   display: grid;
   grid-template-columns: 0.75fr 1.25fr;
   color: #fff;
-  background: var(--teal);
+  background: var(--ink-deep);
 }
 
 .story-copy {
@@ -791,7 +803,7 @@ a {
   bottom: 22px;
   padding: 8px 10px;
   color: #fff;
-  background: rgba(10, 32, 39, 0.78);
+  background: rgba(15, 14, 12, 0.78);
 }
 
 .founder {
@@ -810,7 +822,7 @@ a {
   max-height: 820px;
   object-fit: cover;
   object-position: center 22%;
-  background: #d9d4cb;
+  background: #ded6c8;
 }
 
 .founder-copy {
@@ -825,7 +837,7 @@ a {
 
 .founder-location {
   margin: 28px 0 34px;
-  color: var(--teal);
+  color: var(--gold);
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -851,8 +863,8 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 50px;
-  color: var(--navy-deep);
-  background: var(--coral);
+  color: var(--black);
+  background: var(--gold-bright);
 }
 
 .contact-band p {
@@ -876,7 +888,7 @@ a {
   justify-content: space-between;
   gap: 40px;
   color: rgba(255, 255, 255, 0.8);
-  background: #07171c;
+  background: var(--black);
 }
 
 .footer-brand {
