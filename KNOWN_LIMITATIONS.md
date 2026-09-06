@@ -249,11 +249,36 @@ section is that a retention promise must rest on something checkable.
 | Stripe | Payments, billing records | PCI DSS Level 1, SOC 2 Type II, ISO 27001. A retention policy exists; **the specific periods were not obtainable** and must be read from the DPA directly. |
 | Google Fonts | Website typefaces | Serves font files to the visitor's browser. No account data. |
 
-**No cloud render provider is chosen.** Nothing in this repository names one:
-cloud video is gated behind a server flag (`session.cloudAvailable`), and the
-cost basis says only "community RTX 4090". There is no provider policy to read
-because there is no provider yet — so the ceiling has to be a procurement
-requirement instead of a discovered fact.
+**The render provider is RunPod**, per the owner. Nothing in this repository
+names it — cloud video is gated behind `session.cloudAvailable` and the cost
+basis says only "community RTX 4090" — so the name lives here until the render
+service records it somewhere the code can see.
+
+What RunPod states, checked September 2026 through search summaries because
+runpod.io is egress-blocked from this environment:
+
+- **SOC 2 Type II, SOC 3, ISO/IEC 27001:2022**, with active HIPAA and GDPR
+  programmes. DPAs and BAAs are available through their sales team, and they
+  commit to breach notification within 72 hours.
+- **Ephemeral container storage is deleted when the pod or serverless worker
+  terminates.** That is the behaviour the 7-day ceiling depends on.
+- **Network volumes are retained indefinitely** until deleted by hand. They
+  survive termination and scale-to-zero — that is what they are for.
+- They state they do not access customer data.
+
+Two requirements follow, and both are on the render service rather than on this
+repository:
+
+1. **Job media must live in ephemeral container storage, never on a network
+   volume** — or the volume must be purged on completion. A network volume
+   holding customer media is retention with no ceiling at all, and it would
+   make the sentence in the Privacy Policy false.
+2. **Pin the GPU region to the United States.** RunPod's pool is global and its
+   GDPR programme is scoped to European data centre regions; a job landing on a
+   European GPU processes personal data in the EU, which is the thing the
+   Article 27 geofence exists to avoid. It is also what the Hunyuan territorial
+   licence turns on if that engine is ever enabled. RunPod exposes region
+   selection and a security-and-compliance filter for exactly this.
 
 **The ceiling is 7 days**, stated in the Privacy Policy and in the consent line
 the customer ticks before sending a job. It replaced 24 hours because 24 could
@@ -269,7 +294,7 @@ search summaries rather than the primary documents:
 | --- | --- | --- |
 | Replicate | API inputs, outputs, files and logs removed after **1 hour** by default | Yes, with room |
 | Modal | Inference endpoints are zero-retention — payloads never written to disk — with a maximum TTL of **7 days** | Yes, exactly at it |
-| RunPod | Keeps no copies; `/workspace` is deleted when the Pod is terminated | Yes, but the ceiling is the operator's, not a contract term |
+| **RunPod** (the one in use) | Ephemeral container storage deleted on termination; **network volumes kept indefinitely** until deleted by hand | Yes, but only on ephemeral storage — a network volume has no ceiling |
 | fal.ai | Request inputs and outputs stored **30 days** by default; generated files guaranteed for at least 7 and deletable at any time after | **No** — the 30-day default breaks the promise unless it is contractually reduced |
 
 Whoever is chosen has to commit to 7 days or less in writing, and an explicit
