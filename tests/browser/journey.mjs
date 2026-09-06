@@ -85,6 +85,20 @@ try {
   const free = await studioContext(browser, { comfyBase: COMFY, licence: null, authenticated: false });
   const page = free.page;
 
+  // The people check is claimed to work with no network. Assuming the sandbox
+  // has none is not the same as proving it: this suite ran green for weeks
+  // only because its egress proxy happened to block jsDelivr, and the first
+  // run on a GitHub runner - which reaches jsDelivr fine - failed. The offline
+  // case is enforced here rather than hoped for, and the count is asserted so
+  // a refactor that stops requesting the CDN cannot leave the check vacuous.
+  const cdnBlocked = [];
+  for (const pattern of ['https://cdn.jsdelivr.net/**', 'https://storage.googleapis.com/**']) {
+    await free.context.route(pattern, route => {
+      cdnBlocked.push(route.request().url());
+      route.abort();
+    });
+  }
+
   step('Arrive at the Studio');
   await page.goto(`${BASE}/index.html?dev=1`, { waitUntil: 'domcontentloaded' });
   await settle(page, 3500);
@@ -114,7 +128,7 @@ try {
     // hands and bodies. That check loaded MediaPipe from a CDN and returned
     // null when it could not - silently, on every offline session - while
     // 21 MB of verified runtime and models sat precached in the install,
-    // called by nothing. No CDN is reachable from this suite, so this is the
+    // called by nothing. Both CDN hosts are aborted above, so this is the
     // offline case, and it must produce a named engine rather than nothing.
     const people = await page.evaluate(() => {
       const asset = window.__cros.state.assets[0];
@@ -127,8 +141,8 @@ try {
     ok('the analysis ran off the main thread, not on the quiet fallback',
       thread === 'worker', `analysed on ${thread}`);
     ok('the people check runs with no network, and says which engine ran',
-      people.engine === 'human-candidate-local' && people.status === 'complete',
-      `engine ${people.engine}, status ${people.status}`);
+      people.engine === 'human-candidate-local' && people.status === 'complete' && cdnBlocked.length > 0,
+      `engine ${people.engine}, status ${people.status}, ${cdnBlocked.length} CDN request(s) refused`);
   }
   await page.evaluate(() => { const s = window.__cros.state;
     for (const id of s.project.surfaces) { window.__cros.ensurePlacement(s.assets[0], id); window.__cros.decidePlacement(s.assets[0], id, 'approved'); } });
