@@ -43,14 +43,6 @@
       "sha256": "cf07626535807811c93e56a1c955e2be78d589f654f0ccd8e1e73cd5520e37e5"
     },
     {
-      "file": "studio-founder-review-actual.webp",
-      "classification": "actual-product-interface",
-      "product": "MaterialLogix Studio",
-      "sourceRevision": "aaacbe1a4d9827fd610cfe4dc36c5f766ad2ab25",
-      "state": "awaiting-review",
-      "sha256": "0330164c166402e236a8e8f89cfdb47b2ac20637084f89927b2a1f6b2fba3808"
-    },
-    {
       "file": "studio-video-interface-actual.webp",
       "classification": "actual-product-interface",
       "product": "MaterialLogix Studio",
@@ -108,6 +100,20 @@
       "derivedFrom": "sideof-founder-connection.webp",
       "disclosure": "A portrait crop of an illustrative campaign scene. No part of it is presented as a documented event.",
       "sha256": "29e9aac805026f446b1d22595f2615048f063469857134f83a5b5ad6cb678b1c"
+    },
+    {
+      "file": "studio-photo.webp",
+      "classification": "actual-product-interface",
+      "product": "MaterialLogix Studio",
+      "disclosure": "A capture of the Studio Photo workspace. The build revision was not recorded when this capture was added, so it is evidence of the interface, not of a named revision.",
+      "sha256": "43f029d048028d6d9a4ac3e471966fa4032d2a11e4e83defba430f31787eebf4"
+    },
+    {
+      "file": "sideof-discover-real.webp",
+      "classification": "actual-product-interface",
+      "product": "sideof",
+      "disclosure": "A capture of the sideof navigation. The build revision was not recorded when this capture was added, so it is evidence of the interface, not of a named revision.",
+      "sha256": "9fab070302189d47757483b07b78a803da7e6e9de07017b5b7da5fc502ef844c"
     }
   ]
 }
