@@ -249,13 +249,32 @@ section is that a retention promise must rest on something checkable.
 | Stripe | Payments, billing records | PCI DSS Level 1, SOC 2 Type II, ISO 27001. A retention policy exists; **the specific periods were not obtainable** and must be read from the DPA directly. |
 | Google Fonts | Website typefaces | Serves font files to the visitor's browser. No account data. |
 
-**A 24-hour deletion promise cannot be kept by an R2 lifecycle rule alone.**
-Cloudflare's own documentation says an object is *typically* removed "within 24
-hours of the expiration value" — so a rule set to 24 hours deletes at up to
-roughly 48. Meeting the window the Studio states, and the Privacy Policy now
-repeats, requires an **explicit delete when the job finishes**, with the
-lifecycle rule as a backstop rather than the mechanism. That is a requirement
-on the render service, which lives outside this repository.
+**No cloud render provider is chosen.** Nothing in this repository names one:
+cloud video is gated behind a server flag (`session.cloudAvailable`), and the
+cost basis says only "community RTX 4090". There is no provider policy to read
+because there is no provider yet — so the ceiling has to be a procurement
+requirement instead of a discovered fact.
+
+**The ceiling is 7 days**, stated in the Privacy Policy and in the consent line
+the customer ticks before sending a job. It replaced 24 hours because 24 could
+not be kept: Cloudflare's own documentation says an R2 object is *typically*
+removed "within 24 hours of the expiration value", so a 24-hour lifecycle rule
+deletes at up to roughly 48. Seven days is comfortably inside what a lifecycle
+rule can guarantee, and every service that touches a job has to be held to it.
+
+What the plausible render providers commit to, checked September 2026 through
+search summaries rather than the primary documents:
+
+| Candidate | Stated retention | Fits a 7-day ceiling |
+| --- | --- | --- |
+| Replicate | API inputs, outputs, files and logs removed after **1 hour** by default | Yes, with room |
+| Modal | Inference endpoints are zero-retention — payloads never written to disk — with a maximum TTL of **7 days** | Yes, exactly at it |
+| RunPod | Keeps no copies; `/workspace` is deleted when the Pod is terminated | Yes, but the ceiling is the operator's, not a contract term |
+| fal.ai | Request inputs and outputs stored **30 days** by default; generated files guaranteed for at least 7 and deletable at any time after | **No** — the 30-day default breaks the promise unless it is contractually reduced |
+
+Whoever is chosen has to commit to 7 days or less in writing, and an explicit
+delete when the job finishes remains the right mechanism, with a lifecycle rule
+as the backstop rather than the means.
 
 The two retention rows still marked `[TO BE COMPLETED]` — billing records, and
 security and abuse events — need the same treatment: a period that some

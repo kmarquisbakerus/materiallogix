@@ -2530,7 +2530,7 @@ async function reviewCloudVideoRender(asset) {
       ? `Your plan includes $${(includedCredit / 100).toFixed(2)} of cloud credit each period, spendable on photo, video or voice. It is used before your wallet; the server settles the actual amount.`
       : 'This job is paid from your prepaid wallet. The server settles the actual amount.'),
     el('label', { className: 'checkline' }, consent,
-      el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are scheduled for deletion within 24 hours.'))),
+      el('span', {}, 'I agree to cloud processing and temporary private storage for this job. Input and output are deleted when the job finishes, and never held longer than 7 days.'))),
   [btn('Cancel', 'btn', closeDialog), btn('Use local render', 'btn', () => { closeDialog(); renderEditedVideo(asset); }), continueButton]);
 }
 

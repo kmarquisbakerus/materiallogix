@@ -233,3 +233,22 @@ test('a subject can be told what consent was taken, and have it erased', () => {
   assert.match(privacy, /consent records held on this device will be erased/,
     'the confirmation must say what it erases');
 });
+
+test('the retention ceiling is one number, and the customer reads it before agreeing', () => {
+  // The consent line and the Privacy Policy have to state the same window, or
+  // the customer agrees to one thing and is owed another. It was 24 hours in
+  // both — a figure an R2 lifecycle rule cannot hold, because Cloudflare
+  // deletes "within 24 hours of the expiration value", so a 24-hour rule runs
+  // to roughly 48.
+  const consent = read('studio/js/app.js');
+  const privacy = read('legal/privacy.html');
+  assert.match(consent, /never held longer than 7 days/,
+    'the line the customer ticks must state the ceiling');
+  assert.match(privacy, /never held longer than 7 days/,
+    'the policy must state the same ceiling');
+  assert.ok(!/deletion within 24 hours|within 24 hours of it finishing/.test(consent + privacy),
+    'a 24-hour promise is back, and it cannot be kept');
+  // Deleting when the job ends is the mechanism; the ceiling is the backstop.
+  assert.match(privacy, /deleted when the job completes/);
+  assert.match(consent, /deleted when the job finishes/);
+});
