@@ -1,4 +1,4 @@
-import { PRODUCTS, TERMS, price } from './pricing.js';
+import { PRODUCTS, TERMS, price } from './pricing.js?v=20260903';
 import { apiUrl } from './api-root.js';
 
 const TERM_STORAGE = 'materiallogix:checkout-term';
@@ -34,6 +34,7 @@ function analyticsSession() {
 function sendAnalytics(event) {
   fetch(apiUrl('/api/analytics/event'), {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ event, operationId: `${analyticsSession()}:${event}`, attribution: attribution() }),
     keepalive: true
   }).catch(() => {});
@@ -44,26 +45,39 @@ function setStatus(message) {
   if (node) node.textContent = message;
 }
 
+// The page owns its own term control: three radios whose :checked state drives
+// which per-term price each card shows. Read that, and fall back to the legacy
+// injected select only where the page has not published one.
+const RADIO_TERMS = { 'term-m': 'monthly', 'term-q': 'quarterly', 'term-y': 'yearly' };
+
+function termRadios() {
+  return [...document.querySelectorAll('.term-radio')].filter(radio => RADIO_TERMS[radio.id]);
+}
+
 function selectedTerm() {
+  const checked = termRadios().find(radio => radio.checked);
+  if (checked) return RADIO_TERMS[checked.id];
   return document.querySelector('#billingTerm')?.value || 'monthly';
 }
 
+// Prices are published in the page's own markup, one node per term, and the
+// licence service charges from the same catalogue. This never rewrites them:
+// a client-side catalogue that has drifted from the published page must not be
+// able to show a customer a total they will not be charged. It only settles
+// which plans can be bought on the selected term, and how the button reads.
 function updatePricing(termId) {
   const term = TERMS.find(item => item.id === termId) || TERMS[0];
   for (const button of document.querySelectorAll('[data-checkout-plan]')) {
     const planId = button.dataset.checkoutPlan;
     const product = PRODUCTS.find(item => item.id === planId);
+    if (!product) continue;
     const amount = price(planId, term.id);
-    const card = button.closest('.tier, .plan');
-    if (!product || !card) continue;
     if (!amount) {
       button.disabled = true;
       button.textContent = `${product.name} is monthly only`;
       continue;
     }
     button.disabled = false;
-    const priceNode = card.querySelector('.price');
-    if (priceNode) priceNode.innerHTML = `$${amount.total}<small>/${term.months === 1 ? 'mo' : `${term.months} mo`}</small>`;
     button.textContent = `Choose ${product.name}`;
   }
   try { localStorage.setItem(TERM_STORAGE, term.id); } catch { /* unavailable */ }
@@ -121,10 +135,39 @@ const checkoutSelector = '[data-checkout-plan], [data-checkout-sku]';
 const promoRow = document.querySelector('#promoRow');
 if (promoRow && document.querySelector(checkoutSelector)) promoRow.hidden = false;
 
+// Storage is a convenience, never a dependency. An unguarded read throws in a
+// private window with site data blocked, and a throw here is a module-level
+// throw: every checkout button below would silently never get a click handler.
+function rememberedTerm() {
+  try {
+    const remembered = localStorage.getItem(TERM_STORAGE);
+    return TERMS.some(term => term.id === remembered) ? remembered : null;
+  } catch {
+    return null;
+  }
+}
+
+const radios = termRadios();
 const selector = document.querySelector('#billingTerm');
-if (selector) {
-  const remembered = localStorage.getItem(TERM_STORAGE);
-  if (TERMS.some(term => term.id === remembered)) selector.value = remembered;
+if (radios.length) {
+  const remembered = rememberedTerm();
+  const restore = remembered && radios.find(radio => RADIO_TERMS[radio.id] === remembered);
+  if (restore) restore.checked = true;
+  for (const radio of radios) radio.addEventListener('change', () => updatePricing(selectedTerm()));
+  if (selector) {
+    // Keep a legacy injected select in step with the page's own control rather
+    // than letting two term pickers disagree about what the customer chose.
+    selector.value = selectedTerm();
+    selector.addEventListener('change', () => {
+      const target = radios.find(radio => RADIO_TERMS[radio.id] === selector.value);
+      if (target) target.checked = true;
+      updatePricing(selectedTerm());
+    });
+  }
+  updatePricing(selectedTerm());
+} else if (selector) {
+  const remembered = rememberedTerm();
+  if (remembered) selector.value = remembered;
   selector.addEventListener('change', () => updatePricing(selector.value));
   updatePricing(selector.value);
 }

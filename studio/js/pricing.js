@@ -27,32 +27,32 @@ export const PRODUCTS = [
     id: 'single_photo',
     plan: 'single', selectedProduct: 'photo',
     name: 'Single Studio — Photo',
-    monthly: 9,
-    totals: { monthly: 9, quarterly: 24, yearly: 84 },
+    monthly: 15,
+    totals: { monthly: 15, quarterly: 40, yearly: 140 },
     pitch: 'Photo direction, review, and delivery.'
   },
   {
     id: 'single_video',
     plan: 'single', selectedProduct: 'video',
     name: 'Single Studio — Video',
-    monthly: 9,
-    totals: { monthly: 9, quarterly: 24, yearly: 84 },
+    monthly: 15,
+    totals: { monthly: 15, quarterly: 40, yearly: 140 },
     pitch: 'Video direction, editing, and accepted render features.'
   },
   {
     id: 'single_voice',
     plan: 'single', selectedProduct: 'voice',
     name: 'Single Studio — Voice',
-    monthly: 9,
-    totals: { monthly: 9, quarterly: 24, yearly: 84 },
+    monthly: 15,
+    totals: { monthly: 15, quarterly: 40, yearly: 140 },
     pitch: 'Voice direction and accepted local voice features.'
   },
   {
     id: 'full',
     plan: 'full', selectedProduct: null,
     name: 'Full Studio',
-    monthly: 19,
-    totals: { monthly: 19, quarterly: 50, yearly: 180 },
+    monthly: 29,
+    totals: { monthly: 29, quarterly: 77, yearly: 275 },
     pitch: 'Photo, Video, and Voice in one license.'
   }
 ];
@@ -63,6 +63,11 @@ export function price(productId, termId) {
   const t = TERMS.find(x => x.id === termId);
   if (!p || !t) return null;
   const total = p.totals[termId];
+  // A product that is not offered on this term has no price. Returning a record
+  // with an undefined total reads as truthy to every caller, which is how the
+  // monthly-only Voice Starter used to render "$undefined / 3 mo" and still let
+  // a customer open a checkout for a SKU the licence service does not sell.
+  if (typeof total !== 'number') return null;
   const baseline = p.monthly * t.months;
   const savings = baseline - total;
   return { total, perMonth: +(total / t.months).toFixed(2), months: t.months,
@@ -82,7 +87,7 @@ export function price(productId, termId) {
 // never bleed money. Cloud jobs are separate prepaid credits on top.
 
 export const MONTHLY_UNITS = { voice_starter: 60, single: 500, full: 1000 };
-export const PAY_PER_EXPORT = { units: 1, price: 3.99 };
+export const PAY_PER_EXPORT = { units: 1, price: 2.99 };
 
 // Customer-visible prepaid cloud rates. The server must authorize the quoted
 // amount before submission and settle the actual amount afterward. Local work
@@ -91,7 +96,7 @@ export const CLOUD_PRICING = {
   imageUpscale: { price: 0.10, unit: 'image', estimatedCost: 0.01 },
   voiceRender: { price: 0.25, unit: 'minute', estimatedCost: 0.10 },
   videoUpscale: { price: 3.00, unit: 'output minute', estimatedCostLow: 0.40, estimatedCostHigh: 0.80 },
-  minimumRefill: 5,
+  minimumRefill: 10,
   maximumRefill: 500,
   prepaidOnly: true,
   autoCharge: 'optional-explicit-opt-in'
@@ -127,13 +132,13 @@ export function quoteCloudJob({ kind, durationSeconds = 0, imageCount = 0 }) {
 
 // Cloud video processing is one batched provider job per video. The earlier
 // $0.40-$0.80/output-minute cost range is an unverified engineering estimate,
-// not a customer or margin claim. Provider fixtures must prove the full $10
-// benefit costs <=$5 (target <=$3) before this disabled lane can activate.
+// not a customer or margin claim. Provider fixtures must prove the full $20
+// benefit costs <=$10 (target <=$6) before this disabled lane can activate.
 export const CLOUD_VIDEO = {
   maxOutput: '4K',            // resolution ceiling
   maxJobMinutes: 5,           // per-job length cap
-  includedPromotionalCents: { videoSingle: 1000, full: 1000 },
-  includedEquivalentSeconds: 200,
+  includedPromotionalCents: { videoSingle: 2000, full: 2000 },
+  includedEquivalentSeconds: 400,
   pricePerMinute: 3,
   productionEnabled: false
 };

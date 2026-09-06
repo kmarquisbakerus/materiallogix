@@ -1,5 +1,7 @@
-/           /studio/            302
-/index.html /studio/            302
+# The marketing homepage is the canonical indexable page: sitemap.xml lists
+# https://materiallogix.com/ and robots.txt disallows /studio/. The two rules
+# that redirected / and /index.html into /studio/ predate that and would send
+# the canonical page, its pricing and its checkout into a disallowed path.
 /app        /studio/            301
 /app/*      /studio/:splat      301
 /voice      /studio/voice.html  302

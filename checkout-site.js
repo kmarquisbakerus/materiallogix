@@ -1,3 +1,5 @@
+import { PAY_PER_EXPORT } from '/studio/js/pricing.js?v=20260903';
+
 const ready = document.readyState === 'loading'
   ? new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }))
   : Promise.resolve();
@@ -45,7 +47,7 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     return button;
   };
 
-  addButton(card('Free Preview'), { checkoutSku: 'export_one' }, 'Buy one clean export — $3.99');
+  addButton(card('Free Preview'), { checkoutSku: 'export_one' }, `Buy one clean export — $${PAY_PER_EXPORT.price.toFixed(2)}`);
   addButton(card('Voice Starter'), { checkoutPlan: 'voice_starter' }, 'Choose Voice Starter');
 
   const single = card('Single Studio');
@@ -83,7 +85,11 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
   addButton(card('Full Studio'), { checkoutPlan: 'full' }, 'Choose Full Studio');
 
   const plansContainer = pricing.querySelector('.plans');
-  if (plansContainer && !document.querySelector('#billingTerm')) {
+  // The page publishes its own Monthly/Quarterly/Yearly control and one price
+  // node per term. Injecting a second term picker gave the customer two
+  // controls that did not agree, so only supply one where the page has none.
+  const pageOwnsTermControl = Boolean(document.querySelector('.term-radio'));
+  if (plansContainer && !pageOwnsTermControl && !document.querySelector('#billingTerm')) {
     const toolbar = document.createElement('div');
     toolbar.className = 'commerce-toolbar';
     toolbar.innerHTML = `
@@ -134,5 +140,5 @@ if (pricing && !document.querySelector('#materiallogixCheckoutUi')) {
     purchase.append(status);
   }
 
-  await import('/studio/js/checkout.js?v=20260902');
+  await import('/studio/js/checkout.js?v=20260903');
 }

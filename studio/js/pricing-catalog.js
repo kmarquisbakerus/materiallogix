@@ -7,7 +7,7 @@ export const ACTIVE_PRICE_CATALOG = Object.freeze({
 
 export const PRICING = Object.freeze({
   preview: Object.freeze({ name: 'Free Preview', totalCents: 0, billedEveryMonths: 0 }),
-  export: Object.freeze({ name: 'Pay-per-export', totalCents: 399, billedEveryMonths: 0 }),
+  export: Object.freeze({ name: 'Pay-per-export', totalCents: 299, billedEveryMonths: 0 }),
   voiceStarter: Object.freeze({
     name: 'Voice Starter',
     description: '60 finished local voice minutes each month and one active personal voice profile.',
@@ -18,28 +18,28 @@ export const PRICING = Object.freeze({
     description: 'Choose one: Photo, Video, or Voice.',
     products: Object.freeze({
       photo: Object.freeze({
-        monthly: Object.freeze({ totalCents: 900, billedEveryMonths: 1 }),
-        quarterly: Object.freeze({ totalCents: 2400, billedEveryMonths: 3 }),
-        yearly: Object.freeze({ totalCents: 8400, billedEveryMonths: 12 })
+        monthly: Object.freeze({ totalCents: 1500, billedEveryMonths: 1 }),
+        quarterly: Object.freeze({ totalCents: 4000, billedEveryMonths: 3 }),
+        yearly: Object.freeze({ totalCents: 14000, billedEveryMonths: 12 })
       }),
       video: Object.freeze({
-        monthly: Object.freeze({ totalCents: 900, billedEveryMonths: 1 }),
-        quarterly: Object.freeze({ totalCents: 2400, billedEveryMonths: 3 }),
-        yearly: Object.freeze({ totalCents: 8400, billedEveryMonths: 12 })
+        monthly: Object.freeze({ totalCents: 1500, billedEveryMonths: 1 }),
+        quarterly: Object.freeze({ totalCents: 4000, billedEveryMonths: 3 }),
+        yearly: Object.freeze({ totalCents: 14000, billedEveryMonths: 12 })
       }),
       voice: Object.freeze({
-        monthly: Object.freeze({ totalCents: 900, billedEveryMonths: 1 }),
-        quarterly: Object.freeze({ totalCents: 2400, billedEveryMonths: 3 }),
-        yearly: Object.freeze({ totalCents: 8400, billedEveryMonths: 12 })
+        monthly: Object.freeze({ totalCents: 1500, billedEveryMonths: 1 }),
+        quarterly: Object.freeze({ totalCents: 4000, billedEveryMonths: 3 }),
+        yearly: Object.freeze({ totalCents: 14000, billedEveryMonths: 12 })
       })
     })
   }),
   full: Object.freeze({
     name: 'Full Studio',
     description: 'Photo, Video, and Voice together.',
-    monthly: Object.freeze({ totalCents: 1900, billedEveryMonths: 1 }),
-    quarterly: Object.freeze({ totalCents: 5000, billedEveryMonths: 3 }),
-    yearly: Object.freeze({ totalCents: 18000, billedEveryMonths: 12 })
+    monthly: Object.freeze({ totalCents: 2900, billedEveryMonths: 1 }),
+    quarterly: Object.freeze({ totalCents: 7700, billedEveryMonths: 3 }),
+    yearly: Object.freeze({ totalCents: 27500, billedEveryMonths: 12 })
   })
 });
 
