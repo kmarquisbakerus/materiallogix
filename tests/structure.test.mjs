@@ -53,10 +53,13 @@ function media(css, condition) {
  * <style> opens by explaining which element is the page's <main> - and a tag
  * count that reads them counts the explanation as the thing.
  */
-const markup = page => page
-  .replace(/<!--[\s\S]*?-->/g, '')
-  .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+// One pass over one alternation, deliberately. Three sequential replaces let
+// each one splice together text that then reads as input to the next, and
+// `</script >` - whitespace before the bracket, which HTML allows - closed
+// none of them, so a script whose end tag was written that way survived into
+// the tag count as ordinary markup.
+const REMOVED = /<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?<\/style\s*>|<script\b[^>]*>[\s\S]*?<\/script\s*>/gi;
+const markup = page => page.replace(REMOVED, '');
 const body = page => /<body[^>]*>([\s\S]*)<\/body>/.exec(markup(page))[1];
 
 // ── the drawer that stayed in the tab order ─────────────────────────────────

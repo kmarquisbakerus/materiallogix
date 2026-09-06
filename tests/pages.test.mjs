@@ -23,6 +23,12 @@ const adminPage = read('studio/admin.html');
  * ran, not that a string was present.
  */
 
+// An unterminated tag is still a tag. A browser parsing `<p>a<b` drops the
+// `<b` and reports `a`; matching only up to a closing bracket left it in the
+// text, so this stub reported `a<b` and a test reading textContent could pass
+// on a string the real page never produces.
+const stripTags = value => String(value).replace(/<[^>]*(?:>|$)/g, '');
+
 /** The parts of an element these pages touch, and nothing more. */
 class Element {
   constructor(tag = 'div') {
@@ -36,7 +42,7 @@ class Element {
   get textContent() { return this.text; }
   set textContent(value) { this.text = String(value); this.html = ''; this.children = []; }
   get innerHTML() { return this.html; }
-  set innerHTML(value) { this.html = String(value); this.text = this.html.replace(/<[^>]*>/g, ''); }
+  set innerHTML(value) { this.html = String(value); this.text = stripTags(this.html); }
   insertAdjacentHTML(position, markup) {
     this.innerHTML = position === 'afterbegin' ? markup + this.html : this.html + markup;
   }
