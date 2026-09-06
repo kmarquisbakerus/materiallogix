@@ -23,8 +23,8 @@ code as shipped, or because a required disclosure is absent.*
 ---
 
 **1. Identity, contact and service of process.** MaterialLogix Studio™ is provided by LIBRASIDE TECHNOLOGIES LLC, a
-[Delaware] limited liability company, registered office [full street address, city, state, postal code, United
-States], company number [—], email admin@materiallogix.com. All notices, complaints, consumer enquiries, requests
+District of Columbia limited liability company, registered office 2200 15th Street NE, Washington, District of
+Columbia 20018, United States, email admin@materiallogix.com. All notices, complaints, consumer enquiries, requests
 under data-protection law and legal process are effective when sent to that address. Our copyright agent is
 [name], at the same address; [our designation under 17 U.S.C. §512(c)(2) is registered with the U.S. Copyright
 Office under agent number —] / [we have not registered a designated agent with the U.S. Copyright Office and do not

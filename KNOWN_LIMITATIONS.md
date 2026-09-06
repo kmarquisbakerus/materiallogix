@@ -653,8 +653,6 @@ Every one of these is written into the page as a literal
 visibly unfinished rather than quietly wrong.
 
 `legal/terms.html`
-- state of formation, company registration number and registered office address
-  of LibraSide Technologies, LLC
 - date, scope, conformance level and known exceptions of an accessibility
   assessment - none has been carried out, and the page says so rather than
   claiming WCAG 2.2 AA
