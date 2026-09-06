@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "brand": "LibraSide Technologies",
-  "generatedAt": "2026-09-04",
+  "generatedAt": "2026-09-06",
   "policy": {
     "actualInterfaceCaption": "Actual product interface",
-    "sideofInterfaceCaption": "Actual product interface · fictional demo data",
+    "sideofInterfaceCaption": "Actual product interface \u00b7 fictional demo data",
     "illustrativeCaption": "Illustrative campaign scene",
     "note": "Campaign scenes may provide context around product evidence. Visible product interfaces are derived only from verified product captures."
   },
@@ -86,6 +86,28 @@
       "product": "sideof",
       "sourceRevision": "f3cf31415dd5518c514299465b33eff5593e56fa",
       "sha256": "629fb8e1d62b3cdd4726d42a0b5ebeb3070759e3d77715ef49c77f91b1ead507"
+    },
+    {
+      "file": "collaboration-hero.webp",
+      "classification": "illustrative-campaign-scene",
+      "sha256": "05c1fd1cf2093c5305d05ac5a95a1985bd1aed90195bedb01f62b5d93d98783f"
+    },
+    {
+      "file": "fashion-maker.webp",
+      "classification": "illustrative-campaign-scene",
+      "sha256": "b4160f6879b1331735580bcdc824e5a0575209062d455b0701cb34880c47703a"
+    },
+    {
+      "file": "sideof-social.webp",
+      "classification": "illustrative-campaign-scene",
+      "sha256": "8b2e9646607a9ec2fefefa46f6fafa7842dd34966deb24eaa10f00b8725f7316"
+    },
+    {
+      "file": "founder-campaign-portrait.webp",
+      "classification": "editorial-campaign-portrait-based-on-founder-likeness",
+      "derivedFrom": "sideof-founder-connection.webp",
+      "disclosure": "A portrait crop of an illustrative campaign scene. No part of it is presented as a documented event.",
+      "sha256": "29e9aac805026f446b1d22595f2615048f063469857134f83a5b5ad6cb678b1c"
     }
   ]
 }
