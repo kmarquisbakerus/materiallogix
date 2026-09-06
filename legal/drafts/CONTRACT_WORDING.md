@@ -22,7 +22,7 @@ code as shipped, or because a required disclosure is absent.*
 
 ---
 
-**1. Identity, contact and service of process.** MaterialLogix Studio™ is provided by LibraSide Technologies, LLC, a
+**1. Identity, contact and service of process.** MaterialLogix Studio™ is provided by LIBRASIDE TECHNOLOGIES LLC, a
 [Delaware] limited liability company, registered office [full street address, city, state, postal code, United
 States], company number [—], email admin@materiallogix.com. All notices, complaints, consumer enquiries, requests
 under data-protection law and legal process are effective when sent to that address. Our copyright agent is
