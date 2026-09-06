@@ -235,15 +235,22 @@ export default {
     const response = await env.ASSETS.fetch(request);
     const nonce = mintNonce();
     if (!response.headers.get('content-type')?.includes('text/html')) return harden(response, nonce);
-    const page = (path === '/' || path === '/index.html')
-      ? new HTMLRewriter()
-        .on('body', {
-          element(element) {
-            element.append('<script type="module" src="/checkout-site.js?v=20260903"></script>', { html: true });
-          }
-        })
-        .transform(response)
-      : response;
-    return harden(await stampNonce(page, nonce), nonce);
+    // Two things are appended to the pages this site serves.
+    //
+    // The redemption module goes on EVERY page. Stripe's success URL is chosen
+    // by the billing service, which lives outside this repository, so a list of
+    // pages that can finish a purchase is a list that can be wrong - and being
+    // wrong means the customer paid and was never licensed. Any page can finish
+    // it now, and the module does nothing at all unless a claim is present.
+    // `stampNonce` runs after this, so both pick up the CSP nonce.
+    const rewriter = new HTMLRewriter().on('body', {
+      element(element) {
+        element.append('<script type="module" src="/studio/js/checkout-result.js?v=20260906"></script>', { html: true });
+        if (path === '/' || path === '/index.html') {
+          element.append('<script type="module" src="/checkout-site.js?v=20260903"></script>', { html: true });
+        }
+      }
+    });
+    return harden(await stampNonce(rewriter.transform(response), nonce), nonce);
   }
 };

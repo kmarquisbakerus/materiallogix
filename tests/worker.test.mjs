@@ -80,8 +80,30 @@ test('the marketing homepage is served, not redirected away', async () => {
   const response = await get('https://materiallogix.com/');
   assert.equal(response.status, 200, 'the homepage must render the site, not redirect');
   assertHardened(response, 'the homepage');
-  assert.equal(appended.length, 1, 'the checkout script is what turns the pricing table into buttons');
-  assert.match(appended[0], /src="\/checkout-site\.js\?v=\d{8}"/, 'the checkout script must be cache-busted');
+  assert.equal(appended.length, 2, 'the homepage carries the redeemer and the checkout script');
+  assert.ok(appended.some(tag => /src="\/checkout-site\.js\?v=\d{8}"/.test(tag)),
+    'the checkout script is what turns the pricing table into buttons, and must be cache-busted');
+  assert.ok(appended.some(tag => /src="\/studio\/js\/checkout-result\.js\?v=\d{8}"/.test(tag)),
+    'the homepage must be able to finish a purchase');
+});
+
+test('every page this site serves can finish a purchase', async () => {
+  // Stripe's success URL is chosen by the billing service, which lives outside
+  // this repository. A list of pages that can redeem a claim is a list that can
+  // be wrong, and being wrong means the customer paid and was never licensed.
+  for (const path of ['/', '/index.html', '/contact.html', '/legal/terms.html',
+    '/studio/index.html', '/studio/voice.html', '/studio/usage.html']) {
+    appended.length = 0;
+    const response = await get('https://materiallogix.com' + path);
+    assert.equal(response.status, 200, `${path} did not render`);
+    assert.ok(appended.some(tag => /checkout-result\.js/.test(tag)),
+      `${path} cannot redeem a paid claim`);
+  }
+
+  // And it must not be appended to anything that is not a page.
+  appended.length = 0;
+  await get('https://materiallogix.com/studio/js/app.js');
+  assert.deepEqual(appended, [], 'the redeemer was appended to a script file');
 });
 
 test('the canonical host and paths still redirect', async () => {
