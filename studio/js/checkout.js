@@ -34,6 +34,7 @@ function analyticsSession() {
 function sendAnalytics(event) {
   fetch(apiUrl('/api/analytics/event'), {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ event, operationId: `${analyticsSession()}:${event}`, attribution: attribution() }),
     keepalive: true
   }).catch(() => {});
@@ -131,10 +132,21 @@ const checkoutSelector = '[data-checkout-plan], [data-checkout-sku]';
 const promoRow = document.querySelector('#promoRow');
 if (promoRow && document.querySelector(checkoutSelector)) promoRow.hidden = false;
 
+// Storage is a convenience, never a dependency. This read is at module level,
+// so a throw here - a private window with site data blocked - would skip every
+// listener below it, and every checkout button would silently never get one.
+function rememberedTerm() {
+  try {
+    return localStorage.getItem(TERM_STORAGE);
+  } catch {
+    return null;
+  }
+}
+
 const terms = termRadios();
 if (terms.length) {
-  const remembered = localStorage.getItem(TERM_STORAGE);
-  const restore = terms.find(input => input.dataset.term === remembered);
+  const remembered = rememberedTerm();
+  const restore = remembered && terms.find(input => input.dataset.term === remembered);
   if (restore) restore.checked = true;
   for (const input of terms) input.addEventListener('change', () => updatePricing(selectedTerm()));
   updatePricing(selectedTerm());

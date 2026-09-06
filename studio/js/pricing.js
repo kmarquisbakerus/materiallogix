@@ -21,7 +21,7 @@ export const PRODUCTS = [
     name: 'Voice Starter',
     monthly: 5,
     totals: { monthly: 5 },
-    pitch: '30 finished local voice minutes each month and one active personal voice profile.'
+    pitch: '60 finished local voice minutes each month and one active personal voice profile.'
   },
   ...['photo', 'video', 'voice'].map(product => ({
     id: `single_${product}`,
@@ -86,7 +86,7 @@ export function price(productId, termId) {
 // Local renders cost us $0, so units price VALUE, not cost — overage can
 // never bleed money. Cloud jobs are separate prepaid credits on top.
 
-export const MONTHLY_UNITS = { voice_starter: 30, single: 500, single_pro: 500, full: 1000, pro: 1000 };
+export const MONTHLY_UNITS = { voice_starter: 60, single: 500, single_pro: 500, full: 1000, pro: 1000 };
 
 // One unit is one clean image. Units are the plan's currency - what an export
 // spends out of a monthly allowance - and a minute of finished video spends
