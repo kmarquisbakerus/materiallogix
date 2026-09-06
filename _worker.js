@@ -77,6 +77,63 @@ const stampNonce = async (response, nonce) => {
   return new Response(html, { status: response.status, statusText: response.statusText, headers });
 };
 
+// Where the Studio is not offered, and why.
+//
+// GDPR Article 27 requires a representative ESTABLISHED IN the Union for a
+// controller outside it, and UK GDPR Article 27 requires one established in
+// the United Kingdom. Neither role can be held from the United States, so
+// neither is a thing this company can appoint today. Voice packs and identity
+// reference sets are Article 9 special-category data, which puts us outside
+// the "occasional processing" exemption in Article 27(2)(a) - so the
+// representative is not optional and the exemption is not available.
+//
+// Offering the service into those territories without one is the breach. Not
+// offering it is the lawful position, so the Studio and the purchase path are
+// closed there until representatives exist. The information pages stay open:
+// somebody in Dublin must still be able to read what we hold and how to reach
+// us, and refusing them the privacy policy would be its own kind of wrong.
+//
+// 451 is the correct status - unavailable for legal reasons - not 403.
+const EU_MEMBER_STATES = [
+  'AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU',
+  'IE', 'IT', 'LV', 'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'
+];
+const NO_REPRESENTATIVE = new Set([...EU_MEMBER_STATES, 'GB']);
+
+// The Studio itself, and anything that takes money. The marketing page, the
+// legal pages and contact stay reachable.
+const SERVICE_PATHS = /^\/(studio(\/|$)|api\/(checkout|wallet|outbound|license)(\/|$))/;
+
+const closedNotice = country => `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MaterialLogix Studio is not available in your region yet</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:32px;
+    font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:#f7f4ee; color:#171512; }
+  @media (prefers-color-scheme: dark) { body { background:#0f0f10; color:#f4efe4; } }
+  main { max-width:60ch; }
+  h1 { font-size:1.5rem; line-height:1.3; margin:0 0 16px; }
+  p { margin:0 0 14px; }
+  a { color:inherit; }
+</style></head>
+<body><main>
+<h1>MaterialLogix Studio is not available in your region yet</h1>
+<p>We are not offering the Studio in the European Union or the United Kingdom at
+the moment. Data-protection law requires us to appoint a representative
+established in each of those places before we offer a service that handles
+voice and likeness data, and we have not appointed one yet.</p>
+<p>We would rather close the door than take your data without the protection
+the law says you are owed. When representatives are appointed we will open it.</p>
+<p>You can still read our <a href="/legal/privacy.html">Privacy Policy</a> and
+our <a href="/legal/terms.html">Terms</a>, and you can write to us at
+<a href="mailto:admin@materiallogix.com">admin@materiallogix.com</a> about
+anything to do with your personal data.</p>
+<p><small>Detected region: ${country}. If that is wrong, write to us.</small></p>
+</main></body></html>`;
+
 // The operations console is reconnaissance for anyone not on the team: it names
 // every admin endpoint, parameter and action. Serve it to a verified Cloudflare
 // Access session and to nobody else. The offline shell treats these as optional
@@ -217,6 +274,16 @@ export default {
     // development, a unit test). Answering "unknown" there is correct: the
     // engine gate fails closed on an unknown region, which is the safe
     // direction for a territorial licence.
+    // Closed where we cannot lawfully offer it. Before anything else, so no
+    // other branch can serve the Studio to a territory this refuses.
+    const country = typeof request.cf?.country === 'string' ? request.cf.country : '';
+    if (SERVICE_PATHS.test(path) && NO_REPRESENTATIVE.has(country)) {
+      return harden(new Response(closedNotice(country), {
+        status: 451,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }
+      }));
+    }
+
     if (path === '/edge/region') {
       const country = typeof request.cf?.country === 'string' ? request.cf.country : null;
       return harden(new Response(JSON.stringify({ country, source: country ? 'cloudflare-edge' : 'unavailable' }), {

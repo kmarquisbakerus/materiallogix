@@ -277,3 +277,60 @@ test('two responses never share a nonce', async () => {
   const nonceOf = response => response.headers.get('Content-Security-Policy').match(/'nonce-([^']+)'/)[1];
   assert.notEqual(nonceOf(first), nonceOf(second), 'a reused nonce is a nonce an injection can learn');
 });
+
+/** `cf` is set by the platform, not by the Request constructor. */
+const fromCountry = (url, country) => {
+  const request = new Request(url);
+  Object.defineProperty(request, 'cf', { value: { country } });
+  return request;
+};
+
+test('the Studio is closed where we cannot lawfully offer it', async () => {
+  // GDPR Article 27 needs a representative ESTABLISHED IN the Union, and UK
+  // GDPR one established in the UK. Neither can be held from the United
+  // States, so neither is appointable today — and voice packs and identity
+  // reference sets are Article 9 data, so the "occasional processing"
+  // exemption does not reach us. Offering the service there without one is
+  // the breach; not offering it is the lawful position.
+  const closed = ['IE', 'DE', 'FR', 'GB', 'SE', 'PL', 'CY', 'MT'];
+  const open = ['US', 'CA', 'JP', 'AU', 'BR', 'NO', 'CH', 'KR'];
+  const service = ['/studio/', '/studio/index.html', '/studio/voice.html', '/api/checkout/session', '/api/wallet'];
+
+  for (const country of closed) {
+    for (const path of service) {
+      const response = await worker.fetch(
+        fromCountry('https://materiallogix.com' + path, country), env);
+      assert.equal(response.status, 451, `${path} was served into ${country}`);
+      assertHardened(response, `${country} ${path}`);
+    }
+    // The information pages stay open: somebody must be able to read what we
+    // hold about them and how to reach us, wherever they are.
+    for (const path of ['/', '/legal/privacy.html', '/legal/terms.html', '/contact.html']) {
+      const response = await worker.fetch(
+        fromCountry('https://materiallogix.com' + path, country), env);
+      assert.equal(response.status, 200, `${path} was closed to ${country}; it must not be`);
+    }
+  }
+
+  for (const country of open) {
+    const response = await worker.fetch(
+      fromCountry('https://materiallogix.com/studio/', country), env);
+    assert.equal(response.status, 200, `the Studio was closed to ${country}`);
+  }
+
+  // Norway, Iceland, Liechtenstein and Switzerland are outside the EU, so the
+  // Article 27 duty does not reach them and the door stays open.
+  for (const country of ['NO', 'IS', 'LI', 'CH']) {
+    const response = await worker.fetch(
+      fromCountry('https://materiallogix.com/studio/', country), env);
+    assert.equal(response.status, 200, `${country} is not in the EU and must not be closed`);
+  }
+
+  // The notice has to say why, and where to go.
+  const notice = await (await worker.fetch(
+    fromCountry('https://materiallogix.com/studio/', 'IE'), env)).text();
+  assert.match(notice, /not available in your region yet/);
+  assert.match(notice, /representative established in each of those places|representative\s+established/);
+  assert.match(notice, /admin@materiallogix\.com/, 'a closed door still needs a way through');
+  assert.match(notice, /\/legal\/privacy\.html/, 'the privacy policy must stay reachable');
+});
