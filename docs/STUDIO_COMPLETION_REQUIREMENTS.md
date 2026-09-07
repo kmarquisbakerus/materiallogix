@@ -14,7 +14,59 @@ must be solved with local processing and measured device requirements.
 | Write instrumental music | Play or enter notes and chords; choose useful instruments; import samples; arrange and revise parts | Editable notes, retained samples, repeatable rendering and project recovery |
 | Mix recordings | Balance multiple tracks; route groups and sends; use EQ, dynamics, effects, automation and references | Controls alter the intended signal, original comparison works, stems align |
 | DJ | Prepare a local library; load decks; cue, beat-match, transition, monitor headphones and capture a set | Full set without interruption; tested controller and output routing |
-| Continue in another Studio | Move audio, video or voice work with clear navigation, consistent naming and safe recovery | End-to-end handoff without lost media, mismatched entitlement or duplicate charges |
+| Continue in another Studio | Use a consistent “Use in…” action throughout Photo, Video, Voice and Music for compatible material | End-to-end handoff, including delivered output, without lost media, mismatched entitlement or duplicate charges |
+
+## Connected work across the suite
+
+Every Studio participates in the same handoff workflow. Music remains an audio
+workspace; making a music video opens Video with the song attached. The existing
+site layout stays in place. Do not require downloading and uploading again on the
+same device.
+
+| Source | Destination | Required result |
+| --- | --- | --- |
+| Photo | Video | Edited image available as a still, background, title image or cover |
+| Photo | Music / Voice | Artwork attached to the project and compatible finished-audio metadata |
+| Voice | Music | Voice take on an editable audio track, ready to arrange with instruments |
+| Voice | Video | Narration on the timeline, with timing and volume controls |
+| Music | Video | Song or selected stem attached as soundtrack, with timing and volume controls |
+| Music | Voice | Selected vocal recording available for supported voice cleanup; no automatic voice training or consent reuse |
+| Video | Photo | Selected frame available for image editing and return to the video project |
+| Video | Music / Voice | Selected audio available for mixing or supported voice cleanup; video editing stays in Video |
+
+- Use the same destination names and handoff controls in Guided and Advanced.
+  Offer compatible roles, such as soundtrack or artwork, instead of forcing
+  every media type into every editor.
+- Save the source project and retain the exact revision used. Keep originals and
+  editable settings; a handoff must not flatten or overwrite the source project.
+- Identify the imported item by its readable name and source Studio. Allow
+  returning to that source and explicitly accepting a newer revision. Repeated
+  clicks must not create duplicate tracks or replace newer edits.
+- Carry source identity, media bytes, timing, quality, preview restrictions and
+  an existing output receipt. Client metadata never grants a paid entitlement.
+  A free source preview cannot become clean by moving to a paid destination.
+- A transfer is not a finished export and consumes no export minutes. Reusing
+  an already authorized source does not bill for that source again. A new
+  finished video can use video allowance; the customer sees the destination
+  quote before export. Retry or redownload of the same completed output is free.
+- Retain a recoverable transfer if the destination cannot open, storage fills,
+  or import fails. Preserve the source if the user cancels. Keep all Music
+  processing local; a destination's cloud option does not authorize uploading
+  the source audio.
+- Verify every row with actual source and destination media, reload recovery,
+  preview/paid combinations and final exported output. A navigation button or
+  saved reference alone does not pass this requirement.
+
+## Suite pricing requirements
+
+Use the suite's existing plan ladder with explicit included monthly finished-
+output minutes at each applicable level. Music uses audio minutes; Video uses
+video minutes; Photo uses a separate image allowance. Do not describe the same
+shared allowance as independently available in full for every Studio. Free
+accounts pay a higher export rate than paid-plan overages. Consume included
+allowance first, show the complete overage quote before work, and count delivered
+duration rather than editing time. Exact allowances and prices require catalog
+and billing reconciliation before activation. Music has no cloud surcharge.
 
 ## Guided mode across every Studio
 

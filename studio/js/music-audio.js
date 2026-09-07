@@ -103,10 +103,11 @@ export class MusicTransport {
     this.master = this.context.createGain(); this.master.gain.value = gain(session.masterDb);
     this.monitorMono(this.mono);
     this.meter = this.context.createAnalyser(); this.meter.fftSize = 1024;
-    this.master.connect(this.meter).connect(this.context.destination);
+    this.master.connect(this.meter).connect(this.output?.input || this.context.destination);
     for (const track of audibleTracks(session)) this.chains.set(track.id, connectTrack(this.context, track, this.master, session.tempo));
     this.playing = true;
     try {
+      this.output?.start(this.origin);
       this.scheduleWindow(this.start, session.loop.enabled ? session.loop.end : sessionDuration(session), this.origin);
       if (session.loop.enabled) {
         this.nextLoop = this.origin + session.loop.end - this.start;
@@ -146,6 +147,7 @@ export class MusicTransport {
     for (const source of this.nodes) { try { source.stop(); } catch { /* Already finished. */ } source.disconnect(); }
     this.nodes = []; for (const chain of this.chains.values()) chain.dispose(); this.chains.clear();
     this.master?.disconnect(); this.meter?.disconnect(); this.master = null; this.meter = null;
+    this.output?.stop();
   }
 }
 

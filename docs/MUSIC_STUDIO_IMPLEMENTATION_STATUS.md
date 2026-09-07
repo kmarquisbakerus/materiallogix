@@ -42,6 +42,10 @@ There is no replacement site, framework migration or live deployment.
 - Offline render and PCM WAV encoder foundations, interval looping and equal-
   power crossfade math. These foundations are not a delivered DJ workspace or a
   customer-authorized finished-song export path.
+- Free Music playback carries an audible preview mark. Covered Music playback
+  is clean; originals remain unchanged. A missing required mark blocks playback.
+  This is a copying deterrent, not protection against operating-system recording
+  or client-code modification. Clean exports still require server authorization.
 
 ## Testing boundary
 
@@ -54,18 +58,23 @@ The new automated checks cover synthesized waveforms, timing and output bytes,
 sampled-instrument persistence, generated-part updates and capture interruption.
 The browser journey now includes creation, native AudioWorklet capture with a
 synthetic microphone, project download, IndexedDB recovery and offline WAV
-rendering. Its result must be recorded after it actually runs.
+rendering. The next run also retains desktop/phone screenshots, a portable
+project and clean/marked diagnostic WAVs for visual and audio inspection.
 
-Verification on 2026-09-07: all 504 Node tests passed. The site-integrity check
-passed, and the diff whitespace check was clean. The new Music browser journey
-has not yet run; none of these automated results certify audible quality.
+Verification on 2026-09-07: all 510 Node tests passed, including free-preview
+policy, required-mark failures and playback cleanup. The previous site-integrity
+check passed, and the current diff whitespace check is clean. The first CI run
+passed all 72 existing browser-journey checks but the new Music journey stopped
+at the instrument selector's accessible name. The selector and edit-pattern
+focus have been corrected; a rerun is required. No automated result certifies
+audible quality.
 
 Audio graph and microphone unit tests use doubles; processor tests also execute
 the capture algorithm over sample buffers. They do not certify audible
 quality, browser codecs, device latency, keyboard/screen-reader behavior, native
-IndexedDB recovery or rendered layout. This environment's static-site preview
-does not support the supervised browser-testing path. Browser and real-device
-acceptance remain outstanding; do not infer them from a passing Node suite.
+IndexedDB recovery or rendered layout. The repository's CI runs the browser
+journeys in Chromium. Visual inspection, real-device and listening acceptance
+remain outstanding; do not infer them from a passing Node suite.
 
 ## Release gates still open
 

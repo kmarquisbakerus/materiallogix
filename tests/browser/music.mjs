@@ -1,7 +1,7 @@
 // Real-browser Music journey. The microphone is synthetic; billing is not exercised.
 // Files rendered below are engine diagnostics, not purchased customer exports.
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir, writeFile, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
@@ -12,10 +12,17 @@ import { unpackProject } from '../../studio/js/music-project.js';
 const site = await serve(), base = `http://127.0.0.1:${site.address().port}`;
 const folder = await mkdtemp(join(tmpdir(), 'materiallogix-music-'));
 const executablePath = process.env.JOURNEY_CHROME || process.env.CHROME_PATH;
-let browser;
+const artifacts = process.env.MUSIC_QA_DIR || null;
+if (artifacts) await mkdir(artifacts, { recursive: true });
+let browser, activePage;
+const capture = async name => { if (artifacts && activePage && !activePage.isClosed()) await activePage.screenshot({ path: join(artifacts, `${name}.png`), fullPage: true }); };
 try {
   browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
   const handle = await studioContext(browser), { page, context } = handle;
+  activePage = page;
+  await page.exposeFunction('saveMusicDiagnostic', async (name, bytes) => {
+    if (artifacts && ['music-render-diagnostic.wav', 'music-free-preview-diagnostic.wav'].includes(name)) await writeFile(join(artifacts, name), Buffer.from(bytes));
+  });
   await context.grantPermissions(['microphone'], { origin: base });
   await page.goto(`${base}/studio/voice.html?dev=1`, { waitUntil: 'load' });
   const open = async () => {
@@ -36,7 +43,9 @@ try {
   await dialog.locator('[data-section="instruments"] > summary').click();
   await dialog.locator('[data-music-action="instrument-preset"][data-preset="chords"]').click(); await ready();
   await action('instrument-add'); assert.equal(await dialog.locator('[data-track]').count(), 2);
+  await capture('music-guided-desktop');
   await action('play');
+  assert.equal(await dialog.getByText('Free preview · audio watermark during playback', { exact: true }).count(), 1);
   await page.waitForFunction(() => Number(document.querySelector('.music-dialog output')?.textContent.split(':')[1]) > 0.1);
   await action('play'); await action('start');
 
@@ -59,6 +68,7 @@ try {
 
   const save = page.waitForEvent('download'); await action('save'); const projectFile = await save;
   const projectPath = join(folder, 'music.mlxmusic'); await projectFile.saveAs(projectPath);
+  if (artifacts) await copyFile(projectPath, join(artifacts, 'music-journey.mlxmusic'));
   const project = await unpackProject(new Blob([await readFile(projectPath)]));
   assert.equal(project.session.tracks.length, 3); assert.equal(project.session.tracks[1].generated.pattern.voice, 'electric');
   assert.equal(project.audio.length, 3);
@@ -74,6 +84,7 @@ try {
   const rendered = await page.evaluate(async () => {
     const { MusicProjectStore } = await import('./js/music-project.js');
     const { renderMusic } = await import('./js/music-audio.js');
+    const { MusicPreviewOutput, loadMusicPreviewStamp } = await import('./js/music-preview.js');
     const { encodeWav } = await import('./js/music-session.js');
     const snapshot = await new MusicProjectStore().latest(), audio = new AudioContext(), sources = new Map();
     try {
@@ -83,6 +94,16 @@ try {
       let energy = 0, peak = 0;
       for (const channel of channels) for (const sample of channel) { if (!Number.isFinite(sample)) throw new Error('Invalid rendered audio'); energy += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
       const blob = encodeWav(channels, mix.sampleRate, 24), header = new DataView(await blob.slice(0, 44).arrayBuffer());
+      await window.saveMusicDiagnostic('music-render-diagnostic.wav', [...new Uint8Array(await blob.arrayBuffer())]);
+      const markedContext = new OfflineAudioContext(2, mix.length, mix.sampleRate);
+      const stamp = await loadMusicPreviewStamp(markedContext), output = new MusicPreviewOutput(markedContext, stamp);
+      const source = markedContext.createBufferSource(); source.buffer = mix; source.connect(output.input); output.start(0); source.start(0);
+      const marked = await markedContext.startRendering(); output.dispose(); source.disconnect();
+      let markDifference = 0;
+      for (let i = 0; i < Math.min(marked.length, stamp.length); i++) markDifference += Math.abs(marked.getChannelData(0)[i] - mix.getChannelData(0)[i] * 0.6);
+      if (!(markDifference > 0.1)) throw new Error('The free preview has no audible mark');
+      const markedBlob = encodeWav([marked.getChannelData(0), marked.getChannelData(1)], marked.sampleRate, 24);
+      await window.saveMusicDiagnostic('music-free-preview-diagnostic.wav', [...new Uint8Array(await markedBlob.arrayBuffer())]);
       return { seconds: mix.duration, peak, rms: Math.sqrt(energy / mix.length / 2), rate: header.getUint32(24, true), channels: header.getUint16(22, true), bits: header.getUint16(34, true), bytes: blob.size, frames: mix.length };
     } finally { await audio.close(); }
   });
@@ -91,10 +112,19 @@ try {
   assert.ok(rendered.seconds >= 8 && rendered.seconds < 10);
   console.log('Music browser journey passed: creation, editable patterns, synthetic microphone capture, project download, IndexedDB recovery and real offline WAV rendering.', rendered);
 
+  await action('advanced'); await capture('music-advanced-desktop');
+  await action('guided');
+
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await dialog.evaluate(element => element.scrollWidth > element.clientWidth + 2);
   assert.equal(overflow, false, 'Music dialog overflows at phone width');
+  await capture('music-guided-phone');
+  await page.evaluate(() => document.documentElement.style.fontSize = '200%');
+  assert.equal(await dialog.evaluate(element => element.scrollWidth > element.clientWidth + 2), false, 'Music dialog overflows with enlarged text');
+  await capture('music-guided-phone-large-text');
   assert.equal(await dialog.getByText(/Finished-song delivery/).count(), 1);
   assert.deepEqual(handle.errors, []);
   await context.close();
+} catch (error) {
+  await capture('music-failure').catch(() => {}); throw error;
 } finally { await browser?.close(); site.close(); await rm(folder, { recursive: true, force: true }); }

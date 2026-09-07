@@ -4,6 +4,7 @@ import { MusicCapture, countIn } from './music-capture.js';
 import { DRUMS, beatPreset, renderBeat } from './music-beats.js';
 import { MIX_STARTERS, applyMixStarter } from './music-mix.js';
 import { INSTRUMENTS, noteName, createInstrumentPattern, addInstrumentNotes, instrumentPreset, renderInstrument } from './music-instruments.js';
+import { musicPlaybackPolicy, loadMusicPreviewStamp, MusicPreviewOutput } from './music-preview.js';
 import { supportedLocalAudio } from './music-library.js';
 import { MusicProjectStore, projectSnapshot, packProject, unpackProject } from './music-project.js';
 import { musicGuidance, microphoneHelp } from './music-guidance.js';
@@ -29,6 +30,7 @@ export class MusicStudio {
     this.store = new MusicProjectStore(); this.recorder = new MusicCapture();
     this.recordBacking = true; this.countBeats = 4; this.recordStarted = null;
     this.notePitch = 60; this.noteStep = 0; this.noteLength = 4;
+    this.playbackPolicy = { tier: 'preview', watermarked: true };
     this.position = 0; this.revision = 0; this.savedRevision = 0;
     this.dialog = el('dialog', undefined, 'music-dialog');
     this.dialog.setAttribute('aria-label', 'Music Studio');
@@ -71,6 +73,16 @@ export class MusicStudio {
     if (this.dialog.open) return;
     this.render(); this.dialog.showModal();
     this.clock = setInterval(() => this.tick(), 100);
+  }
+  async preparePlayback() {
+    const context = await this.audio(), policy = await musicPlaybackPolicy();
+    if (!this.output || policy.watermarked !== this.playbackPolicy.watermarked) {
+      const stamp = policy.watermarked ? await loadMusicPreviewStamp(context) : null;
+      this.output?.dispose(); this.output = new MusicPreviewOutput(context, stamp); this.transport.output = this.output;
+    }
+    this.playbackPolicy = policy;
+    if (this.previewLabel) this.previewLabel.textContent = policy.watermarked ? 'Free preview · audio watermark during playback' : 'Music plan active · clean playback';
+    return context;
   }
   say(message, error = false) {
     this.notice.textContent = message;
@@ -188,7 +200,8 @@ export class MusicStudio {
     }
     if (this.pendingTake) throw new Error('Save your unprocessed recording before making another take.');
     if (this.session.tracks.length >= 32) throw new Error('This song has reached the current 32-track limit.');
-    await this.audio(); if (this.transport.playing) this.position = this.transport.current(); this.transport.stop(); this.recordAt = this.position;
+    if (this.transport?.playing) this.position = this.transport.current(); this.transport?.stop();
+    await this.preparePlayback(); this.recordAt = this.position;
     const used = [...this.sources.values()].reduce((sum, s) => sum + s.bytes, 0);
     const seconds = Math.min(600, 7200 - this.recordAt, Math.floor((MAX_DECODED - used) / 8 / this.context.sampleRate), Math.floor((64 * 1024 * 1024 - 44) / 2 / this.context.sampleRate));
     if (seconds < 1) throw new Error('There is not enough room for another take. Save this project before starting a new song.');
@@ -243,9 +256,8 @@ export class MusicStudio {
     if (action === 'instrument-sample') { const source = this.sources.get(target.dataset.source); if (!source) throw new Error('Add an audio file first.'); this.change(s => { s.instrument.voice = 'sampler'; s.instrument.sample = { sourceId: source.id, rootNote: 60, offset: 0, duration: Math.min(3, source.buffer.duration) }; }); return; }
     if (action === 'play') {
       this.stopBeatPreview();
-      await this.audio();
-      if (this.transport.playing) { this.position = this.transport.current(); this.transport.stop(); }
-      else { if (this.position >= sessionDuration(this.session)) this.position = 0; await this.transport.play(this.session, this.position); }
+      if (this.transport?.playing) { this.position = this.transport.current(); this.transport.stop(); }
+      else { await this.preparePlayback(); if (this.position >= sessionDuration(this.session)) this.position = 0; await this.transport.play(this.session, this.position); }
       this.render(); return;
     }
     if (action === 'start') { this.transport?.stop(); this.position = 0; this.render(); return; }
@@ -261,7 +273,7 @@ export class MusicStudio {
       if (kind === 'beat') this.editBeatTrack = trackId; else this.editInstrumentTrack = trackId;
       this.change(s => s[kind === 'beat' ? 'beat' : 'instrument'] = structuredClone(pattern));
       const section = [...this.content.querySelectorAll('details[data-section]')].find(d => d.dataset.section === (kind === 'beat' ? 'beat-maker' : 'instruments'));
-      if (section) { section.open = true; section.querySelector('summary')?.focus(); section.scrollIntoView({ block: 'nearest' }); }
+      if (section) { section.open = true; this.focusAfterRun = section.querySelector('summary'); section.scrollIntoView({ block: 'nearest' }); }
       this.say('Pattern opened for editing. Update the part when ready; Undo can restore its previous audio. Updates use the current Beat speed.'); return;
     }
     if (action === 'mix-starter' || action === 'bypass' || action === 'polarity') {
@@ -302,6 +314,7 @@ export class MusicStudio {
     } : null;
     const openDetails = new Set([...this.content.querySelectorAll('details[data-section]')].filter(d => d.open).map(d => d.dataset.section));
     const s = this.session, advanced = s.mode === 'advanced'; this.content.replaceChildren();
+    this.previewLabel = el('p', this.playbackPolicy?.watermarked === false ? 'Music plan active · clean playback' : 'Free preview · audio watermark during playback', 'music-notice'); this.content.append(this.previewLabel);
     const modes = el('div', undefined, 'seg'); modes.setAttribute('aria-label', 'Music editing mode'); modes.setAttribute('role', 'group');
     for (const mode of ['guided', 'advanced']) { const b = button(mode === 'guided' ? 'Guided' : 'Advanced', mode); b.classList.toggle('on', mode === s.mode); b.setAttribute('aria-pressed', String(mode === s.mode)); modes.append(b); }
     this.content.append(modes);
@@ -359,10 +372,14 @@ export class MusicStudio {
       if (!this.busy && !this.focusAfterRun.disabled) this.focusAfterRun.focus({ preventScroll: true });
     }
   }
-  stopBeatPreview() { if (this.beatPreview) { try { this.beatPreview.stop(); } catch { /* Ended already. */ } this.beatPreview.disconnect(); this.beatPreview = null; } }
+  stopBeatPreview() {
+    clearTimeout(this.previewEnd);
+    const source = this.beatPreview; this.beatPreview = null;
+    if (source) { source.onended = null; try { source.stop(); } catch { /* Ended already. */ } source.disconnect(); this.previewLevel?.disconnect(); this.previewLevel = null; this.output?.stop(); }
+  }
   async listenBeat() {
     if (this.beatPreview) { this.stopBeatPreview(); this.render(); return; }
-    const context = await this.audio(); this.transport.stop();
+    this.transport?.stop(); const context = await this.preparePlayback();
     const rendered = renderBeat({ ...this.session.beat, bars: 1 }, this.session.tempo, context.sampleRate);
     this.previewSamples(rendered.samples, context);
     this.render(); this.say('Listening to one bar. Turn steps on or off, then add the beat to your song.');
@@ -371,9 +388,12 @@ export class MusicStudio {
     this.stopBeatPreview();
     const buffer = context.createBuffer(1, samples.length, context.sampleRate); buffer.getChannelData(0).set(samples);
     const source = context.createBufferSource(); source.buffer = buffer;
-    const level = context.createGain(); level.gain.value = 0.5;
-    source.connect(level).connect(context.destination); this.beatPreview = source;
-    source.onended = () => { source.disconnect(); level.disconnect(); if (this.beatPreview === source) { this.beatPreview = null; this.render(); } };
+    const level = context.createGain(); level.gain.value = 0.5; this.previewLevel = level;
+    source.connect(level).connect(this.output?.input || context.destination); this.beatPreview = source;
+    const started = context.currentTime; this.output?.start(started);
+    source.onended = () => { source.disconnect(); level.disconnect(); if (this.beatPreview === source) {
+      this.previewEnd = setTimeout(() => { if (this.beatPreview === source) { this.beatPreview = null; this.previewLevel = null; this.output?.stop(); this.render(); } }, Math.max(0, ((this.output?.minimumSeconds || 0) - (context.currentTime - started)) * 1000));
+    } };
     source.start();
   }
   async addBeat() {
@@ -425,7 +445,7 @@ export class MusicStudio {
     return section;
   }
   async listenInstrument(pitch = null) {
-    const context = await this.audio(); this.transport.stop();
+    this.stopBeatPreview(); this.transport?.stop(); const context = await this.preparePlayback();
     let pattern = { ...this.session.instrument, bars: 1 };
     if (pitch !== null) { pattern = { ...pattern, notes: [] }; addInstrumentNotes(pattern, { pitch, length: 4 }); }
     const result = renderInstrument(pattern, this.session.tempo, context.sampleRate, this.sources);
@@ -458,7 +478,7 @@ export class MusicStudio {
   }
   selectField(parent, label, value, options, change) {
     const wrap = el('label', undefined, 'music-field'); wrap.append(el('span', label));
-    const select = el('select'); select.dataset.musicField = label;
+    const select = el('select'); select.dataset.musicField = label; select.setAttribute('aria-label', label);
     for (const [id, name] of options) { const option = el('option', name); option.value = id; select.append(option); }
     select.value = value; select.addEventListener('change', () => this.run(() => change(select.value)));
     wrap.append(select); parent.append(wrap); return select;
