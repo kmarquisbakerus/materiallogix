@@ -65,7 +65,7 @@ catch { console.error('The CSP check needs playwright-core installed. See tests/
 const executablePath = process.env.JOURNEY_CHROME || process.env.CHROME_PATH || '';
 let browser;
 try {
-  browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox'] });
+  browser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: ['--no-sandbox', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] });
 } catch (error) {
   console.error(`Could not start Chromium: ${error.message.split('\n')[0]}`);
   console.error('Set JOURNEY_CHROME, or run `npx playwright-core install chromium`.');
@@ -75,6 +75,7 @@ try {
 let failures = 0;
 for (const path of PAGES) {
   const context = await browser.newContext();
+  if (path === '/studio/voice.html') await context.grantPermissions(['microphone'], { origin: ORIGIN });
   await context.route(`${ORIGIN}/api/**`, route =>
     route.fulfill({ status: 200, contentType: 'application/json', body: STUB }));
   await context.route(`${ORIGIN}/**`, async route => {
@@ -100,6 +101,28 @@ for (const path of PAGES) {
   await page.goto(ORIGIN + path, { waitUntil: 'domcontentloaded' })
     .catch(error => errors.push(`GOTO: ${error.message.split('\n')[0]}`));
   await page.waitForTimeout(5000);
+
+  if (path === '/studio/voice.html') {
+    // Exercise Music's lazy imports, preview asset and AudioWorklet under the
+    // production Worker's actual CSP and Permissions-Policy. The mic is fake.
+    try {
+      await page.locator('details').filter({ has: page.locator('[data-open-music]') }).locator('summary').click();
+      await page.locator('[data-open-music]').click();
+      const music = page.locator('.music-dialog');
+      await music.locator('[data-music-action="record"]').click();
+      await page.waitForFunction(() => {
+        const position = document.querySelector('.music-dialog output')?.textContent || '';
+        return position.startsWith('Recording ') && Number(position.split(':').at(-1)) >= 0.3;
+      }, null, { timeout: 15000 });
+      await music.locator('[data-music-action="record"]').click();
+      await page.waitForFunction(() => document.querySelectorAll('.music-dialog [data-track]').length === 1);
+      await music.locator('[data-music-action="play"]').click();
+      await page.waitForFunction(() => document.querySelector('.music-dialog [data-music-action="play"]')?.textContent === 'Pause');
+      await music.locator('[data-music-action="play"]').click();
+      await music.locator('[data-music-action="close"]').click();
+      console.log(' PASS  Music microphone capture, preview mark and playback under the production policy (synthetic input)');
+    } catch (error) { errors.push(`Music under production policy: ${error.message.split('\n')[0]}`); }
+  }
 
   const seen = await page.evaluate(() => ({
     stamped: document.querySelectorAll('script[nonce]').length,

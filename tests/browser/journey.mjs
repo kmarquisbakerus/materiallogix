@@ -17,11 +17,25 @@ if (evidenceDirectory) await mkdir(evidenceDirectory, { recursive: true });
 const captureViews = async (page, name) => {
   if (!evidenceDirectory) return;
   const original = page.viewportSize();
+  const originalMenus = await page.evaluate(() => {
+    const sidebar = document.querySelector('#sidebar'), more = document.querySelector('.topbar-more');
+    const state = { sidebar: sidebar?.classList.contains('open'), more: more?.open };
+    sidebar?.querySelector('.sidebar-head button')?.click();
+    if (more) more.open = false;
+    return state;
+  });
   try {
-    await page.screenshot({ path: join(evidenceDirectory, `${name}-desktop.png`), fullPage: true });
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-desktop.png`), fullPage: true, animations: 'disabled' });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.screenshot({ path: join(evidenceDirectory, `${name}-phone.png`), fullPage: true });
-  } finally { await page.setViewportSize(original); }
+    // Finish the finite drawer transition before recording the phone view.
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-phone.png`), fullPage: true, animations: 'disabled' });
+  } finally {
+    await page.setViewportSize(original);
+    await page.evaluate(state => {
+      if (state.sidebar) document.querySelector('#menuBtn')?.click();
+      const more = document.querySelector('.topbar-more'); if (more) more.open = !!state.more;
+    }, originalMenus);
+  }
 };
 
 let BASE, SITE;   // set once the site server has a port
