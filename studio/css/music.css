@@ -13,3 +13,10 @@
 .music-dialog .music-note, .music-dialog .music-notice { color: var(--muted); font-size: .875rem; }
 .music-dialog summary { cursor: pointer; padding: .55rem 0; }
 .music-dialog button[aria-pressed="true"] { border-color: var(--gold); }
+.music-dialog .music-steps { display: grid; grid-template-columns: repeat(8, minmax(2rem, 1fr)); gap: .35rem; }
+.music-dialog .music-steps .btn { min-height: 2.75rem; padding: .35rem; }
+.music-dialog .music-steps .btn[aria-pressed="true"] { background: var(--gold); color: var(--bg); }
+.music-dialog .music-drum { border-top: 1px solid var(--hair); padding: .4rem 0; }
+.music-dialog .music-keys { display: flex; flex-wrap: wrap; gap: .4rem; }
+.music-dialog .music-keys .btn { min-width: 2.75rem; min-height: 3rem; }
+.music-dialog select { max-width: 100%; padding: .5rem; font-size: .875rem; }

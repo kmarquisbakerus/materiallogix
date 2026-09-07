@@ -1,3 +1,6 @@
+import { createBeat, validateBeat } from './music-beats.js';
+import { createInstrumentPattern, validateInstrumentPattern } from './music-instruments.js';
+
 const finite = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 export const bound = (value, min, max, fallback = min) => Math.min(max, Math.max(min, finite(value, fallback)));
 const uid = () => crypto.randomUUID();
@@ -5,12 +8,12 @@ export const SESSION_LIMITS = Object.freeze({ tracks: 128, clips: 4096, seconds:
 
 export function createSession() {
   return { version: 1, id: uid(), name: 'Untitled song', mode: 'guided', tempo: 120,
-    masterDb: -6, loop: { enabled: false, start: 0, end: 8 }, tracks: [] };
+    masterDb: -6, loop: { enabled: false, start: 0, end: 8 }, beat: createBeat(), instrument: createInstrumentPattern(), tracks: [] };
 }
 
 export function createTrack(name = 'Audio track') {
-  return { id: uid(), name: String(name).slice(0, 120), gainDb: 0, pan: 0, mute: false, solo: false,
-    lowDb: 0, midDb: 0, highDb: 0, compression: 0, room: 0, delay: 0, clips: [] };
+  return { id: uid(), name: String(name).slice(0, 120), gainDb: 0, pan: 0, mute: false, solo: false, bypass: false, polarity: false,
+    lowDb: 0, midDb: 0, highDb: 0, compression: 0, room: 0, delay: 0, generated: null, clips: [] };
 }
 
 export function createClip(sourceId, duration, start = 0) {
@@ -79,6 +82,8 @@ export function validateSession(raw) {
   session.mode = raw.mode === 'advanced' ? 'advanced' : 'guided';
   session.tempo = bound(raw.tempo, 40, 240, 120);
   session.masterDb = bound(raw.masterDb, -60, 6, -6);
+  session.beat = validateBeat(raw.beat);
+  session.instrument = validateInstrumentPattern(raw.instrument);
   session.loop.start = bound(raw.loop?.start, 0, SESSION_LIMITS.seconds - 0.01);
   session.loop.end = bound(raw.loop?.end, session.loop.start + 0.01, SESSION_LIMITS.seconds, session.loop.start + 8);
   session.loop.enabled = raw.loop?.enabled === true;
@@ -93,6 +98,13 @@ export function validateSession(raw) {
     track.pan = bound(value.pan, -1, 1, 0);
     for (const k of ['compression', 'room', 'delay']) track[k] = bound(value[k], 0, 1);
     track.mute = value.mute === true; track.solo = value.solo === true;
+    track.bypass = value.bypass === true; track.polarity = value.polarity === true;
+    if (value.generated !== null && value.generated !== undefined) {
+      const g = value.generated;
+      if (!g || !['beat', 'instrument'].includes(g.kind) || typeof g.sourceId !== 'string' || !g.sourceId || !Number.isFinite(g.duration) || g.duration <= 0 || !Number.isFinite(g.tempo) || g.tempo < 40 || g.tempo > 240) throw new Error('A generated part is invalid.');
+      track.generated = { kind: g.kind, sourceId: g.sourceId, duration: g.duration, tempo: g.tempo,
+        pattern: g.kind === 'beat' ? validateBeat(g.pattern) : validateInstrumentPattern(g.pattern) };
+    }
     track.clips = value.clips.map(c => {
       if (++count > SESSION_LIMITS.clips || !c || typeof c.sourceId !== 'string' || !c.sourceId) throw new Error('The project has invalid clips.');
       if (![c.start, c.offset, c.duration, c.fadeIn, c.fadeOut, c.gainDb].every(Number.isFinite) || c.duration <= 0 || c.start < 0 || c.offset < 0 || c.start + c.duration > SESSION_LIMITS.seconds) throw new Error('A clip contains invalid timing.');
@@ -116,6 +128,20 @@ export class SessionHistory {
   }
   undo() { if (!this.undoStack.length) return false; this.redoStack.push(this.session); this.session = this.undoStack.pop(); return true; }
   redo() { if (!this.redoStack.length) return false; this.undoStack.push(this.session); this.session = this.redoStack.pop(); return true; }
+}
+
+export function replaceGeneratedPart(track, sourceId, duration, pattern, tempo) {
+  const previous = track.generated;
+  if (!previous) throw new Error('Choose a beat or instrument part to update.');
+  const clips = track.clips.map(clip => {
+    if (clip.sourceId !== previous.sourceId) return clip;
+    if (clip.offset >= duration) throw new Error('This pattern is shorter than a trimmed part. Lengthen the pattern or add it as a new part.');
+    const untrimmed = clip.offset === 0 && Math.abs(clip.duration - previous.duration) < 0.002;
+    const length = untrimmed ? duration : Math.min(clip.duration, duration - clip.offset);
+    if (clip.start + length > SESSION_LIMITS.seconds) throw new Error('The updated part would go beyond the project limit. Move it earlier first.');
+    return { ...clip, sourceId, duration: length, fadeIn: Math.min(clip.fadeIn, length / 2), fadeOut: Math.min(clip.fadeOut, length / 2) };
+  });
+  track.clips = clips; track.generated = { ...previous, sourceId, duration, pattern: structuredClone(pattern), tempo };
 }
 
 export function musicTier(license) {

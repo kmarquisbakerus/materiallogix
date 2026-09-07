@@ -4,6 +4,13 @@ MaterialLogix Music is a paid, local-first production workspace. It is not a
 single-file audio enhancer. A release must support a complete path from capture
 or import through arrangement, editing, mixing, mastering, and delivery.
 
+Music processing and rendering run on the customer's device. Instruments,
+sampling, effects, mixing, mastering, stem processing and finished-file rendering
+must not send audio to a cloud processor or offer cloud rendering as a fallback.
+Large projects require an efficient local engine and tested device requirements.
+Music has no cloud-rendering fee. Account/entitlement requests and separately
+approved provider-library access are not audio-processing routes.
+
 It serves two complete use cases:
 
 1. **Production** for singers, rappers, musicians, podcasters, and producers.

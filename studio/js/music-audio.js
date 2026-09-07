@@ -44,8 +44,9 @@ export function connectTrack(context, track, destination, tempo = 120) {
     else param.setTargetAtTime(value, context.currentTime, 0.005);
   };
   const update = t => {
+    if (t.bypass) t = { ...t, lowDb: 0, midDb: 0, highDb: 0, compression: 0, room: 0, delay: 0 };
     set(low.gain, bound(t.lowDb, -18, 18, 0)); set(mid.gain, bound(t.midDb, -18, 18, 0)); set(high.gain, bound(t.highDb, -18, 18, 0));
-    set(fader.gain, gain(bound(t.gainDb, -60, 12, 0))); set(pan.pan, bound(t.pan, -1, 1, 0));
+    set(fader.gain, gain(bound(t.gainDb, -60, 12, 0)) * (t.polarity ? -1 : 1)); set(pan.pan, bound(t.pan, -1, 1, 0));
     set(compressor.threshold, -6 - 30 * bound(t.compression, 0, 1));
     set(compressor.ratio, 1 + 7 * bound(t.compression, 0, 1));
     set(room.gain, bound(t.room, 0, 1) * 0.5); set(delayLevel.gain, bound(t.delay, 0, 1) * 0.5);
@@ -81,19 +82,26 @@ export function verifyAudioSources(session, sources) {
     const buffer = sources.get(clip.sourceId)?.buffer;
     if (!buffer || clip.offset + clip.duration > buffer.duration + 0.002) throw new Error('The project is missing audio needed by a clip.');
   }
+  if (session.instrument?.sample) {
+    const sample = session.instrument.sample, buffer = sources.get(sample.sourceId)?.buffer;
+    if (!buffer || sample.offset + sample.duration > buffer.duration + 0.002) throw new Error('The project is missing audio needed by its instrument sample.');
+  }
 }
 
 export class MusicTransport {
   constructor(context, sources) { this.context = context; this.sources = sources; this.playing = false; this.position = 0; this.nodes = []; this.chains = new Map(); }
-  async play(raw, position = 0) {
+  async play(raw, position = 0, { when = null, loop = null } = {}) {
     const session = validateSession(raw); verifyAudioSources(session, this.sources);
+    if (loop !== null) session.loop.enabled = loop;
     if (!sessionDuration(session)) throw new Error('Import or record audio before playing.');
     this.stop(); const generation = this.generation; await this.context.resume();
     if (generation !== this.generation) return;
     this.session = session; this.start = bound(position, 0, sessionDuration(session));
     if (session.loop.enabled && (this.start < session.loop.start || this.start >= session.loop.end)) this.start = session.loop.start;
-    this.origin = this.context.currentTime + 0.03;
+    this.origin = when === null ? this.context.currentTime + 0.03 : when;
+    if (!Number.isFinite(this.origin) || this.origin < this.context.currentTime) throw new Error('Playback could not start on time. Please try again.');
     this.master = this.context.createGain(); this.master.gain.value = gain(session.masterDb);
+    this.monitorMono(this.mono);
     this.meter = this.context.createAnalyser(); this.meter.fftSize = 1024;
     this.master.connect(this.meter).connect(this.context.destination);
     for (const track of audibleTracks(session)) this.chains.set(track.id, connectTrack(this.context, track, this.master, session.tempo));
@@ -130,6 +138,7 @@ export class MusicTransport {
     return loop.enabled && time >= loop.end ? loop.start + (time - loop.end) % (loop.end - loop.start) : Math.min(time, sessionDuration(this.session));
   }
   updateTrack(track) { this.chains.get(track.id)?.update(track); }
+  monitorMono(enabled) { this.mono = !!enabled; if (this.master) { this.master.channelCount = this.mono ? 1 : 2; this.master.channelCountMode = 'explicit'; } }
   updateMaster(db) { if (this.master) this.master.gain.setTargetAtTime(gain(bound(db, -60, 6)), this.context.currentTime, 0.005); }
   stop() {
     this.generation = (this.generation || 0) + 1;

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { MusicStudio } from '../studio/js/music-studio.js';
 import { createSession, createTrack, createClip, SessionHistory } from '../studio/js/music-session.js';
+import { instrumentPreset } from '../studio/js/music-instruments.js';
 
 function workspace() {
   const w = Object.create(MusicStudio.prototype);
@@ -61,6 +62,47 @@ test('a valid recovered project restores both its audio and editing mode', async
   session.mode = 'advanced'; track.clips.push(createClip('take', 2)); session.tracks.push(track);
   await w.restore({ session, audio: [{ id: 'take', name: 'Take.wav', blob: audio() }] });
   assert.equal(w.session.mode, 'advanced'); assert.equal(w.sources.get('take').name, 'Take.wav');
+});
+test('failed decoding preserves the unprocessed microphone take and stops backing audio', async () => {
+  const w = workspace(); let stopped = false;
+  w.recordStarted = 1; w.recordAt = 3; w.recorder = { stop: async () => audio('Take.wav') };
+  w.transport = { stop: () => stopped = true };
+  w.decode = async () => { throw new Error('decoder unavailable'); };
+  await assert.rejects(w.record(), /decoder unavailable/);
+  assert.ok(stopped); assert.ok(w.pendingTake instanceof Blob); assert.equal(w.recordStarted, null);
+  assert.equal(w.session.tracks.length, 0); assert.equal(w.position, 3);
+});
+test('new recording cannot overwrite an unsaved take', async () => {
+  const w = workspace(); w.pendingTake = audio();
+  await assert.rejects(w.record(), /Save your unprocessed/);
+  assert.ok(w.pendingTake.size > 0);
+});
+test('removing a track is undoable and keeps original audio available for restoration', async () => {
+  const w = workspace(); await w.importFiles([audio()]); const id = w.session.tracks[0].id;
+  await w.action('remove-track', { closest: selector => selector === '[data-track]' ? { dataset: { track: id } } : null });
+  assert.equal(w.session.tracks.length, 0); assert.equal(w.sources.size, 1);
+  await w.action('undo'); assert.equal(w.session.tracks[0].id, id);
+});
+test('updating an instrument preserves mix settings and undo restores its audio and editable notes', () => {
+  const w = workspace(), pattern = instrumentPreset('chords');
+  const first = { id: 'first', name: 'Keys', buffer: { duration: 8.35 }, blob: audio(), bytes: 40 };
+  w.commitGeneratedSource(first, 'instrument', pattern, 2);
+  const trackId = w.session.tracks[0].id;
+  w.change(s => s.tracks[0].gainDb = -12);
+  const second = { ...first, id: 'second' }, updated = { ...pattern, voice: 'electric' };
+  w.commitGeneratedSource(second, 'instrument', updated, 0, trackId);
+  assert.equal(w.session.tracks.length, 1); assert.equal(w.session.tracks[0].clips[0].start, 2);
+  assert.equal(w.session.tracks[0].gainDb, -12); assert.equal(w.session.tracks[0].generated.pattern.voice, 'electric');
+  w.history.undo(); assert.equal(w.session.tracks[0].clips[0].sourceId, 'first'); assert.equal(w.session.tracks[0].generated.pattern.voice, 'piano');
+  assert.equal(w.sources.size, 2);
+});
+test('an update that would discard a trimmed part fails atomically and removes unused new audio', () => {
+  const w = workspace(), pattern = instrumentPreset('chords');
+  w.commitGeneratedSource({ id: 'first', name: 'Keys', buffer: { duration: 8 }, blob: audio(), bytes: 40 }, 'instrument', pattern, 0);
+  w.change(s => { const clip = s.tracks[0].clips[0]; clip.offset = 5; clip.duration = 3; });
+  const before = structuredClone(w.session);
+  assert.throws(() => w.commitGeneratedSource({ id: 'short', buffer: { duration: 2 } }, 'instrument', pattern, 0, w.session.tracks[0].id), /shorter than a trimmed/);
+  assert.deepEqual(w.session, before); assert.equal(w.sources.has('short'), false);
 });
 test('Music styling is restricted to its dialog and launchers use existing button classes', () => {
   const css = readFileSync(new URL('../studio/css/music.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');

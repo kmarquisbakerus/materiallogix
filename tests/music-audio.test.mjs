@@ -70,6 +70,23 @@ test('stop during audio resume cannot start stale playback later', async () => {
   transport.stop(); release(); await pending;
   assert.equal(transport.playing, false); assert.equal(context.sources.length, 0);
 });
+test('backing playback uses the requested recording clock and ignores repeat for a forward take', async () => {
+  const { s, sources } = fixture(), context = new Context(), transport = new MusicTransport(context, sources);
+  s.loop = { enabled: true, start: 0, end: 2 };
+  await transport.play(s, 3, { when: 2, loop: false });
+  assert.deepEqual(context.sources[0].startArgs, [2, 1, 3]);
+  assert.equal(transport.current(), 3); context.currentTime = 3; assert.equal(transport.current(), 4);
+  assert.equal(s.loop.enabled, true); assert.equal(transport.session.loop.enabled, false);
+  transport.stop();
+});
+test('effects comparison keeps balance and disables EQ, compression and wet sends', () => {
+  const context = new Context(), track = { ...createTrack(), lowDb: 6, compression: 0.5, room: 1, delay: 1, gainDb: -6, pan: 0.2, bypass: true };
+  const chain = connectTrack(context, track, context.destination);
+  assert.equal(context.nodes[1].gain.value, 0); assert.equal(context.nodes[4].ratio.value, 1);
+  assert.ok(Math.abs(context.nodes[5].gain.value - 10 ** (-6 / 20)) < 1e-10); assert.equal(context.nodes[6].pan.value, 0.2);
+  assert.equal(context.nodes[8].gain.value, 0); assert.equal(context.nodes[10].gain.value, 0);
+  chain.dispose();
+});
 test('rendering rejects missing audio and stems retain full-song alignment', async () => {
   const { s, t, sources } = fixture(); s.tracks.push({ ...createTrack('Room'), room: 0.5 });
   const result = await renderMusic(s, sources, { trackId: t.id, OfflineContext: Context });

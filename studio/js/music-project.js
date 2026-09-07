@@ -5,6 +5,8 @@ const MAX_BYTES = 512 * 1024 * 1024;
 
 export function projectSnapshot(session, sources) {
   const wanted = new Set(session.tracks.flatMap(t => t.clips.map(c => c.sourceId)));
+  if (session.instrument?.sample) wanted.add(session.instrument.sample.sourceId);
+  for (const track of session.tracks) if (track.generated?.kind === 'instrument' && track.generated.pattern.sample) wanted.add(track.generated.pattern.sample.sourceId);
   const audio = [...wanted].map(id => {
     const source = sources.get(id);
     if (!source || !(source.blob instanceof Blob)) throw new Error('A source file is missing. The project has not been saved.');
@@ -38,7 +40,8 @@ export async function unpackProject(blob) {
     const part = blob.slice(offset, offset + s.bytes, typeof s.type === 'string' ? s.type : ''); offset += s.bytes;
     return { id: s.id, name: String(s.name || 'Audio').slice(0, 120), blob: part };
   });
-  if (offset !== blob.size || session.tracks.some(t => t.clips.some(c => !ids.has(c.sourceId)))) throw new Error('The project audio is incomplete.');
+  if (offset !== blob.size || session.tracks.some(t => t.clips.some(c => !ids.has(c.sourceId))) || (session.instrument.sample && !ids.has(session.instrument.sample.sourceId))) throw new Error('The project audio is incomplete.');
+  if (session.tracks.some(t => t.generated?.kind === 'instrument' && t.generated.pattern.sample && !ids.has(t.generated.pattern.sample.sourceId))) throw new Error('The project is missing an instrument sample.');
   return { session, audio };
 }
 

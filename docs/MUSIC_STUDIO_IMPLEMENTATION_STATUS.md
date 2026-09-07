@@ -22,9 +22,20 @@ There is no replacement site, framework migration or live deployment.
 - Nondestructive clip movement, source trimming, splits, repeats and fades.
 - Three-band EQ, dynamics compression, room effect and a tempo-linked echo in
   the playback graph. Mix adjustments update playing audio.
-- Unprocessed microphone capture, permission-request cancellation, microphone
-  cleanup and bounded ten-minute takes. Recording is separate from backing-track
-  playback; this is not latency-compensated overdubbing.
+- Unprocessed mono PCM microphone capture on the same audio clock as backing
+  playback, four-beat count-in, permission-request cancellation and microphone
+  cleanup. Takes are bounded by available memory and a ten-minute ceiling.
+  Hardware input/output latency is not yet calibrated or independently verified.
+- Beat Maker with six synthesized drums, editable steps, swing, strengths,
+  volumes, starter patterns and source-backed arrangement parts.
+- Nine synthesized instrument voices, note/chord editing, starter patterns and a
+  sampler using imported audio. Notes and original samples are saved with the
+  project. Built-in voices are not a professionally sampled acoustic library.
+- Generated drum and instrument parts keep editable patterns. Updating a part
+  preserves its positions and mix settings; undo restores its previous audio.
+- Adjustable mix starting points, effects comparison, polarity inversion,
+  mono listening, part naming and undoable track removal. Detailed editing stays
+  in optional sections in Guided mode.
 - IndexedDB autosave, explicit recovery and portable `.mlxmusic` project files
   containing original audio and arrangement edits. Failed decoding leaves the
   current arrangement intact; failed recording decoding retains the take.
@@ -39,10 +50,18 @@ WAV bytes, project packaging, guidance, controller behavior, source restrictions
 audio graph scheduling, effect parameter initialization, microphone lifecycle,
 offline import graphs and existing site regressions.
 
-Verification on 2026-09-07: 477 Node tests passed, including 35 Music-specific
-tests. The site-integrity check passed and the diff whitespace check was clean.
+The new automated checks cover synthesized waveforms, timing and output bytes,
+sampled-instrument persistence, generated-part updates and capture interruption.
+The browser journey now includes creation, native AudioWorklet capture with a
+synthetic microphone, project download, IndexedDB recovery and offline WAV
+rendering. Its result must be recorded after it actually runs.
 
-Audio graph and microphone unit tests use doubles. They do not certify audible
+Verification on 2026-09-07: all 504 Node tests passed. The site-integrity check
+passed, and the diff whitespace check was clean. The new Music browser journey
+has not yet run; none of these automated results certify audible quality.
+
+Audio graph and microphone unit tests use doubles; processor tests also execute
+the capture algorithm over sample buffers. They do not certify audible
 quality, browser codecs, device latency, keyboard/screen-reader behavior, native
 IndexedDB recovery or rendered layout. This environment's static-site preview
 does not support the supervised browser-testing path. Browser and real-device
@@ -58,8 +77,9 @@ acceptance remain outstanding; do not infer them from a passing Node suite.
    and mastering acceptance. These are not exposed as working paid exports.
 4. Full DJ interface, decks, cues, beat grids, sync, headphone routing, controller
    support, set capture and the documented Standard/Pro differentiation.
-5. Instruments/MIDI, automation, comping, timing/pitch correction and the other
-   competitive requirements in `MUSIC_STUDIO_PRODUCT_STANDARD.md`.
+5. Expressive keyboard/MIDI performance and import, richer instrument controls,
+   sound-library acceptance, automation, comping, timing/pitch correction and the
+   other competitive requirements in `MUSIC_STUDIO_PRODUCT_STANDARD.md`.
 6. Provider-specific approval and working adapters before subscription-library
    connections. Only local audio is currently enabled; permission is not inferred
    from a consumer subscription or another application's integration.

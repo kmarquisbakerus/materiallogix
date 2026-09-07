@@ -28,7 +28,8 @@ function importGraph() {
     assert.ok(existsSync(file), `${rel} is referenced but not shipped`);
     modules.add(rel);
     const src = readFileSync(file, 'utf8');
-    for (const match of [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g), ...src.matchAll(/import\(\s*['"](\.[^'"]+)['"]/g)]) {
+    for (const match of [...src.matchAll(/from\s+['"](\.[^'"]+)['"]/g), ...src.matchAll(/import\(\s*['"](\.[^'"]+)['"]/g),
+      ...src.matchAll(/audioWorklet\.addModule\(new URL\(['"](\.[^'"]+)['"],\s*import\.meta\.url\)/g)]) {
       queue.push(relative(STUDIO, resolve(dirname(file), match[1])));
     }
   }

@@ -5,7 +5,7 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v30';
+const CACHE = 'materiallogix-shell-v31';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 // Every module the four pages import, plus the stylesheets they link. An
 // installed copy that is missing one of these does not degrade - it fails to
@@ -30,6 +30,8 @@ const SHELL = [
   'js/room-sound.js', 'js/loudness.js', 'js/mixer.js',
   'js/music-launcher.js', 'js/music-studio.js', 'js/music-session.js',
   'js/music-audio.js', 'js/music-project.js', 'js/music-guidance.js', 'js/music-library.js',
+  'js/music-capture.js', 'js/music-capture-worklet.js', 'js/music-beats.js', 'js/music-mix.js',
+  'js/music-instruments.js',
   'assets/raw/worker.js'
 ];
 
