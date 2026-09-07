@@ -138,7 +138,7 @@ jobs:
               echo "::error::$url does not serve this branch, and this job has no credentials to publish it. The site is unpublished, not broken: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, or deploy by hand."
             else
               echo "::error::$url did not serve the exact approved website during the verification window after a deploy ran."
-            fi"
+            fi
             sed -n '1,20p' /tmp/curl-error.txt || true
             return 1
           }
