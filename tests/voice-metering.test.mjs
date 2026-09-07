@@ -7,6 +7,7 @@ import { count } from '../studio/js/plural.js';
 import { covers } from '../studio/js/license.js';
 import { plansCovering, voiceProfileLimit } from '../studio/js/pricing.js';
 import { voiceReferenceConsent } from '../studio/js/voice-quality.js';
+import { mixForDelivery, deliveryNote } from '../studio/js/mixer.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const page = readFileSync(resolve(ROOT, 'studio/voice.html'), 'utf8');
@@ -29,18 +30,22 @@ function pageFunction(name) {
   throw new Error(`unbalanced braces in ${name}`);
 }
 
-const PAGE_SOURCE = ['releaseVoiceUsage', 'analyse', 'offerDownload', 'playAndCheck', 'savePack']
+const PAGE_SOURCE = ['releaseVoiceUsage', 'analyse', 'offerDownload', 'deliverAt', 'playAndCheck', 'savePack']
   .map(pageFunction).join('\n\n');
 
 const DEPENDENCIES = ['$', 'document', 'fetch', 'AudioContext', 'prompt', 'URL',
   'authorizeOutbound', 'settleOutbound', 'stagePendingUsageRelease', 'voidOutbound',
   'activeLicense', 'covers', 'humanizeBuffer', 'stampPreview', 'voiceTells',
   'voiceReferenceConsent', 'voiceProfileLimit', 'plansCovering', 'count',
-  'bridgeFetch', 'BRIDGE', 'checkEngine', 'recordConsent', 'ensureGuardianAck'];
+  'bridgeFetch', 'BRIDGE', 'checkEngine', 'recordConsent', 'ensureGuardianAck',
+  // The delivery mixer is the real module, not a stub: the point of lifting
+  // these functions out of the page is that what runs here is what ships.
+  'roomChoice', 'deliveryChoice', 'mixForDelivery', 'deliveryNote'];
 
 // eslint-disable-next-line no-new-func
 const buildPage = new Function(...DEPENDENCIES, `
   let lastTells = null;
+  let lastDelivery = null;
   let knownVoicePacks = [];
   ${PAGE_SOURCE}
   return { playAndCheck, savePack };
@@ -118,7 +123,9 @@ function harness({
     duration: seconds,
     length,
     sampleRate: 24000,
-    getChannelData() { channelReads.push(label); return new Float32Array(length); }
+    numberOfChannels: 1,
+    getChannelData() { channelReads.push(label); return new Float32Array(length); },
+    copyToChannel() { /* a real AudioBuffer is written back into; nothing here reads it */ }
   });
   const clean = buffer('clean', 4.1, 128);
   const humanized = buffer('humanized', 4.1, 128);
@@ -154,6 +161,19 @@ function harness({
     voiceTells: () => ({ silenceFloorDb: -62, loudnessCv: 0.31, pauseCount: 2, pauseJitter: 0.4,
       clipPercent: 0, transientClicks: 1, sibilanceIndex: 0.2, crestFactorDb: 11 }),
     voiceReferenceConsent,
+    // The mixer is the real module. Lifting these functions out of the page is
+    // only worth doing if what runs here is what ships.
+    roomChoice: () => 'keep',
+    deliveryChoice: () => 'podcast',
+    // `channelReads` is how these tests see which take was handed over, and
+    // the mixer reads the same buffer to measure its loudness. Reading a take
+    // is not delivering it, so the measurement's reads are dropped here and
+    // the list keeps meaning what its assertions say it means.
+    mixForDelivery: (channels, sampleRate, target) => {
+      channelReads.splice(-channels.length, channels.length);
+      return mixForDelivery(channels, sampleRate, target);
+    },
+    deliveryNote,
     voiceProfileLimit,
     plansCovering,
     count,

@@ -16,6 +16,8 @@
 // Consent rule carried from identity packs: voices come from packs the user
 // owns — their own recording or released talent. Never scraped audio.
 
+import { roomMode } from './room-sound.js';
+
 // --- 1. performance planning (pure; node-testable) --------------------------
 
 const PAUSE_MS = { '.': 420, '!': 380, '?': 470, ',': 220, ';': 300, ':': 280, '—': 320, '…': 500 };
@@ -216,10 +218,18 @@ function breathBuffer(ctx, seconds = 0.3, gainDb = -34) {
  * at the front, gentle glue compression, and a constant low room-tone bed so
  * there is never digital-zero silence anywhere in the file.
  */
-export async function humanizeBuffer(input, {
-  roomToneDb = -58, breathDb = -34, headSeconds = 0.5, tailSeconds = 0.6,
-  presenceDb = 0.8, airDb = -1.4, movementDb = 0.7
-} = {}) {
+export async function humanizeBuffer(input, options = {}) {
+  // The room is the customer's decision, not this function's. `keep` lays the
+  // tone bed and the breath that make a rendered take sound like a person in a
+  // room; `studio` lays neither, and the file is as clean as the engine made
+  // it. An explicit dB still wins over the mode, so a caller can ask for a
+  // quieter room rather than none at all.
+  const mode = roomMode(options.room);
+  const {
+    roomToneDb = mode.roomToneDb, breathDb = mode.breathDb,
+    headSeconds = 0.5, tailSeconds = 0.6,
+    presenceDb = 0.8, airDb = -1.4, movementDb = 0.7
+  } = options;
   const sr = input.sampleRate;
   const outLength = Math.round((headSeconds + tailSeconds) * sr) + input.length;
   const ctx = new OfflineAudioContext(1, outLength, sr);
@@ -249,12 +259,16 @@ export async function humanizeBuffer(input, {
   src.start(headSeconds);
 
   // Breath just before the first word.
-  const breath = ctx.createBufferSource();
-  breath.buffer = breathBuffer(ctx, 0.3, breathDb);
-  breath.connect(ctx.destination);
-  breath.start(Math.max(0, headSeconds - 0.28));
+  if (breathDb !== null) {
+    const breath = ctx.createBufferSource();
+    breath.buffer = breathBuffer(ctx, 0.3, breathDb);
+    breath.connect(ctx.destination);
+    breath.start(Math.max(0, headSeconds - 0.28));
+  }
 
-  // Room tone across the whole file: silence in a real room is never zero.
+  // Room tone across the whole file: silence in a real room is never zero -
+  // unless the customer asked for a room that is not there.
+  if (roomToneDb === null) return ctx.startRendering();
   const tone = ctx.createBuffer(1, outLength, sr);
   const td = tone.getChannelData(0);
   const tg = Math.pow(10, roomToneDb / 20);

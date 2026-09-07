@@ -125,6 +125,15 @@ Create with freedom. Finish with *confidence*.</textarea>
         <button class="btn voice-advanced" id="packUpload" type="button" title="Upload audio with documented voice consent">Import reference</button>
         <input type="file" id="packFile" accept=".wav,.mp3,.m4a,.aac,.ogg,.oga,.webm,.flac,audio/*" multiple hidden>
       </div>
+      <div class="knob">
+        <label class="eyebrow" for="roomMode" style="width:110px">Room</label>
+        <select id="roomMode" style="flex:1" title="Whether the space you record in stays in the take">
+          <option value="keep">Keep the room — the space you recorded in stays in the take</option>
+          <option value="studio">Studio clean — no added room, and a live-sounding reference is refused</option>
+        </select>
+        <label class="eyebrow" for="deliveryTarget" style="width:110px">Delivered for</label>
+        <select id="deliveryTarget" style="flex:1" title="Sets the loudness this file is delivered at"></select>
+      </div>
       <p class="lead" id="recState" style="margin:-4px 0 12px;font-size:11.5px">A personal voice profile needs at least 10 clean seconds from a live recording or supported audio file; 20–30 seconds is recommended for better quality. Reference audio, conditioning, synthesis, and finishing remain on this computer.</p>
       <fieldset class="voice-advanced voice-consent"><legend class="eyebrow">Voice-reference authorization</legend>
         <label><input id="voiceRights" type="checkbox"> <span>I own this recording or have a signed release permitting voice conditioning.</span></label>
@@ -172,6 +181,8 @@ import { voiceReferenceConsent } from './js/voice-quality.js';
 import { readableServiceError } from './js/service-error.js';
 import { ensureGuardianAck } from './js/capture-guidance.js';
 import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from './js/voice-reference.js';
+import { captureConstraints, measureReverb, reverbVerdict } from './js/room-sound.js';
+import { DELIVERY_TARGETS, DELIVERY_TARGET_IDS, mixForDelivery, deliveryNote } from './js/mixer.js';
 import { voiceGuidance } from './js/capture-guidance.js';
 import { listAssets, recordConsent } from './js/store.js';
 
@@ -445,7 +456,9 @@ async function playAndCheck(arrayBuffer) {
     }
   }
   $('#status').textContent = 'applying voice finishing…';
-  const humanized = await humanizeBuffer(decoded);
+  const finished = await humanizeBuffer(decoded, { room: roomChoice() });
+  const humanized = deliverAt(finished, deliveryChoice());
+  $('#planSummary').textContent += ` · ${deliveryNote(lastDelivery)}`;
   if (preview) $('#planSummary').textContent += ' · PREVIEW (licensed renders are clean)';
   await analyse(humanized);
   let url = null;
@@ -620,7 +633,64 @@ $('#pack').onchange = () => {
   $('#recState').textContent = `${profile.name}: ${profile.region} · ${profile.register}. ${profile.description}`;
 };
 
+const roomChoice = () => document.querySelector('#roomMode')?.value || 'keep';
+const deliveryChoice = () => document.querySelector('#deliveryTarget')?.value || 'podcast';
+
+// Each destination normalises to its own loudness and turns down anything over
+// its true-peak ceiling, so the same take delivered for all three is three
+// different files. The label carries the number and where it comes from.
+for (const id of DELIVERY_TARGET_IDS) {
+  const target = DELIVERY_TARGETS[id];
+  $('#deliveryTarget')?.append(Object.assign(document.createElement('option'), {
+    value: id, textContent: `${target.label} — ${target.lufs} LUFS`, title: target.why
+  }));
+}
+
+let lastDelivery = null;
+
+/**
+ * The finished take, at the loudness the place it is going normalises to.
+ * Written back into the same buffer rather than into a new one, so everything
+ * downstream - the analysis, the player, the download - is looking at the file
+ * that ships rather than at the one before the mix.
+ */
+function deliverAt(buffer, targetId) {
+  const channelCount = buffer.numberOfChannels || 1;
+  const channels = Array.from({ length: channelCount }, (_, index) => buffer.getChannelData(index));
+  const mix = mixForDelivery(channels, buffer.sampleRate, targetId);
+  lastDelivery = mix;
+  if (!mix.silent) mix.channels.forEach((channel, index) => buffer.copyToChannel(channel, index));
+  return buffer;
+}
+
+/**
+ * The reference gate measured level, clipping and noise separation but never
+ * reverberation, so a reference recorded in a live room passed and the room
+ * was cloned into the voice along with it - permanently, on every take that
+ * profile ever renders. Nothing downstream can take it back out.
+ */
+function withRoomAssessment(assessment, buffer) {
+  const room = measureReverb(buffer.getChannelData(0), buffer.sampleRate);
+  const verdict = reverbVerdict(room.decaySeconds, roomChoice());
+  const decided = {
+    ...assessment,
+    room: { ...room, status: verdict.status, label: verdict.label },
+    metrics: { ...(assessment.metrics || {}), roomDecaySeconds: room.decaySeconds }
+  };
+  if (verdict.status === 'blocked') {
+    return { ...decided, status: 'blocked', reasons: [...(assessment.reasons || []), 'reference_room_too_live'] };
+  }
+  if (verdict.status === 'advisory') {
+    return { ...decided, advisories: [...(assessment.advisories || []), 'room_is_audible'] };
+  }
+  return decided;
+}
+
 async function savePack(blob, assessment) {
+  if (assessment?.room?.status === 'blocked') {
+    $('#recState').textContent = assessment.room.label;
+    return;
+  }
   if (!assessment || assessment.status !== 'pass') {
     $('#recState').textContent = `Voice reference blocked: ${(assessment?.reasons || ['quality_check_required']).join(', ').replaceAll('_', ' ')}.`;
     return;
@@ -742,7 +812,11 @@ $('#recBtn').onclick = async () => {
   // known. This one only keeps the microphone from starting unprompted.
   if (!(await ensureGuardianAck())) return;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+    // A cloning reference wants the signal untouched, which is why this used
+    // to be hard-wired off. It is the customer's room, so it is the customer's
+    // call: Studio clean trades the processing artefacts for what the browser
+    // can remove.
+    const stream = await navigator.mediaDevices.getUserMedia(captureConstraints(roomChoice()));
     rec = new MediaRecorder(stream);
     chunks = [];
     rec.ondataavailable = e => chunks.push(e.data);
@@ -754,7 +828,7 @@ $('#recBtn').onclick = async () => {
       const ctx = new AudioContext();
       try {
         const buf = await ctx.decodeAudioData(ab);
-        const assessment = assessVoiceReference(buf, { plan: (await activeLicense())?.plan });
+        const assessment = withRoomAssessment(assessVoiceReference(buf, { plan: (await activeLicense())?.plan }), buf);
         await savePack(audioBufferToWav(buf), assessment);
       } finally {
         ctx.close().catch(() => {});
@@ -791,7 +865,8 @@ $('#packFile').onchange = async e => {
     const context = new AudioContext();
     try {
       const decoded = await context.decodeAudioData(await files[0].arrayBuffer());
-      return await savePack(audioBufferToWav(decoded), assessVoiceReference(decoded, { plan: license?.plan }));
+      return await savePack(audioBufferToWav(decoded),
+        withRoomAssessment(assessVoiceReference(decoded, { plan: license?.plan }), decoded));
     } catch {
       $('#recState').textContent = 'Could not decode that reference. Choose a supported, playable audio file.';
       return;
