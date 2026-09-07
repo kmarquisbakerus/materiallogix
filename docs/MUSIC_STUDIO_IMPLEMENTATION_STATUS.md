@@ -58,16 +58,29 @@ The new automated checks cover synthesized waveforms, timing and output bytes,
 sampled-instrument persistence, generated-part updates and capture interruption.
 The browser journey now includes creation, native AudioWorklet capture with a
 synthetic microphone, project download, IndexedDB recovery and offline WAV
-rendering. The next run also retains desktop/phone screenshots, a portable
-project and clean/marked diagnostic WAVs for visual and audio inspection.
+rendering. CI retains desktop/phone screenshots, a portable project and
+clean/marked diagnostic WAVs for visual and audio inspection. The journey now
+also captures Photo, Video and Voice editing at desktop and phone sizes.
 
 Verification on 2026-09-07: all 510 Node tests passed, including free-preview
-policy, required-mark failures and playback cleanup. The previous site-integrity
-check passed, and the current diff whitespace check is clean. The first CI run
-passed all 72 existing browser-journey checks but the new Music journey stopped
-at the instrument selector's accessible name. The selector and edit-pattern
-focus have been corrected; a rerun is required. No automated result certifies
-audible quality.
+policy, required-mark failures and playback cleanup. CI run 34158505653 passed
+all 72 existing browser-journey checks, the Music journey, all five browser CSP
+checks and deployment-package validation at commit 204b248. The first Music
+run had stopped at the instrument selector's accessible name; the correction
+passed in that rerun. The site-integrity workflow also passed.
+
+The actual clean and marked WAVs from that run were independently decoded with
+FFmpeg: 48 kHz, stereo, 24-bit PCM, 400,800 frames and 8.35 seconds each, nonzero
+audio and no clipped samples. The clean sample peak was -3.63 dBFS and the marked
+sample peak -6.72 dBFS. The added preview mark was measurable after decoding.
+These are engine diagnostics with synthetic microphone input, not customer-
+authorized exports, true-peak/loudness certification or listening approval.
+
+Music desktop and phone screenshots were visually inspected. The follow-up
+checks cover internal editor overflow, enlarged text and drum controls as well;
+the narrow-screen drum grid now wraps into four columns. Those changes require
+their own CI result. The broader suite screenshots and full visual/device
+acceptance remain outstanding.
 
 Audio graph and microphone unit tests use doubles; processor tests also execute
 the capture algorithm over sample buffers. They do not certify audible

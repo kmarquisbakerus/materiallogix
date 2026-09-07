@@ -31,6 +31,7 @@ try {
   };
   await open();
   const dialog = page.locator('.music-dialog');
+  const horizontalOverflow = () => dialog.evaluate(element => [element, element.querySelector('.dlg-body')].some(node => node.scrollWidth > node.clientWidth + 2));
   const ready = () => page.waitForFunction(() => !document.querySelector('.music-dialog')?.hasAttribute('aria-busy'));
   const action = async name => { await dialog.locator(`[data-music-action="${name}"]`).click(); await ready(); };
   await dialog.getByLabel('Song name', { exact: true }).fill('Music journey');
@@ -43,6 +44,7 @@ try {
   await dialog.locator('[data-section="instruments"] > summary').click();
   await dialog.locator('[data-music-action="instrument-preset"][data-preset="chords"]').click(); await ready();
   await action('instrument-add'); assert.equal(await dialog.locator('[data-track]').count(), 2);
+  await dialog.locator('.dlg-body').evaluate(element => element.scrollTop = 0);
   await capture('music-guided-desktop');
   await action('play');
   assert.equal(await dialog.getByText('Free preview · audio watermark during playback', { exact: true }).count(), 1);
@@ -112,16 +114,21 @@ try {
   assert.ok(rendered.seconds >= 8 && rendered.seconds < 10);
   console.log('Music browser journey passed: creation, editable patterns, synthetic microphone capture, project download, IndexedDB recovery and real offline WAV rendering.', rendered);
 
-  await action('advanced'); await capture('music-advanced-desktop');
+  await action('advanced');
+  await dialog.locator('[data-section="instruments"]').scrollIntoViewIfNeeded();
+  await capture('music-advanced-desktop');
   await action('guided');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  const overflow = await dialog.evaluate(element => element.scrollWidth > element.clientWidth + 2);
+  const overflow = await horizontalOverflow();
   assert.equal(overflow, false, 'Music dialog overflows at phone width');
+  await dialog.locator('.dlg-body').evaluate(element => element.scrollTop = 0);
   await capture('music-guided-phone');
   await page.evaluate(() => document.documentElement.style.fontSize = '200%');
-  assert.equal(await dialog.evaluate(element => element.scrollWidth > element.clientWidth + 2), false, 'Music dialog overflows with enlarged text');
+  assert.equal(await horizontalOverflow(), false, 'Music dialog overflows with enlarged text');
   await capture('music-guided-phone-large-text');
+  await dialog.locator('[data-section="custom-drums"]').scrollIntoViewIfNeeded();
+  await capture('music-drums-phone-large-text');
   assert.equal(await dialog.getByText(/Finished-song delivery/).count(), 1);
   assert.deepEqual(handle.errors, []);
   await context.close();

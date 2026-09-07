@@ -107,6 +107,7 @@ test('an update that would discard a trimmed part fails atomically and removes u
 test('Music styling is restricted to its dialog and launchers use existing button classes', () => {
   const css = readFileSync(new URL('../studio/css/music.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   for (const match of css.matchAll(/([^{}]+)\{/g)) {
+    if (match[1].trim().startsWith('@media ')) continue;
     for (const selector of match[1].split(',')) assert.ok(selector.trim().startsWith('.music-dialog '), selector);
   }
   for (const page of ['index.html', 'voice.html']) {

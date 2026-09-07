@@ -5,7 +5,7 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v32';
+const CACHE = 'materiallogix-shell-v33';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 // Every module the four pages import, plus the stylesheets they link. An
 // installed copy that is missing one of these does not degrade - it fails to

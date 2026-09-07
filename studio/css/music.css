@@ -20,3 +20,7 @@
 .music-dialog .music-keys { display: flex; flex-wrap: wrap; gap: .4rem; }
 .music-dialog .music-keys .btn { min-width: 2.75rem; min-height: 3rem; }
 .music-dialog select { max-width: 100%; padding: .5rem; font-size: .875rem; }
+@media (max-width: 640px) {
+  .music-dialog .music-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .music-dialog .music-controls > * { min-width: 0; max-width: 100%; }
+}

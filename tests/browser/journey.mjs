@@ -9,6 +9,20 @@ import { serve } from './serve.mjs';
 import { engineStub } from './engine-stub.mjs';
 import { mintLicence, studioContext, photoScript } from './harness.mjs';
 import { CLOUD_PRICING } from '../../studio/js/pricing.js';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const evidenceDirectory = process.env.MUSIC_QA_DIR;
+if (evidenceDirectory) await mkdir(evidenceDirectory, { recursive: true });
+const captureViews = async (page, name) => {
+  if (!evidenceDirectory) return;
+  const original = page.viewportSize();
+  try {
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-desktop.png`), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-phone.png`), fullPage: true });
+  } finally { await page.setViewportSize(original); }
+};
 
 let BASE, SITE;   // set once the site server has a port
 let passed = 0;
@@ -206,6 +220,7 @@ try {
   await app.keyboard.press('Control+z');
   await settle(app, 1000);
   ok('undo puts it back', /^Undid/.test(await toast(app)), await toast(app));
+  await captureViews(app, 'photo-editing');
 
   step('Generate a photo');
   await openSidebar(app);
@@ -278,6 +293,7 @@ try {
   const editorial = await app.evaluate(() => [...document.querySelectorAll('.video-delivery-grid select')]
     .map(s => s.closest('label')?.querySelector('span')?.textContent).filter(Boolean));
   ok('the editorial controls are present', editorial.length >= 4, editorial.join(', '));
+  await captureViews(app, 'video-editing');
   const trims = await app.evaluate(async () => {
     const { resolveVideoTrim } = await import('./js/video-plan.js');
     const duration = window.__cros.state.assets.find(a => a.kind === 'video')?.duration || 2;
@@ -419,6 +435,7 @@ try {
     ok('render is refused with a plain reason while the engine is offline',
       await page.evaluate(() => document.querySelector('#render')?.disabled === true), await text('#engineState'));
     allErrors.push(...voice.errors);
+    await captureViews(page, 'voice-editing');
     await voice.context.close();
   }
 
