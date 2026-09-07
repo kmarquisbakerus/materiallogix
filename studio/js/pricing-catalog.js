@@ -10,7 +10,7 @@ export const PRICING = Object.freeze({
   export: Object.freeze({ name: 'Pay-per-export', totalCents: 299, billedEveryMonths: 0 }),
   voiceStarter: Object.freeze({
     name: 'Voice Starter',
-    description: '60 finished local voice minutes each month and one active personal voice profile.',
+    description: '30 finished local voice minutes each month and one active personal voice profile.',
     monthly: Object.freeze({ totalCents: 500, billedEveryMonths: 1 })
   }),
   single: Object.freeze({
