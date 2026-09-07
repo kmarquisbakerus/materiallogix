@@ -53,13 +53,24 @@ function media(css, condition) {
  * <style> opens by explaining which element is the page's <main> - and a tag
  * count that reads them counts the explanation as the thing.
  */
-// One pass over one alternation, deliberately. Three sequential replaces let
-// each one splice together text that then reads as input to the next, and
-// `</script >` - whitespace before the bracket, which HTML allows - closed
-// none of them, so a script whose end tag was written that way survived into
-// the tag count as ordinary markup.
-const REMOVED = /<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?<\/style\s*>|<script\b[^>]*>[\s\S]*?<\/script\s*>/gi;
-const markup = page => page.replace(REMOVED, '');
+// An end tag is not just `</script>`. HTML lets one carry whitespace and even
+// attributes - `</script foo=bar>` is a valid, parsed, ignored end tag - and
+// matching only the bare form left a script closed that way standing in the
+// markup, taking every tag inside it into the count with it.
+//
+// And removal is repeated to a fixed point rather than done once, because one
+// removal can join text either side of it into a tag that was not there
+// before: `<sc<!--x-->ript>` is a comment between two halves of a script tag,
+// and taking the comment out is what makes the tag.
+const REMOVED = /<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?<\/style\b[^>]*>|<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi;
+const markup = page => {
+  let text = page;
+  for (let previous = null; previous !== text; ) {
+    previous = text;
+    text = text.replace(REMOVED, '');
+  }
+  return text;
+};
 const body = page => /<body[^>]*>([\s\S]*)<\/body>/.exec(markup(page))[1];
 
 // ── the drawer that stayed in the tab order ─────────────────────────────────
