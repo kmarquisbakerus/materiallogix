@@ -33,7 +33,6 @@ jobs:
           test -f company-site/styles.css
           test -f company-site/site.js
           test -f company-site/.assetsignore
-                    test -f company-site/media/studio-founder-review-actual.webp
           test -f company-site/media/studio-founder-review-actual.webp
           test -f company-site/media/sideof-group-chat-actual.webp
           test -f company-site/media/evidence-manifest.json
@@ -50,11 +49,12 @@ jobs:
             echo '::error::Web-app installation behavior is not permitted on this corporate website.'
             exit 1
           fi
-          # The founder's full legal name belongs in executed corporate records.
+          # Every image on this site is a real product capture.
           if grep -Fq 'Illustrative' company-site/index.html; then
             echo '::error::Every image on this site is a real product capture. Staged scenes are not permitted.'
             exit 1
           fi
+          # The founder's full legal name belongs in executed corporate records.
           if grep -Fq 'Kevin Marquis Baker' company-site/index.html; then
             echo '::error::The founder middle name must not appear on a public page.'
             exit 1
@@ -117,7 +117,7 @@ jobs:
             local url="$1"
             local body=/tmp/verify.html
             local normalized=/tmp/verify-source.html
-            for attempt in $(seq 1 120); do
+            for attempt in $(seq 1 60); do
               if curl --fail --silent --show-error --location --max-time 30 \
                 -H 'Cache-Control: no-cache' \
                 "${url}?publish_verify=${GITHUB_RUN_ID}-${attempt}" > "$body" 2>/tmp/curl-error.txt \
@@ -155,7 +155,7 @@ jobs:
             "sourceCommit": "${GITHUB_SHA}",
             "deploymentExecuted": "${{ steps.deploy.outputs.executed }}",
             "deploymentMode": "${{ steps.deploy.outputs.mode }}",
-            "hostingTarget": "libraside-technologies-site",
+            "hostingTarget": "librasidetechnologies",
             "root": "https://librasidetechnologies.com/",
             "www": "https://www.librasidetechnologies.com/",
             "verifiedAt": "$(date -u +%FT%TZ)"

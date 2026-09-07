@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "libraside-technologies-site",
+  "name": "librasidetechnologies",
   "compatibility_date": "2026-09-04",
   "workers_dev": false,
   "preview_urls": false,
