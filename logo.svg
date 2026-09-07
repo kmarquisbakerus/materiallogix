@@ -1,19 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
   <title id="title">MaterialLogix</title>
   <desc id="desc">The ML monogram in the gleam, on the house ground. Both site pages load this as their favicon.</desc>
-  <!-- The monogram as outlines rather than as text. An SVG icon cannot pull a
-       webfont - a font-face inside an image is not fetched by the browsers that
-       draw it as a favicon or a manifest icon - so set as text this mark arrived
-       in whatever serif the reader happened to have, which for most of them was
-       not Fraunces at all.
+  <!-- Outlines, not text: an SVG icon cannot pull a webfont - a font-face inside
+       an image is not fetched by the browsers that draw it as a favicon or a
+       manifest icon - so set as text this mark arrived in whatever serif the
+       reader happened to have.
 
-       These are Fraunces Italic's own contours, at the optical size this tile
-       calls for, and every number is brand/gleam-sheet.html's tile rule rather
-       than a value chosen by eye: the ground, the 16.512 radius and the 0.03
-       scale are `body.tile .stage` and its font-size of 96 * .625 over the
-       face's 2000 units; 1607 is M's advance of 1647 plus the -.02em tracking;
-       and the translate is where justify-content and align-items put that run's
-       origin. Regenerate from the sheet if the sheet changes. -->
+       These are Fraunces Italic's contours at the optical size this tile calls
+       for, and the numbers are brand/gleam-sheet.html's tile rule rather than
+       values chosen by eye: the ground and the 16.512 radius from
+       `body.tile .stage`, the 0.03 scale from its font-size of 96 * .625 over
+       the face's 2000 units, the 1607 from M's advance plus the -.02em
+       tracking. Regenerate from the sheet if the sheet changes. -->
   <linearGradient id="gleam" x1="0" y1="1" x2="1" y2="0">
     <stop offset="0%" stop-color="#7a5423"/>
     <stop offset="16%" stop-color="#b98232"/>
