@@ -1,9 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 64" role="img" aria-labelledby="title desc">
-  <title id="title">MaterialLogix Studio</title>
-  <desc id="desc">Material in charcoal, Logix in gold, with Studio beside it.</desc>
-  <rect width="340" height="64" fill="none"/>
-  <text x="2" y="40" fill="#171615" font-family="Georgia, Times New Roman, serif" font-size="34" letter-spacing="-1">Material</text>
-  <text x="137" y="40" fill="#9b7029" font-family="Georgia, Times New Roman, serif" font-size="34" letter-spacing="-1">Logix</text>
-  <text x="222" y="21" fill="#171615" font-family="Arial, Helvetica, sans-serif" font-size="10">™</text>
-  <text x="253" y="40" fill="#171615" font-family="Arial, Helvetica, sans-serif" font-size="11" font-weight="700" letter-spacing="4">STUDIO</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">MaterialLogix</title>
+  <desc id="desc">The ML monogram in the gleam, on the house ground. Both site pages load this as their favicon.</desc>
+  <!-- The monogram as outlines rather than as text. An SVG icon cannot pull a
+       webfont, so set as text this mark arrived in whatever serif the reader
+       happened to have - a different letterform from the one
+       brand/gleam-sheet.html draws, on almost every machine that opened it.
+       These are that sheet's own letters, Fraunces italic, taken to paths, with
+       its own gradient stops. It now looks the same everywhere. -->
+  <linearGradient id="gleam" x1="0" y1="1" x2="1" y2="0">
+    <stop offset="0%" stop-color="#7a5423"/>
+    <stop offset="16%" stop-color="#b98232"/>
+    <stop offset="36%" stop-color="#e3c98b"/>
+    <stop offset="50%" stop-color="#c49a4e"/>
+    <stop offset="60%" stop-color="#ecd9a0"/>
+    <stop offset="80%" stop-color="#a8752e"/>
+    <stop offset="92%" stop-color="#d3b26c"/>
+    <stop offset="100%" stop-color="#7d5825"/>
+  </linearGradient>
+  <rect width="96" height="96" rx="16.5" fill="#0a0a0b"/>
+  <g fill="url(#gleam)" transform="translate(12.843 65.721) scale(0.02579 -0.02579)">
+    <path transform="translate(0 0)" d="M875 365 798 318 1420 1326Q1447 1369 1478.0 1384.5Q1509 1400 1540 1400H1745Q1773 1400 1782.5 1391.0Q1792 1382 1791 1365Q1790 1347 1777.0 1336.5Q1764 1326 1746 1321L1686 1308Q1663 1303 1648.0 1286.5Q1633 1270 1627 1240Q1619 1192 1605.0 1120.0Q1591 1048 1574.5 961.0Q1558 874 1540.0 780.0Q1522 686 1504.5 594.0Q1487 502 1472.0 418.5Q1457 335 1445.5 269.5Q1434 204 1428 165Q1423 135 1431.0 116.5Q1439 98 1463 91L1529 75Q1546 70 1554.5 62.0Q1563 54 1561 40Q1560 20 1546.0 10.0Q1532 0 1505 0H1085Q1058 0 1047.5 10.5Q1037 21 1038 38Q1040 55 1052.0 64.0Q1064 73 1080 78L1145 91Q1172 98 1190.0 115.5Q1208 133 1215 168Q1225 228 1239.5 304.5Q1254 381 1271.5 469.0Q1289 557 1307.5 650.5Q1326 744 1344.0 839.0Q1362 934 1377.5 1024.0Q1393 1114 1406 1194L1435 1201L838 217Q812 180 793.0 166.0Q774 152 747 152Q725 152 709.5 170.0Q694 188 688 218Q675 291 662.5 371.0Q650 451 637.5 535.0Q625 619 612.0 704.5Q599 790 585.5 874.5Q572 959 558.5 1040.5Q545 1122 532 1197L573 1205L281 217Q266 161 276.5 131.5Q287 102 322 92L380 77Q414 64 411 41Q409 22 393.0 11.0Q377 0 348 0H37Q8 0 -3.5 11.0Q-15 22 -14 38Q-12 56 0.5 66.5Q13 77 35 82L83 93Q110 100 130.0 116.0Q150 132 167.0 166.0Q184 200 200 260L481 1221Q493 1258 485.5 1279.5Q478 1301 453 1307L383 1324Q366 1330 358.0 1339.0Q350 1348 352 1362Q353 1380 368.0 1390.0Q383 1400 407 1400H620Q659 1400 683.5 1378.0Q708 1356 718 1304Q730 1236 742.0 1161.0Q754 1086 766.5 1008.0Q779 930 791.5 849.5Q804 769 817.5 687.5Q831 606 845.5 525.0Q860 444 875 365Z"/>
+    <path transform="translate(1694 0)" d="M658 0H64Q36 0 24.5 10.0Q13 20 15 36Q16 52 29.0 62.5Q42 73 63 78L121 90Q152 96 169.5 115.5Q187 135 199 174Q211 217 229.5 287.5Q248 358 272.0 445.0Q296 532 321.0 627.0Q346 722 371.0 816.5Q396 911 418.0 996.0Q440 1081 456.0 1148.0Q472 1215 479 1255Q484 1277 476.0 1290.5Q468 1304 450 1309L383 1325Q365 1330 354.5 1338.5Q344 1347 344 1362Q344 1379 359.0 1389.5Q374 1400 401 1400H834Q860 1400 871.0 1390.5Q882 1381 882 1365Q882 1349 869.0 1338.5Q856 1328 837 1323L765 1308Q740 1303 725.0 1287.5Q710 1272 700 1238Q687 1191 666.5 1118.5Q646 1046 622.5 958.5Q599 871 573.5 776.0Q548 681 523.0 588.0Q498 495 476.5 412.0Q455 329 439.5 264.5Q424 200 417 164Q407 113 426.0 92.0Q445 71 489 71H657Q725 71 776.0 97.5Q827 124 869.5 184.0Q912 244 954 345Q966 370 979.0 381.5Q992 393 1009 393Q1029 393 1037.5 381.0Q1046 369 1046 347Q1044 270 1022.0 202.0Q1000 134 964.0 83.0Q928 32 883.5 3.0Q839 -26 791 -26Q770 -26 751.5 -19.5Q733 -13 711.5 -6.5Q690 0 658 0Z"/>
+  </g>
 </svg>
