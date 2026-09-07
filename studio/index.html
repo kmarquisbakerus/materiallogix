@@ -15,6 +15,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <script>(function(){var t=localStorage.getItem('cros:theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';document.documentElement.dataset.theme=t;})()</script>
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/music.css">
 <link rel="stylesheet" href="css/studio-entry.css">
 </head>
 <body>
@@ -39,6 +40,7 @@
     <details class="topbar-more">
       <summary>More</summary>
       <div class="topbar-more-menu">
+        <button class="btn sm" type="button" data-open-music>Music Studio</button>
         <span class="eyebrow">Workspace</span>
         <div class="seg" id="modeSeg">
           <button data-mode="review" class="on">Review</button>
@@ -77,6 +79,7 @@
 <script type="module" src="js/activity.js"></script>
 <script type="module" src="js/bootstrap.js"></script>
 <script type="module" src="js/studio-entry.js"></script>
+<script type="module" src="js/music-launcher.js"></script>
 <!-- Redeems a paid Stripe return. Last, so a slow fulfilment lookup can
      never hold up the page the customer just paid to reach. -->
 <script type="module" src="js/checkout-result.js"></script>

@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/music.css">
 <style>
   /* Two panes and the jobs rail. The panes are the page's <main> and the rail
      is a sibling landmark, as it already is in the photo workspace, so the
@@ -71,6 +72,7 @@
     <details class="topbar-more">
       <summary aria-label="Open more Voice Studio options">More</summary>
       <div class="topbar-more-menu">
+        <button class="btn sm" type="button" data-open-music>Music Studio</button>
         <a class="btn sm" href="index.html" style="text-decoration:none">Photo &amp; Video workspace</a>
         <a class="btn sm" href="usage.html" style="text-decoration:none">Usage &amp; wallet</a>
       </div>
@@ -943,6 +945,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 </script>
 <!-- Redeems a paid Stripe return. Last, so a slow fulfilment lookup can
      never hold up the page the customer just paid to reach. -->
+<script type="module" src="js/music-launcher.js"></script>
 <script type="module" src="js/checkout-result.js"></script>
 </body>
 </html>

@@ -1,0 +1,15 @@
+/* Only the new opt-in Music dialog. Never restyle the existing site shell. */
+.music-dialog .dlg-body { font-size: 1rem; line-height: 1.5; }
+.music-dialog [hidden] { display: none !important; }
+.music-dialog h3 { margin: 0; font-size: 1rem; }
+.music-dialog p { margin: .6rem 0; }
+.music-dialog .btn, .music-dialog summary, .music-dialog input { font-size: .875rem; }
+.music-dialog .music-controls { display: flex; gap: .65rem; flex-wrap: wrap; align-items: center; margin: .85rem 0; }
+.music-dialog .music-field { display: flex; flex-direction: column; gap: .3rem; margin: .6rem 0; max-width: 100%; font-size: .875rem; }
+.music-dialog input { min-width: 0; max-width: 100%; padding: .5rem; }
+.music-dialog .music-track, .music-dialog .music-guide { border: 1px solid var(--hair); padding: .85rem; margin: 1rem 0; }
+.music-dialog .music-clip { border-top: 1px solid var(--hair); margin-top: .85rem; padding-top: .35rem; }
+.music-dialog canvas { display: block; width: 100%; height: 48px; }
+.music-dialog .music-note, .music-dialog .music-notice { color: var(--muted); font-size: .875rem; }
+.music-dialog summary { cursor: pointer; padding: .55rem 0; }
+.music-dialog button[aria-pressed="true"] { border-color: var(--gold); }

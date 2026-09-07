@@ -5,7 +5,7 @@
 // production an app about correctness must never run old logic silently.
 // The cache is a fallback for flaky Wi-Fi and offline opens, not a speedup.
 
-const CACHE = 'materiallogix-shell-v29';
+const CACHE = 'materiallogix-shell-v30';
 const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 // Every module the four pages import, plus the stylesheets they link. An
 // installed copy that is missing one of these does not degrade - it fails to
@@ -14,6 +14,7 @@ const PEOPLE_CACHE = 'materiallogix-people-proof-v1';
 const SHELL = [
   './', 'index.html', 'voice.html', 'usage.html', 'admin.html', 'manifest.webmanifest', 'icon.svg',
   'css/app.css', 'css/studio-entry.css', 'css/usage.css', 'css/admin.css',
+  'css/music.css',
   'assets/preview-stamp.wav',
   'js/bootstrap.js', 'js/studio-shell.js', 'js/studio-nav.js', 'js/api-root.js', 'js/activity.js', 'js/privacy.js',
   'js/studio-entry.js', 'js/app-version.js', 'js/features.js', 'js/prompt-guard.js', 'js/account-providers.js',
@@ -27,6 +28,8 @@ const SHELL = [
   'js/billing-client.js', 'js/usage.js', 'js/admin.js', 'js/checkout-result.js',
   'js/video-engine.js', 'js/model-licence.js', 'js/region.js',
   'js/room-sound.js', 'js/loudness.js', 'js/mixer.js',
+  'js/music-launcher.js', 'js/music-studio.js', 'js/music-session.js',
+  'js/music-audio.js', 'js/music-project.js', 'js/music-guidance.js', 'js/music-library.js',
   'assets/raw/worker.js'
 ];
 
