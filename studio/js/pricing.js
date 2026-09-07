@@ -21,7 +21,7 @@ export const PRODUCTS = [
     name: 'Voice Starter',
     monthly: 5,
     totals: { monthly: 5 },
-    pitch: '60 finished local voice minutes each month and one active personal voice profile.'
+    pitch: '30 finished local voice minutes each month and one active personal voice profile.'
   },
   {
     id: 'single_photo',
@@ -86,7 +86,7 @@ export function price(productId, termId) {
 // Local renders cost us $0, so units price VALUE, not cost — overage can
 // never bleed money. Cloud jobs are separate prepaid credits on top.
 
-export const MONTHLY_UNITS = { voice_starter: 60, single: 500, full: 1000 };
+export const MONTHLY_UNITS = { voice_starter: 30, single: 500, full: 1000 };
 export const PAY_PER_EXPORT = { units: 1, price: 2.99 };
 
 // Customer-visible prepaid cloud rates. The server must authorize the quoted
