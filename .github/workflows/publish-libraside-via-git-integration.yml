@@ -73,17 +73,20 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          # Without credentials this job cannot publish. It used to warn and
-          # carry on, so a missing secret surfaced ten minutes later as a
-          # verification timeout that reads like a broken site. Say what is
-          # actually wrong, immediately.
+          # Without credentials this job cannot publish, but it can still say
+          # whether production matches this branch, which is worth knowing when
+          # someone deploys by hand. So it drops to a drift check and records
+          # which mode it ran in, and the verify step reports the difference:
+          # a mismatch here means unpublished, not broken.
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
-            echo '::error::Cannot publish: set the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets. Until they exist every commit to this branch stays unpublished, whatever this workflow reports.'
-            exit 1
+            echo '::warning::No CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID secrets, so this job cannot publish. Running a drift check against production instead.'
+            echo 'executed=false' >> "$GITHUB_OUTPUT"
+            echo 'mode=drift-check-only' >> "$GITHUB_OUTPUT"
+          else
+            npx --yes wrangler@4.128.0 deploy --config wrangler.libraside.jsonc
+            echo 'executed=true' >> "$GITHUB_OUTPUT"
+            echo 'mode=deployed-and-verified' >> "$GITHUB_OUTPUT"
           fi
-          npx --yes wrangler@4.128.0 deploy --config wrangler.libraside.jsonc
-          echo 'executed=true' >> "$GITHUB_OUTPUT"
-          echo 'mode=deployed-and-verified' >> "$GITHUB_OUTPUT"
 
       - name: Verify the public root and www domains
         shell: bash
@@ -131,7 +134,11 @@ jobs:
               fi
               sleep 10
             done
-            echo "::error::$url did not serve the exact approved website during the verification window."
+            if [ '${{ steps.deploy.outputs.executed }}' = 'false' ]; then
+              echo "::error::$url does not serve this branch, and this job has no credentials to publish it. The site is unpublished, not broken: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, or deploy by hand."
+            else
+              echo "::error::$url did not serve the exact approved website during the verification window after a deploy ran."
+            fi"
             sed -n '1,20p' /tmp/curl-error.txt || true
             return 1
           }
