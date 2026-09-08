@@ -1,4 +1,4 @@
-import { PRODUCTS, TERMS, price } from './pricing.js?v=20260903';
+import { PRODUCTS, TERMS, price } from './pricing.js';
 import { apiUrl } from './api-root.js';
 
 const TERM_STORAGE = 'materiallogix:checkout-term';
@@ -45,43 +45,40 @@ function setStatus(message) {
   if (node) node.textContent = message;
 }
 
-// The page owns its own term control: three radios whose :checked state drives
-// which per-term price each card shows. Read that, and fall back to the legacy
-// injected select only where the page has not published one.
-const RADIO_TERMS = { 'term-m': 'monthly', 'term-q': 'quarterly', 'term-y': 'yearly' };
-
+// One control decides the term. There used to be two - a radio switch that
+// changed the displayed price and a select that decided the SKU - so a customer
+// could read the yearly price and be charged the monthly one.
 function termRadios() {
-  return [...document.querySelectorAll('.term-radio')].filter(radio => RADIO_TERMS[radio.id]);
+  return [...document.querySelectorAll('.term-radio')];
 }
 
 function selectedTerm() {
-  const checked = termRadios().find(radio => radio.checked);
-  if (checked) return RADIO_TERMS[checked.id];
-  return document.querySelector('#billingTerm')?.value || 'monthly';
+  const checked = termRadios().find(input => input.checked);
+  const id = checked?.dataset.term || TERMS[0].id;
+  return TERMS.some(term => term.id === id) ? id : TERMS[0].id;
 }
 
-// Prices are published in the page's own markup, one node per term, and the
-// licence service charges from the same catalogue. This never rewrites them:
-// a client-side catalogue that has drifted from the published page must not be
-// able to show a customer a total they will not be charged. It only settles
-// which plans can be bought on the selected term, and how the button reads.
+/**
+ * The markup and its stylesheet own which price is on screen. This only marks
+ * the plans that term cannot buy, so the button never offers a price the
+ * customer is not looking at.
+ */
 function updatePricing(termId) {
   const term = TERMS.find(item => item.id === termId) || TERMS[0];
   for (const button of document.querySelectorAll('[data-checkout-plan]')) {
-    const planId = button.dataset.checkoutPlan;
-    const product = PRODUCTS.find(item => item.id === planId);
+    const product = PRODUCTS.find(item => item.id === button.dataset.checkoutPlan);
     if (!product) continue;
-    const amount = price(planId, term.id);
-    if (!amount) {
-      button.disabled = true;
-      button.textContent = `${product.name} is monthly only`;
-      continue;
-    }
-    button.disabled = false;
-    button.textContent = `Choose ${product.name}`;
+    const amount = price(product.id, term.id);
+    button.disabled = !amount;
+    button.textContent = amount
+      ? (button.dataset.label || `Choose ${product.name}`)
+      : `${product.name} is monthly only`;
   }
   try { localStorage.setItem(TERM_STORAGE, term.id); } catch { /* unavailable */ }
 }
+
+/** Re-read the buttons after another script relabels or replaces them. */
+globalThis.addEventListener('materiallogix:checkout-buttons-changed', () => updatePricing(selectedTerm()));
 
 async function beginCheckout(button) {
   const consent = document.querySelector('#purchaseConsent');
@@ -135,41 +132,24 @@ const checkoutSelector = '[data-checkout-plan], [data-checkout-sku]';
 const promoRow = document.querySelector('#promoRow');
 if (promoRow && document.querySelector(checkoutSelector)) promoRow.hidden = false;
 
-// Storage is a convenience, never a dependency. An unguarded read throws in a
-// private window with site data blocked, and a throw here is a module-level
-// throw: every checkout button below would silently never get a click handler.
+// Storage is a convenience, never a dependency. This read is at module level,
+// so a throw here - a private window with site data blocked - would skip every
+// listener below it, and every checkout button would silently never get one.
 function rememberedTerm() {
   try {
-    const remembered = localStorage.getItem(TERM_STORAGE);
-    return TERMS.some(term => term.id === remembered) ? remembered : null;
+    return localStorage.getItem(TERM_STORAGE);
   } catch {
     return null;
   }
 }
 
-const radios = termRadios();
-const selector = document.querySelector('#billingTerm');
-if (radios.length) {
+const terms = termRadios();
+if (terms.length) {
   const remembered = rememberedTerm();
-  const restore = remembered && radios.find(radio => RADIO_TERMS[radio.id] === remembered);
+  const restore = remembered && terms.find(input => input.dataset.term === remembered);
   if (restore) restore.checked = true;
-  for (const radio of radios) radio.addEventListener('change', () => updatePricing(selectedTerm()));
-  if (selector) {
-    // Keep a legacy injected select in step with the page's own control rather
-    // than letting two term pickers disagree about what the customer chose.
-    selector.value = selectedTerm();
-    selector.addEventListener('change', () => {
-      const target = radios.find(radio => RADIO_TERMS[radio.id] === selector.value);
-      if (target) target.checked = true;
-      updatePricing(selectedTerm());
-    });
-  }
+  for (const input of terms) input.addEventListener('change', () => updatePricing(selectedTerm()));
   updatePricing(selectedTerm());
-} else if (selector) {
-  const remembered = rememberedTerm();
-  if (remembered) selector.value = remembered;
-  selector.addEventListener('change', () => updatePricing(selector.value));
-  updatePricing(selector.value);
 }
 attribution();
 sendAnalytics('page_view');

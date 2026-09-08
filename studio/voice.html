@@ -11,8 +11,12 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/app.css">
 <style>
-  .studio { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr) 264px; gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
-  .studio > section { background: var(--ground); padding: 26px 28px; overflow-y: auto; }
+  /* Two panes and the jobs rail. The panes are the page's <main> and the rail
+     is a sibling landmark, as it already is in the photo workspace, so the
+     grid is nested rather than one row of three. */
+  .studio { display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: 1px; background: var(--hair); flex: 1; min-height: 0; }
+  .studio-panes { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, 1fr); gap: 1px; background: var(--hair); min-height: 0; }
+  .studio-panes > section { background: var(--ground); padding: 26px 28px; overflow-y: auto; }
   .studio h2 { font: 300 22px/1.2 var(--serif); margin: 0 0 4px; }
   .studio p.lead { color: var(--muted); font-size: 12.5px; margin: 0 0 18px; line-height: 1.6; }
   #script { width: 100%; min-height: 220px; font: 400 14px/1.7 var(--serif); padding: 14px; }
@@ -30,17 +34,18 @@
   .voice-consent { border:1px solid var(--hair); padding:12px; margin:0 0 14px; }
   .voice-consent label { display:flex; align-items:flex-start; gap:9px; min-height:44px; padding:8px 0; font-size:12px; line-height:1.45; cursor:pointer; }
   .voice-consent input[type=checkbox] { width:18px; height:18px; margin-top:1px; }
-  .voice-more-status { margin:0; padding:6px 8px; color:var(--muted); font-size:11px; line-height:1.45; }
+  .engine-state { margin:10px 0 0; color:var(--muted); font-size:11.5px; line-height:1.5; }
+  .engine-state + .btn { margin-top:8px; }
   .topbar-more-menu a.btn { color:var(--ink-2); }
   body[data-voice-mode="guided"] .voice-advanced { display:none !important; }
-  @media (max-width: 1280px) { .studio { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } }
+  @media (max-width: 1280px) { .studio { grid-template-columns: minmax(0,1fr); } .studio-panes { grid-template-columns: minmax(0,1fr) minmax(280px,1fr); } }
   @media (pointer:coarse) {
     .knob input[type=range] { min-height:44px; touch-action:pan-y; }
     .voice-studio .seg button, .voice-studio .activity-head .btn { min-height:44px; }
   }
   @media (max-width: 900px) {
-    .studio { display:block; overflow-y:auto; background:var(--ground); }
-    .studio > section { overflow:visible; padding:22px 16px; border-bottom:1px solid var(--hair); }
+    .studio, .studio-panes { display:block; overflow-y:auto; background:var(--ground); }
+    .studio-panes > section { overflow:visible; padding:22px 16px; border-bottom:1px solid var(--hair); }
     #script { min-height:180px; }
     .knob { display:grid; grid-template-columns:minmax(0,1fr) 42px; gap:7px 10px; align-items:center; }
     .knob > label { grid-column:1 / -1; width:auto !important; }
@@ -52,6 +57,10 @@
 </head>
 <body class="voice-studio">
 <div id="app">
+  <a class="skip-link" href="#main-content">Skip to the voice studio</a>
+  <!-- The page shipped with no <h1> and no <main> at all: its outline began at
+       <h2> and nothing on it sat inside a landmark. -->
+  <h1 class="sr-only">MaterialLogix Voice Studio</h1>
   <header class="topbar">
     <a class="brand" href="index.html" aria-label="MaterialLogix Studio home">
       <strong><span class="brand-material">Material</span><span class="brand-logix">Logix</span><span class="brand-studio">Voice Studio</span></strong>
@@ -62,7 +71,6 @@
     <details class="topbar-more">
       <summary aria-label="Open more Voice Studio options">More</summary>
       <div class="topbar-more-menu">
-        <p class="voice-more-status" id="engineState" role="status" aria-live="polite">Checking local engine…</p>
         <a class="btn sm" href="index.html" style="text-decoration:none">Photo &amp; Video workspace</a>
         <a class="btn sm" href="usage.html" style="text-decoration:none">Usage &amp; wallet</a>
       </div>
@@ -70,6 +78,7 @@
   </header>
 
   <div class="studio">
+    <main class="studio-panes" id="main-content">
     <section>
       <h2>Script</h2>
       <p class="lead">Use <b>*stars*</b> for emphasis and blank lines for pauses.</p>
@@ -127,6 +136,11 @@ Create with freedom. Finish with *confidence*.</textarea>
         <input type="file" id="wavIn" accept="audio/*" hidden>
         <span class="note" id="status" role="status" aria-live="polite"></span>
       </div>
+      <!-- Why Render voice is greyed out, and the way out of it, belong beside
+           the button. This line used to sit inside the collapsed More menu in
+           the opposite corner, so the primary action of the whole Studio was
+           disabled with no reason anywhere near it. -->
+      <p class="engine-state" id="engineState" role="status" aria-live="polite">Checking the local voice engine…</p>
       <audio id="player" controls hidden aria-label="Rendered voice preview"></audio>
       <div id="dl"></div>
     </section>
@@ -139,23 +153,27 @@ Create with freedom. Finish with *confidence*.</textarea>
       <p class="lead">Every render is evaluated for room tone, dynamics, pause variation, clipping, transients, sibilance, and compression before delivery.</p>
       <div id="tells"><p class="lead">Render or import audio to begin quality analysis.</p></div>
     </section>
+    </main>
     <aside class="activity-rail" id="activityRail" aria-label="Jobs, execution location, progress, and usage"></aside>
   </div>
 </div>
 
 <script type="module" src="js/studio-nav.js"></script>
-<script type="module" src="js/activity.js?v=9"></script>
+<script type="module" src="js/activity.js"></script>
 <script type="module">
+import { count, nounFor } from './js/plural.js';
 import { performancePlan, planDuration, humanizeBuffer, voiceTells, stampPreview } from './js/voice.js';
 import { activeLicense, covers } from './js/license.js';
-import { authorizeOutbound, settleOutbound, voidOutbound } from './js/billing-client.js';
+import { laneFor, scriptAllowance, allowsMultiSourceVoicePack, plansCovering, voiceProfileLimit } from './js/pricing.js';
+import { authorizeOutbound, settleOutbound, stagePendingUsageRelease, voidOutbound } from './js/billing-client.js';
 import { bridgeFetch } from './js/generate.js';
 import { HOUSE_VOICES, HOUSE_VOICE_BY_ID } from './js/house-voices.js';
 import { voiceReferenceConsent } from './js/voice-quality.js';
+import { readableServiceError } from './js/service-error.js';
 import { ensureGuardianAck } from './js/capture-guidance.js';
 import { assessVoiceReference, audioBufferToWav, supportedVoiceReference } from './js/voice-reference.js';
 import { voiceGuidance } from './js/capture-guidance.js';
-import { listAssets } from './js/store.js';
+import { listAssets, recordConsent } from './js/store.js';
 
 const $ = s => document.querySelector(s);
 const BRIDGE_HOST = /^(localhost$|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(location.hostname) ? location.hostname : '127.0.0.1';
@@ -240,13 +258,17 @@ async function checkEngine() {
         setup.textContent = 'Setting up Voice… this can take a while';
         try {
           const res = await fetch(BRIDGE + '/engines/voice/install', { method: 'POST' });
-          const out = await res.json();
-          if (!res.ok) throw new Error(out.error || 'setup failed');
+          // A failed install answers with whatever the bridge managed to write,
+          // and decoding an empty body threw inside `json()` before the status
+          // was ever read: the customer got "Failed to execute 'json' on
+          // 'Response'" where the reason belonged.
+          const out = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(out.error || `bridge_${res.status}`);
           await checkEngine();
         } catch (error) {
           setup.disabled = false;
           setup.textContent = 'Voice setup did not finish — try again';
-          $('#engineState').textContent = String(error.message || error);
+          $('#engineState').textContent = `Voice setup did not finish: ${readableServiceError(error)}.`;
         }
       };
       $('#engineState').after(setup);
@@ -256,6 +278,9 @@ async function checkEngine() {
     rebuildVoiceOptions();
   }
   $('#render').disabled = !engineReady;
+  // A disabled control with no tooltip and no adjacent message is a dead end.
+  if (engineReady) $('#render').removeAttribute('title');
+  else $('#render').title = $('#engineState').textContent;
 }
 
 function activeScriptText() {
@@ -309,17 +334,20 @@ $('#fitSeconds').addEventListener('input', () => paintPlan());
 function paintPlan() {
   const plan = performancePlan(activeScriptText());
   $('#planSummary').textContent =
-    `${plan.segments.length} segment(s), ${plan.totalWords} words, ~${planDuration(plan)}s read.`;
+    `${count(plan.segments.length, 'segment')}, ${count(plan.totalWords, 'word')}, ~${planDuration(plan)}s read.`;
   const target = fitSecondsValue();
   const fitStatus = $('#fitStatus');
   if (target > 0) {
     const planned = planDuration(plan);
     const ratio = planned / target;
-    fitStatus.textContent = ratio > 1.12
-      ? `cut ~${Math.ceil(plan.totalWords - plan.totalWords / ratio)} words`
-      : ratio < 0.88
-        ? `room for ~${Math.floor(plan.totalWords / ratio - plan.totalWords)} more words`
-        : 'fits';
+    // An empty script reads for zero seconds, so `ratio` is 0 and every word
+    // delta is 0/0: "room for ~NaN more words" reached the screen. There is
+    // nothing to fit yet, and the readout should say that instead.
+    const room = Math.floor(plan.totalWords / ratio - plan.totalWords);
+    fitStatus.textContent = !plan.totalWords ? 'add a script'
+      : ratio > 1.12 ? `cut ~${count(Math.ceil(plan.totalWords - plan.totalWords / ratio), 'word')}`
+        : ratio < 0.88 ? `room for ~${room} more ${nounFor(room, 'word')}`
+          : 'fits';
   } else {
     fitStatus.textContent = '';
   }
@@ -379,26 +407,35 @@ function offerDownload(buffer) {
 
 async function playAndCheck(arrayBuffer) {
   const ctx = new AudioContext();
+  let authorization = null;
   try {
   let decoded = await ctx.decodeAudioData(arrayBuffer);
   const lic = await activeLicense();
   let preview = false;
-  let authorization = null;
   if (covers(lic, 'voice')) {
     const units = Math.max(1, Math.ceil(decoded.duration / 60));
     authorization = await authorizeOutbound({ product: 'voice', artifactKind: 'clean_export', quantity: units });
     if (!authorization.ok) {
       $('#status').textContent = `Online production authorization failed (${authorization.reason}). A marked preview may be played but cannot be downloaded.`;
       preview = true;
+    } else {
+      // Staged before the finishing work starts, so a crash or a closed tab
+      // between here and settlement is returned by the boot-time flush instead
+      // of stranding minutes the customer never spent.
+      stagePendingUsageRelease(authorization.authorization.id);
     }
   }
+  // The audible stamp is the paywall in Voice, so one place applies it and both
+  // callers use it: the free lane, and a paid take that never settled.
+  const stampBuffer = async buffer => {
+    const stampRes = await fetch('assets/preview-stamp.wav');
+    if (!stampRes.ok) throw new Error(`preview_stamp_${stampRes.status}`);
+    return stampPreview(buffer, await ctx.decodeAudioData(await stampRes.arrayBuffer()));
+  };
   if (preview || !covers(lic, 'voice')) {
     // Free tier: spoken stamps at start, middle, and end - uncroppable by design.
     try {
-      const stampRes = await fetch('assets/preview-stamp.wav');
-      if (!stampRes.ok) throw new Error(`preview_stamp_${stampRes.status}`);
-      const stampBuf = await ctx.decodeAudioData(await stampRes.arrayBuffer());
-      decoded = await stampPreview(decoded, stampBuf);
+      decoded = await stampBuffer(decoded);
       preview = true;
     } catch {
       $('#status').textContent = 'Preview unavailable because the required audible preview mark could not be applied. No unstamped audio was played or offered.';
@@ -412,33 +449,46 @@ async function playAndCheck(arrayBuffer) {
   if (preview) $('#planSummary').textContent += ' · PREVIEW (licensed renders are clean)';
   await analyse(humanized);
   let url = null;
+  let playable = humanized;
   if (authorization?.ok) {
     try {
       await settleOutbound(authorization.authorization.id);
       url = offerDownload(humanized);
     } catch (error) {
       const release = await releaseVoiceUsage(authorization.authorization.id, 'download_failed');
-      $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: `Download withheld because settlement could not be verified online. ${release}` }));
+      // Withholding only the download link left the clean take in the player,
+      // where "Save audio as…" retrieves it - the whole paid file, unpaid for.
+      // An unsettled render is marked like a preview, or it is not kept at all.
+      playable = await stampBuffer(humanized).catch(() => null);
+      if (playable) $('#planSummary').textContent += ' · PREVIEW (licensed renders are clean)';
+      $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: `Download withheld because settlement could not be verified online. ${release} ${playable ? 'The take below is marked.' : 'The take could not be marked and was not kept.'}` }));
     }
   } else {
     $('#dl').replaceChildren(Object.assign(document.createElement('p'), { className: 'note', textContent: 'Preview playback only. Sign in with an active license and connect online to download.' }));
   }
-  if (!url) {
+  if (!url && playable) {
     // Playback remains local and is not an outbound artifact.
-    const len = humanized.length, sr = humanized.sampleRate;
+    const len = playable.length, sr = playable.sampleRate;
     const wav = new ArrayBuffer(44 + len * 2), view = new DataView(wav);
     const write = (offset, value) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
     write(0, 'RIFF'); view.setUint32(4, 36 + len * 2, true); write(8, 'WAVEfmt ');
     view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
     view.setUint32(24, sr, true); view.setUint32(28, sr * 2, true); view.setUint16(32, 2, true);
     view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, len * 2, true);
-    const channel = humanized.getChannelData(0);
+    const channel = playable.getChannelData(0);
     for (let i = 0; i < len; i++) view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, channel[i])) * 32767, true);
     url = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
   }
-  $('#player').src = url;
-  $('#player').hidden = false;
-  $('#status').textContent = 'quality analysis complete — review the finished take below';
+  if (url) {
+    $('#player').src = url;
+    $('#player').hidden = false;
+  } else {
+    $('#player').removeAttribute('src');
+    $('#player').hidden = true;
+  }
+  $('#status').textContent = url
+    ? 'quality analysis complete — review the finished take below'
+    : 'quality analysis complete — no playable take was left in the page';
 
   // Every keep/reject is a labeled example: the gate's thresholds learn
   // the owner's taste from these.
@@ -462,7 +512,7 @@ async function playAndCheck(arrayBuffer) {
         })
       });
       const j = await r.json();
-      label.textContent = `Quality preference saved (${j.total} rating${j.total === 1 ? '' : 's'}).`;
+      label.textContent = `Quality preference saved (${count(j.total, 'rating')}).`;
       row.querySelectorAll('button').forEach(b => b.remove());
     } catch { label.textContent = 'Could not reach the bridge to record that.'; }
   };
@@ -474,6 +524,13 @@ async function playAndCheck(arrayBuffer) {
   }
   row.prepend(label);
   $('#dl').after(row);
+  } catch (error) {
+    // Finishing, analysis and encoding all sit between the reservation and
+    // settlement, and any of them can throw. Without this the customer keeps
+    // the charge for a take the product never handed over.
+    if (!authorization?.ok) throw error;
+    const release = await releaseVoiceUsage(authorization.authorization.id, 'render_failed');
+    $('#status').textContent = `Voice finishing failed: ${error.message}. ${release}`;
   } finally {
     ctx.close().catch(() => {});
   }
@@ -486,6 +543,15 @@ $('#render').onclick = async () => {
     return;
   }
   const plan = paintPlan();
+  // Every tier previews; the free one previews short. The 60-word ceiling was
+  // declared on the free lane and applied nowhere, so an unlicensed preview
+  // would read a script of any length.
+  const allowance = scriptAllowance(laneFor(await activeLicense(), 'voice'), plan.totalWords);
+  if (!allowance.allowed) {
+    $('#status').textContent = allowance.reason;
+    $('#script').focus();
+    return;
+  }
   const exag = Number($('#exag').value);
   $('#status').textContent = 'Rendering with the local voice engine…';
   $('#render').disabled = true;
@@ -565,38 +631,80 @@ async function savePack(blob, assessment) {
     return;
   }
   const license = await activeLicense();
-  if (license?.plan === 'voice_starter' && knownVoicePacks.length >= 1) {
-    $('#recState').textContent = 'Voice Starter allows one active personal voice profile. Discard the current profile or upgrade before adding another.';
+  // The count used to be compared against one named plan, so a free preview
+  // could keep any number of profiles while the paying Starter tier was held
+  // to one.
+  const profileLimit = voiceProfileLimit(license);
+  if (knownVoicePacks.length >= profileLimit) {
+    $('#recState').textContent = profileLimit === 0
+      ? `Free preview does not store a personal voice profile. ${plansCovering('voice').join(', ')} do.`
+      : `Your plan keeps ${count(profileLimit, 'active personal voice profile')}. Discard one, or move to a plan with more, before adding another.`;
     return;
   }
-  const name = prompt('Name this voice reference (letters and dashes):', 'my-voice');
-  if (!name) return;
+  // The name is the subject this reference is of, so it is asked for before
+  // consent rather than after: a consent record with nobody's name on it
+  // cannot be produced for the person it is supposed to cover.
+  const name = prompt('Whose voice is this? Name the subject (letters and dashes):', 'my-voice');
+  if (!name || !name.trim()) {
+    $('#recState').textContent = 'A voice reference needs the name of the person it is of.';
+    return;
+  }
+  // Every route into a voice profile arrives here - the recorder, a single
+  // imported file, and the composite blend - so this is the one place the age
+  // and guardian confirmation has to be. Import used to have none at all,
+  // which left the route most likely to carry a stranger's or a minor's voice
+  // as the only one with no age gate.
+  if (!(await ensureGuardianAck({ subject: name, purpose: 'voice_conditioning', record: recordConsent }))) {
+    $('#recState').textContent = 'Nothing was saved. A voice reference needs the age and guardian confirmation.';
+    return;
+  }
+  // The consent was checked above and then thrown away. It is written down
+  // now, against the subject it covers, because the burden of showing what was
+  // agreed for biometric data sits with us.
+  try {
+    await recordConsent({
+      subject: name,
+      purpose: 'voice_conditioning',
+      statement: 'Source rights confirmed and local-retention terms accepted for conditioning a personal voice profile.',
+      granted: true,
+      evidence: { surface: 'voice-reference', authorizedSource: consent.authorizedSource, retentionAccepted: consent.retentionAccepted }
+    });
+  } catch (error) {
+    $('#recState').textContent = `Nothing was saved: the consent record could not be stored (${error.message}).`;
+    return;
+  }
   const authorization = await authorizeOutbound({ product: 'voice', artifactKind: 'upload', quantity: 1 });
   if (!authorization.ok) {
     $('#recState').textContent = `Online voice-reference authorization failed (${authorization.reason || 'authorization_required'}). Nothing was uploaded.`;
     return;
   }
-  $('#recState').textContent = 'Preparing the reference — reducing noise and selecting the strongest twelve seconds…';
-  const res = await bridgeFetch(`${BRIDGE}/voicepack?name=${encodeURIComponent(name)}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob
-  });
-  if (!res.ok) {
-    const release = await releaseVoiceUsage(authorization.authorization.id, 'upload_failed');
-    $('#recState').textContent = `Save failed: ${(await res.json().catch(() => ({}))).error || res.status}. ${release}`;
-    return;
-  }
   let j;
+  // A bridge that is simply not running rejects rather than answering, so the
+  // upload has to sit inside the guarded region with the settle: an unreachable
+  // engine used to leave the reservation taken and blame the customer's file.
+  let uploaded = false;
   try {
+    stagePendingUsageRelease(authorization.authorization.id);
+    $('#recState').textContent = 'Preparing the reference — reducing noise and selecting the strongest twelve seconds…';
+    const res = await bridgeFetch(`${BRIDGE}/voicepack?name=${encodeURIComponent(name)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: blob
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+    uploaded = true;
     j = await res.json();
     await settleOutbound(authorization.authorization.id);
   } catch (error) {
     let removed = false;
-    try {
-      const deletion = await bridgeFetch(`${BRIDGE}/voicepack/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
-      removed = deletion.ok;
-    } catch { /* status below remains explicit */ }
+    if (uploaded) {
+      try {
+        const deletion = await bridgeFetch(`${BRIDGE}/voicepack/delete?name=${encodeURIComponent(name)}`, { method: 'POST' });
+        removed = deletion.ok;
+      } catch { /* status below remains explicit */ }
+    }
     const release = await releaseVoiceUsage(authorization.authorization.id, 'upload_failed');
-    $('#recState').textContent = `${removed ? 'The unverified reference was removed.' : 'The reference could not be finalized; remove it from local Voice settings before reuse.'} ${release}`;
+    $('#recState').textContent = uploaded
+      ? `${removed ? 'The unverified reference was removed.' : 'The reference could not be finalized; remove it from local Voice settings before reuse.'} ${release}`
+      : `Save failed: ${error.message}. ${release}`;
     return;
   }
   // Listen-before-trust: play the cleaned reference, keep or discard.
@@ -630,6 +738,8 @@ $('#recBtn').onclick = async () => {
     rec.stop();
     return;
   }
+  // The per-subject confirmation happens in savePack, where the subject is
+  // known. This one only keeps the microphone from starting unprompted.
   if (!(await ensureGuardianAck())) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
@@ -665,8 +775,12 @@ $('#packFile').onchange = async e => {
   e.target.value = '';
   if (!files.length) return;
   const license = await activeLicense();
-  if (files.length > 1 && license?.plan === 'voice_starter') {
-    $('#recState').textContent = 'Voice Starter supports one personal voice source, not composite or multi-source packs. Upgrade to Voice Studio for advanced pack features.';
+  // This asked for `plan === 'voice_starter'` directly, so a free preview - which
+  // has no plan at all - sailed past it and could build composite packs a paying
+  // Voice Starter customer could not. The lane decides.
+  if (files.length > 1 && !allowsMultiSourceVoicePack(laneFor(license, 'voice'))) {
+    const upgrades = plansCovering('voice').filter(name => name !== 'Voice Starter');
+    $('#recState').textContent = `This plan builds a voice from one recording, not a composite of several. ${upgrades.join(', ')} support multi-source packs.`;
     return;
   }
   if (files.length === 1) {
@@ -752,5 +866,8 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
   navigator.serviceWorker.register('sw.js');
 }
 </script>
+<!-- Redeems a paid Stripe return. Last, so a slow fulfilment lookup can
+     never hold up the page the customer just paid to reach. -->
+<script type="module" src="js/checkout-result.js"></script>
 </body>
 </html>

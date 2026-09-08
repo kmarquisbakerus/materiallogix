@@ -18,7 +18,9 @@ export function paceTarget(kind) {
 /** Where the person should be pointing at this moment in the take. */
 export function idealAngle(kind, elapsedSeconds) {
   const { sweepDeg, seconds, start } = paceTarget(kind);
-  const progress = Math.max(0, Math.min(1, elapsedSeconds / seconds));
+  // Math.max(0, NaN) is NaN, and a NaN angle draws a guide with no needle.
+  const elapsed = Number(elapsedSeconds);
+  const progress = Number.isFinite(elapsed) ? Math.max(0, Math.min(1, elapsed / seconds)) : 0;
   return start + sweepDeg * progress;
 }
 

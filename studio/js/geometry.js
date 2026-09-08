@@ -210,7 +210,11 @@ export async function analyzeGeometry(source, w, h) {
     loadGeometry(),
     new Promise(resolve => setTimeout(() => resolve(null), LOAD_TIMEOUT_MS))
   ]);
-  if (!engine || !w || !h) return null;
+  if (!w || !h) return null;
+  // A CDN that will not load is the ordinary offline case, not an error, so it
+  // returns null rather than throwing - which meant the fallback below the
+  // try/catch was unreachable on exactly the path it exists for.
+  if (!engine) return analyzeGeometryLocally(source, w, h);
   try {
     const faceRaw = engine.faceLm.detect(source);
     const faces = (faceRaw.faceLandmarks || []).map((pts, i) => {
@@ -275,6 +279,39 @@ export async function analyzeGeometry(source, w, h) {
     return { engine: 'mediapipe-tasks-0.10', at: mapping.at, faces, hands, body, poses,
       spatial: mapping.spatial, mapping };
   } catch {
-    return null;
+    return analyzeGeometryLocally(source, w, h);
+  }
+}
+
+/**
+ * The same check, run against the engine that ships with the app.
+ *
+ * `loadGeometry` fetches MediaPipe from a CDN, so the people check - which the
+ * workspace tells every customer happens before they edit - simply did not run
+ * offline, or behind a network that blocks jsDelivr. Meanwhile 21 MB of
+ * runtime and models sit in every install, precached, each artifact verified
+ * by size and SHA-256 before it is used, and nothing called them.
+ *
+ * `mapHumanCandidateResult` already returns the face and hand shape the
+ * MediaPipe path returns, so the QA code downstream reads it unchanged. The
+ * two engines are not identical, though, so the record says which one ran and
+ * `humanGeometryRecord` carries the name into provenance. A customer can tell.
+ */
+export async function analyzeGeometryLocally(source, w, h) {
+  if (!source || !w || !h) return null;
+  try {
+    const candidate = await analyzeHumanCandidate(source, w, h);
+    if (!candidate) return null;
+    const faces = candidate.faces || [];
+    const hands = candidate.hands || [];
+    const poses = candidate.poses || [];
+    const mapping = humanGeometryRecord({
+      engine: 'human-candidate-local', engineVersion: HUMAN_CANDIDATE_VERSION,
+      faces, hands, poses, foreground: candidate.foreground || null
+    });
+    return { engine: 'human-candidate-local', at: mapping.at, faces, hands,
+      body: candidate.body || null, poses, spatial: mapping.spatial, mapping };
+  } catch {
+    return null;   // no engine reachable at all; the caller records that
   }
 }

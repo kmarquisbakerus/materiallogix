@@ -82,8 +82,17 @@ export function buildLuminanceLut(points) {
   return lut;
 }
 
+const isRecord = value => !!value && typeof value === 'object' && !Array.isArray(value);
+
+/** Refill an array without changing its identity, so captured references stay live. */
+const refill = (list, next) => { list.splice(0, list.length, ...next); return list; };
+
+const ensureRecord = (owner, key) => (isRecord(owner[key]) ? owner[key] : (owner[key] = {}));
+const ensureList = (owner, key) => (Array.isArray(owner[key]) ? owner[key] : (owner[key] = []));
+
+/** Pure copy for the render pipeline, which must not touch stored state. */
 const sanitizeSelective = value => {
-  const raw = value && typeof value === 'object' ? value : {};
+  const raw = isRecord(value) ? value : {};
   return {
     exposure: clamp(raw.exposure, -1, 1),
     temperature: clamp(raw.temperature, -100, 100),
@@ -92,15 +101,44 @@ const sanitizeSelective = value => {
   };
 };
 
+const sanitizeSelectiveInPlace = selective => {
+  const clean = sanitizeSelective(selective);
+  selective.exposure = clean.exposure;
+  selective.temperature = clean.temperature;
+  selective.saturation = clean.saturation;
+  refill(ensureList(selective, 'strokes'), clean.strokes);
+  return selective;
+};
+
+const SCALAR_ADJUSTMENTS = Object.freeze(Object.keys(EDIT_DEFAULTS.adjustments)
+  .filter(key => typeof EDIT_DEFAULTS.adjustments[key] === 'number'));
+
+/**
+ * Normalize an asset's edit state in place and return it.
+ *
+ * Every call has to preserve object identity. Controls in the editor capture
+ * `adjustments`, `selective`, `heals`, `curve`, and `pixelGrid` when they are
+ * built, and the stage repaints through this same function afterwards -
+ * handing back fresh objects would leave each control writing into an orphan
+ * and silently discarding the edit.
+ */
 export function ensureEditState(asset) {
-  asset.edit = asset.edit || {};
-  asset.edit.mode = asset.edit.mode === 'advanced' ? 'advanced' : 'guided';
-  asset.edit.adjustments = { ...EDIT_DEFAULTS.adjustments, ...(asset.edit.adjustments || {}) };
-  asset.edit.adjustments.heals = sanitizeStamps(asset.edit.adjustments.heals, 0.08);
-  asset.edit.adjustments.selective = sanitizeSelective(asset.edit.adjustments.selective);
-  asset.edit.adjustments.curve = sanitizeCurve(asset.edit.adjustments.curve);
-  asset.edit.pixelGrid = { ...EDIT_DEFAULTS.pixelGrid, ...(asset.edit.pixelGrid || {}) };
-  return asset.edit;
+  const edit = ensureRecord(asset, 'edit');
+  edit.mode = edit.mode === 'advanced' ? 'advanced' : 'guided';
+
+  const adjustments = ensureRecord(edit, 'adjustments');
+  for (const key of SCALAR_ADJUSTMENTS) {
+    if (!Number.isFinite(adjustments[key])) adjustments[key] = EDIT_DEFAULTS.adjustments[key];
+  }
+  refill(ensureList(adjustments, 'heals'), sanitizeStamps(adjustments.heals, 0.08));
+  sanitizeSelectiveInPlace(ensureRecord(adjustments, 'selective'));
+  refill(ensureList(adjustments, 'curve'), sanitizeCurve(adjustments.curve));
+
+  const pixelGrid = ensureRecord(edit, 'pixelGrid');
+  pixelGrid.enabled = pixelGrid.enabled === true;
+  if (!Number.isFinite(pixelGrid.columns)) pixelGrid.columns = EDIT_DEFAULTS.pixelGrid.columns;
+  if (!Number.isFinite(pixelGrid.sensitivity)) pixelGrid.sensitivity = EDIT_DEFAULTS.pixelGrid.sensitivity;
+  return edit;
 }
 
 export function previewFilter(adjustments = {}) {

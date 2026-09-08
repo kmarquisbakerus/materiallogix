@@ -1,4 +1,4 @@
-/* Creative Review OS — LibraSide house style.
+/* MaterialLogix Studio — LIBRASIDE TECHNOLOGIES LLC house style.
    Near-black ground so imagery is judged honestly, warm ivory type,
    one metallic accent, hairlines instead of boxes. */
 
@@ -30,8 +30,15 @@
   --ok-wash: rgba(130, 161, 132, 0.12);
   --warn: #c9994f;
   --warn-wash: rgba(201, 153, 79, 0.12);
-  --bad: #bb655e;
+  /* The status inks are read as 8.5px text on their own wash, so each one is
+     measured against that composite rather than against the ground: #bb655e
+     came to 4.37:1 on the wash over the board card and 4.14:1 over a panel. */
+  --bad: #c37771;
   --bad-wash: rgba(187, 101, 94, 0.12);
+  /* The error toast is the only channel a failure has, so its ink is a token
+     rather than the shared --bad: on the near-black toast a soft pink reads at
+     10.4:1 where --bad itself would manage 4.7:1. */
+  --toast-bad-ink: #e6b6b1;
 
   --serif: "Fraunces", "Iowan Old Style", Georgia, serif;
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -70,12 +77,13 @@
   --accent-cool-wash: rgba(63, 121, 132, 0.11);
   --accent-violet: #655b94;
   --accent-violet-wash: rgba(101, 91, 148, 0.09);
-  --ok: #46744d;
+  --ok: #406a46;
   --ok-wash: rgba(76, 124, 84, 0.12);
-  --warn: #8f6124;
+  --warn: #815720;
   --warn-wash: rgba(150, 104, 42, 0.12);
-  --bad: #a8453c;
+  --bad: #a1423a;
   --bad-wash: rgba(168, 69, 60, 0.10);
+  --toast-bad-ink: var(--bad);
   --glass: rgba(247, 244, 238, 0.8);
   --glass-2: rgba(247, 244, 238, 0.72);
   --glass-3: rgba(252, 250, 245, 0.88);
@@ -83,7 +91,30 @@
   --glass-solid: rgba(247, 244, 238, 0.97);
 }
 
+/* The sidebar, the stage chrome and the toast are painted over .stage, which
+   stays #060607 in both themes. Translucent there they composite to a mid
+   grey, and the chrome ink - picked for a light panel - lands at 2.3:1. These
+   surfaces carry words, not imagery, so in light theme they bring their own
+   opaque ground instead of borrowing the picture's. */
+:root[data-theme="light"] aside.sidebar,
+:root[data-theme="light"] .stage-head,
+:root[data-theme="light"] .stage-tools,
+:root[data-theme="light"] .toast { background: var(--panel); }
+
+/* The same reasoning in dark, where it was only ever applied to light. Of the
+   four surfaces, three were already opaque there; the sidebar was not -
+   rgba(16, 16, 17, 0.66) with a backdrop blur, floating over the customer's
+   photograph, so its ink was measured against the picture. It is opaque now.
+   The selector matches the light rule's specificity on purpose: written
+   plainly it loses to the glass declaration above and changes nothing at all,
+   which is how the first attempt at this "passed" while doing nothing. */
+:root:not([data-theme="light"]) aside.sidebar { background: var(--panel); }
+
 * { box-sizing: border-box; }
+/* Native widgets the theme cannot reach - the date and month pickers, the
+   field a rule misses - otherwise keep the UA's light chrome under dark ink. */
+:root { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -172,6 +203,10 @@ main.stage-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; 
   padding: 7px 13px;
   cursor: pointer;
   letter-spacing: .01em;
+  /* An <a class="btn"> inherits nothing from the button reset above, so
+     without these it renders as a UA link - #0000EE and underlined. */
+  color: var(--ink-2);
+  text-decoration: none;
   transition: border-color var(--t), color var(--t), background var(--t);
 }
 .btn:hover { border-color: var(--gold-dim); color: var(--ink); background: var(--gold-wash); }
@@ -238,7 +273,9 @@ main.stage-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; 
 .seg button + button { border-left: 1px solid var(--hair); }
 .seg button.on { background: var(--raised); color: var(--gold); }
 
-input[type="text"], input[type="number"], textarea, select {
+/* input:not([type]) is a text box too, and admin.html ships eight of them.
+   Without it they keep the UA's white field under the theme's ink. */
+input[type="text"], input[type="number"], input:not([type]), textarea, select {
   width: 100%;
   background: transparent;
   border: 1px solid var(--hair);
@@ -376,6 +413,13 @@ input[type="checkbox"]:checked::after {
 
 .board { flex: 1; overflow-y: auto; padding: 24px 20px 60px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 1px; background: var(--hair-soft); border: 1px solid var(--hair-soft); }
+/* The two cells a windowed grid stands in for the rows it is not rendering.
+   Their height is written inline, because it is the whole point of them; what
+   belongs here is the ground. The grid's own background is the hairline that
+   shows through the 1px gaps, and during a fling the browser can paint a row
+   before the window has caught up - a band of card ground reads as an empty
+   row, a band of hairline grey reads as damage. */
+.grid > .vpad { background: var(--ground); }
 .card { background: var(--ground); cursor: pointer; transition: background var(--t); position: relative; }
 .card:hover { background: var(--panel); }
 .card::after { content: ""; position: absolute; inset: 0; border: 1px solid transparent; transition: border-color var(--t); pointer-events: none; }
@@ -387,10 +431,22 @@ input[type="checkbox"]:checked::after {
 .card .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .sub { font-size: 10.5px; color: var(--faint); display: flex; gap: 8px; align-items: center; margin-top: 5px; }
 .pmatrix { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 10px; }
-.pdot { font: 400 8.5px/1 var(--mono); padding: 3px 5px; letter-spacing: .04em; background: var(--hair-soft); color: var(--faint); }
+/* --faint is tuned for the panel, and --hair-soft is a shade of it: on the
+   board card the pending pill came to 4.12:1 light and 4.42:1 dark. */
+.pdot { font: 400 8.5px/1 var(--mono); padding: 3px 5px; letter-spacing: .04em; background: var(--hair-soft); color: var(--ink-2); }
 .pdot.approved { background: var(--ok-wash); color: var(--ok); }
 .pdot.revise { background: var(--warn-wash); color: var(--warn); }
 .pdot.denied { background: var(--bad-wash); color: var(--bad); }
+/* Every pill reads as its surface name, so the four decisions differed by tint
+   alone and a customer who cannot separate the hues saw five near-identical
+   pills with no way to tell what had been signed off. The mark is the second,
+   non-colour signal. It is only the visual half of this: the decision still
+   reaches a screen reader as nothing but the `title` app.js writes, and that
+   is a change to the markup, not to this sheet. */
+.pdot::before { content: "\00b7"; margin-right: 4px; }
+.pdot.approved::before { content: "\2713"; }
+.pdot.revise::before { content: "\21ba"; }
+.pdot.denied::before { content: "\2715"; }
 
 .chip {
   display: inline-block; font: 400 9px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase;
@@ -690,7 +746,7 @@ input[type="checkbox"]:checked::after {
   font-size: 12.5px; z-index: 60; box-shadow: 0 18px 50px rgba(0,0,0,.65); max-width: 70vw;
   animation: rise 240ms var(--ease);
 }
-.toast.bad { border-color: var(--bad); color: #e6b6b1; }
+.toast.bad { border-color: var(--bad); color: var(--toast-bad-ink); }
 @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 
 dialog {
@@ -702,7 +758,7 @@ dialog {
   box-shadow: 0 40px 100px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.06);
 }
 dialog::backdrop { background: rgba(0,0,0,.72); backdrop-filter: blur(3px); }
-dialog .dlg-head { padding: 20px 24px 16px; border-bottom: 1px solid var(--hair); font: 300 19px/1.2 var(--serif); }
+dialog .dlg-head { margin: 0; padding: 20px 24px 16px; border-bottom: 1px solid var(--hair); font: 300 19px/1.2 var(--serif); }
 dialog .dlg-body { padding: 20px 24px; max-height: 62vh; overflow-y: auto; }
 dialog .dlg-foot { padding: 14px 24px; border-top: 1px solid var(--hair); display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 dialog .dlg-foot .spacer { flex: 1; }
@@ -832,8 +888,14 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
 .activity-list{min-height:0}.activity-usage{margin-top:auto;padding:7px 10px 9px;border:1px solid rgba(121,168,176,.28);background:var(--accent-cool-wash);backdrop-filter:blur(14px)}.activity-usage summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--ink-2);font-size:11.5px;font-weight:500;list-style:none}.activity-usage summary::-webkit-details-marker{display:none}.activity-usage summary::after{content:'Show';margin-left:auto;color:var(--accent-cool);font:400 9px/1 var(--mono);text-transform:uppercase;letter-spacing:.1em}.activity-usage[open] summary::after{content:'Hide'}.activity-usage-body{padding:0 0 4px}.activity-usage-body .activity-summary{display:flex;gap:18px;margin:0 0 10px;background:transparent;border:0}.activity-usage-body .activity-summary div{padding:2px 0;border:0;background:transparent}.activity-usage-note{margin:0 0 10px;color:var(--muted);font-size:10.5px;line-height:1.5}
 @media(max-width:1280px){
   .counters{display:none}
-  .layout>.activity-rail,.studio>.activity-rail{display:flex;position:fixed;top:52px;right:0;bottom:0;z-index:50;width:min(360px,92vw);transform:translateX(102%);transition:transform 220ms var(--ease);box-shadow:-24px 0 70px rgba(0,0,0,.55)}
-  .activity-rail.open{transform:none}
+  /* Parked off the right edge the drawer is still painted, so its four
+     controls stayed in the tab order at a coordinate no scroll reaches: four
+     of the ten stops at 320px put the focus ring outside the window and a
+     keyboard customer lost their place. `transform` does not take a subtree
+     out of the tab order; `visibility` does. The delay is what lets the
+     slide-out finish before the drawer goes. */
+  .layout>.activity-rail,.studio>.activity-rail{display:flex;position:fixed;top:52px;right:0;bottom:0;z-index:50;width:min(360px,92vw);transform:translateX(102%);visibility:hidden;transition:transform 220ms var(--ease),visibility 0s linear 220ms;box-shadow:-24px 0 70px rgba(0,0,0,.55)}
+  .activity-rail.open{transform:none;visibility:visible;transition:transform 220ms var(--ease),visibility 0s linear 0s}
   .activity-rail.closed{display:flex}
   .activity-rail.dock-left{order:initial;border-right:0;border-left:1px solid var(--hair)}
 }
@@ -963,6 +1025,46 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
   }
 }
 
+/* The review head is one 50px row: index, title, dimensions, spacer, and a
+   250px view switcher. On a 390px phone the switcher is pushed past the right
+   edge and clipped, so Placement and Compare - two thirds of the review loop -
+   cannot be reached at all, and Full source sits under the floating "Review
+   tools" button. Let the head take the height it needs and give the switcher
+   its own row, clear of the floating control. */
+@media (max-width: 720px) {
+  .stage-head {
+    height: auto;
+    min-height: 50px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 8px 14px 10px;
+  }
+  .stage-head .spacer { display: none; }
+  .stage-head .title { flex: 1 1 auto; }
+  .stage-head .seg { flex: 1 0 100%; display: flex; }
+  .stage-head .seg button { flex: 1; min-height: 44px; }
+  /* The floating toggle overlaps whatever the head's last row is. */
+  .review .review-rail-toggle { bottom: auto; }
+}
+
+/* Every page opens with a masthead the keyboard has to walk through before it
+   reaches anything worth reading. usage.css and admin.css each carry their own
+   copy of this rule; the Studio and the Voice Studio load app.css alone, so it
+   has to be declared here as well for them to have a skip link at all. */
+.skip-link {
+  position: fixed; top: 8px; left: 8px; z-index: 100; transform: translateY(-150%);
+  padding: 10px 14px; border: 1px solid var(--gold); background: var(--glass-solid);
+  color: var(--ink); text-decoration: none;
+}
+.skip-link:focus { transform: translateY(0); }
+
+/* Off-screen but still in the accessibility tree. `display:none` and
+   `visibility:hidden` both remove a live region from it entirely. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important;
     animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
@@ -988,3 +1090,22 @@ dialog.feedback-popover{width:min(470px,calc(100vw - 28px));border-radius:2px;bo
 .pace-dial { flex: 0 0 auto; min-width: 160px; min-height: 160px; }
 .pace-dial svg { display: block; }
 @media (max-width: 560px) { .pace-row { justify-content: center; text-align: center; } }
+
+/* The capture consent gate. It builds its own dialog rather than reusing #dlg,
+   because it has to be able to appear over one - so it needs its own layout to
+   match the rest of the application. */
+dialog.guardian-ack { width: min(460px, 92vw); padding: 22px 24px 18px; }
+dialog.guardian-ack h2 { margin: 0 0 14px; font: 300 19px/1.25 var(--serif); }
+dialog.guardian-ack label {
+  display: flex; gap: 10px; align-items: flex-start;
+  font-size: 13px; line-height: 1.5; color: var(--ink-soft, var(--ink));
+}
+dialog.guardian-ack label input { margin-top: 3px; flex: none; }
+dialog.guardian-ack .foot {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--hair);
+}
+
+/* Sign-in providers appear only when the server enables them. */
+.account-providers { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-providers .btn { flex: 1 1 auto; justify-content: center; }

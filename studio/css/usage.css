@@ -57,8 +57,8 @@
 .usage-card b { display: block; margin-top: 12px; overflow-wrap: anywhere; font: 300 clamp(25px, 3vw, 34px)/1.1 var(--serif); }
 
 .usage-panel { margin-top: 52px; padding: 26px; border: 1px solid var(--hair); background: linear-gradient(145deg, rgba(23, 23, 26, .9), rgba(16, 16, 17, .78)); backdrop-filter: blur(14px); }
-.usage-panel:nth-of-type(3) { border-color: rgba(121, 168, 176, .3); background: linear-gradient(145deg, var(--usage-cool-wash), rgba(16, 16, 17, .82)); }
-.usage-panel:nth-of-type(4) { border-color: rgba(153, 146, 194, .3); background: linear-gradient(145deg, var(--usage-violet-wash), rgba(16, 16, 17, .84)); }
+.usage-panel--breakdown { border-color: rgba(121, 168, 176, .3); background: linear-gradient(145deg, var(--usage-cool-wash), rgba(16, 16, 17, .82)); }
+.usage-panel--wallet { border-color: rgba(153, 146, 194, .3); background: linear-gradient(145deg, var(--usage-violet-wash), rgba(16, 16, 17, .84)); }
 .usage-subsection { margin-top: 28px; padding-top: 26px; border-top: 1px solid var(--hair); }
 .usage-subsection > h3 { margin-bottom: 8px; }
 .status-chip { order: 2; margin: 0; padding: 5px 9px; border: 1px solid rgba(153, 146, 194, .45); border-radius: 999px; color: var(--usage-violet); background: var(--usage-violet-wash); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
@@ -67,6 +67,8 @@
 .wallet-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
 .suggestions .btn,
 .wallet-actions .btn { min-height: 44px; }
+/* An anchor styled as a button still needs a button's box and no underline. */
+.usage-main a.btn { display: inline-flex; align-items: center; justify-content: center; color: var(--ink); text-decoration: none; }
 .wallet-controls { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)); gap: 12px; align-items: end; }
 .wallet-controls-manual { grid-template-columns: minmax(180px, 260px) minmax(190px, auto); justify-content: start; }
 .wallet-controls label { display: grid; gap: 7px; min-width: 0; }
@@ -93,8 +95,8 @@
 .usage-footer a { min-height: 44px; display: inline-flex; align-items: center; color: var(--ink-2); text-underline-offset: 3px; }
 
 :root[data-theme="light"] .usage-panel { background: linear-gradient(145deg, rgba(255, 253, 248, .92), rgba(247, 244, 238, .84)); }
-:root[data-theme="light"] .usage-panel:nth-of-type(3) { background: linear-gradient(145deg, var(--usage-cool-wash), rgba(255, 253, 248, .9)); }
-:root[data-theme="light"] .usage-panel:nth-of-type(4) { background: linear-gradient(145deg, var(--usage-violet-wash), rgba(255, 253, 248, .9)); }
+:root[data-theme="light"] .usage-panel--breakdown { background: linear-gradient(145deg, var(--usage-cool-wash), rgba(255, 253, 248, .9)); }
+:root[data-theme="light"] .usage-panel--wallet { background: linear-gradient(145deg, var(--usage-violet-wash), rgba(255, 253, 248, .9)); }
 :root[data-theme="light"] .usage-footer { background: rgba(222, 233, 231, .72); }
 
 @media (max-width: 860px) {

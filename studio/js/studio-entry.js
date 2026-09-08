@@ -1,6 +1,8 @@
 import { activeLicense, covers } from './license.js';
 import { newProject } from './model.js';
 import { listProjects, saveProject } from './store.js';
+import { entranceLinks, pricingUrl } from './site-links.js';
+import { planLabel } from './pricing.js';
 
 const PRODUCTS = [
   {
@@ -67,17 +69,22 @@ export function entranceAccess(license, accessMode = 'local') {
     return [id, covers(license, id) ? 'included' : 'locked'];
   }));
   const selected = license?.selected_product || license?.selectedProduct || null;
+  const capitalize = word => word[0].toUpperCase() + word.slice(1);
+  // A single-Studio plan reads better with the Studio it bought in the name.
+  const named = planLabel(plan);
   const label = suspended ? 'Reconnect your account'
-    : plan === 'full' ? 'Full Studio'
-      : plan === 'single' ? `${selected ? selected[0].toUpperCase() + selected.slice(1) : 'Single'} Studio`
-        : plan === 'voice_starter' ? 'Voice Starter'
-          : plan === 'payg' ? 'Pay per export'
-            : accessMode === 'demo' ? 'Free Preview' : 'Studio Preview';
+    : !license ? (accessMode === 'demo' ? 'Free Preview' : 'Studio Preview')
+      : named === 'No active plan' ? 'Studio'
+        : selected && named.startsWith('Single Studio') ? `${named} — ${capitalize(selected)}`
+          : named;
+  // What is ready is what the licence covers, not a list of plan ids that has
+  // to be extended every time a tier is added.
+  const included = PRODUCTS.filter(({ id }) => states[id] === 'included').length;
   const message = suspended
     ? 'Reconnect once to restore the products on your plan.'
-    : plan === 'full' || plan === 'payg'
+    : included === PRODUCTS.length
       ? 'Photo, Video, and Voice are ready when you are.'
-      : plan === 'single' || plan === 'voice_starter'
+      : included > 0
         ? 'Your Studio is ready. Other products stay in view for whenever you want more.'
         : 'Explore every Studio. A plan unlocks clean delivery.';
   return { plan, label, message, states };
@@ -119,26 +126,20 @@ export function makeStarterProject(productId, starterId) {
   return project;
 }
 
-export function entranceLinks(pathname, href) {
-  const hostedStudio = /\/studio(?:\/|$)/.test(pathname);
-  return {
-    pricing: new URL(hostedStudio ? '../#pricing' : 'site/index.html#pricing', href).href,
-    mediaBase: new URL(hostedStudio ? '../media/' : 'site/media/', href).href
-  };
-}
-
 function currentEntranceLinks() {
   return entranceLinks(location.pathname, location.href);
-}
-
-function pricingUrl() {
-  return currentEntranceLinks().pricing;
 }
 
 function preserveDemo(path) {
   const target = new URL(path, location.href);
   if (new URLSearchParams(location.search).get('demo') === '1') target.searchParams.set('demo', '1');
   return target.href;
+}
+
+// Which Studio the workspace should greet you as. Session-scoped on purpose:
+// it describes this arrival, not a saved preference.
+function startsAs(kind) {
+  try { sessionStorage.setItem('mlx:start-product', kind); } catch { /* unavailable */ }
 }
 
 function workspaceUrl() {
@@ -150,6 +151,11 @@ function workspaceUrl() {
 
 function openProject(projectId, product = 'photo') {
   localStorage.setItem('cros:project', projectId);
+  // The workspace decides which Studio's start page to draw from this stamp.
+  // Only enterWorkspace used to write it, so every starter - and every recent
+  // project - arrived with the stamp of whatever was opened last, and a Video
+  // project was greeted by the Photo start page.
+  startsAs(product);
   if (product === 'voice') {
     const target = new URL(preserveDemo('voice.html'));
     target.searchParams.set('project', projectId);
@@ -160,14 +166,19 @@ function openProject(projectId, product = 'photo') {
   location.reload();
 }
 
-async function createStarter(product, starter) {
-  const project = makeStarterProject(product.id, starter.id);
+/**
+ * Create the project a starter describes and open it in that starter's Studio.
+ * Exported so the landing can be checked per starter rather than per Studio.
+ */
+export async function startStarter(productId, starterId) {
+  const project = makeStarterProject(productId, starterId);
   await saveProject(project);
-  openProject(project.id, product.id);
+  openProject(project.id, project.starter.product);
+  return project;
 }
 
 function enterWorkspace(kind) {
-  try { sessionStorage.setItem('mlx:start-product', kind); } catch { /* unavailable */ }
+  startsAs(kind);
   if (kind === 'voice') {
     // Leave the entrance up while the browser navigates - closing it first
     // flashes the workspace for a beat before the Voice page arrives.
@@ -221,7 +232,7 @@ function starterList(product, state) {
       button.disabled = true;
       button.setAttribute('aria-disabled', 'true');
     } else {
-      button.addEventListener('click', () => createStarter(product, starter));
+      button.addEventListener('click', () => startStarter(product.id, starter.id));
     }
     list.append(button);
   }

@@ -6,6 +6,14 @@
  * turns into a Stripe SKU. Nothing used to hold them together, and they drifted
  * a whole price revision apart while both were live. Everything below is an
  * invariant that, when broken, is visible to a paying customer.
+ *
+ * The third catalogue this gate used to reconcile, studio/js/pricing-catalog.js,
+ * no longer exists: it was imported by nothing and disagreed with both the page
+ * and pricing.js, which is the drift this gate exists to catch rather than
+ * codify. The page is now read through the `data-plan` / `data-term` attributes
+ * on each published price, so the reconciliation runs in both directions - no
+ * sellable plan may be missing from the page, and no price on the page may name
+ * a plan the licence service cannot issue.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL, URL as NodeURL } from "node:url";
@@ -18,44 +26,12 @@ const fail = (message) => failures.push(message);
 const read = (relative) => readFileSync(join(root, relative), "utf8");
 
 const { PRODUCTS, TERMS, price, PAY_PER_EXPORT } = await import(pathToFileURL(join(root, "studio/js/pricing.js")).href);
-const { PRICING } = await import(pathToFileURL(join(root, "studio/js/pricing-catalog.js")).href);
 
-// --- 1. The two shipped catalogues must agree with each other ---------------
+// --- 1. price() must quote the catalogue, and refuse everything else --------
 
-const catalogTotals = {
-  voice_starter: { monthly: PRICING.voiceStarter.monthly.totalCents },
-  single_photo: Object.fromEntries(Object.entries(PRICING.single.products.photo).map(([term, entry]) => [term, entry.totalCents])),
-  single_video: Object.fromEntries(Object.entries(PRICING.single.products.video).map(([term, entry]) => [term, entry.totalCents])),
-  single_voice: Object.fromEntries(Object.entries(PRICING.single.products.voice).map(([term, entry]) => [term, entry.totalCents])),
-  full: Object.fromEntries(TERMS.map((term) => [term.id, PRICING.full[term.id]?.totalCents]).filter(([, cents]) => cents !== undefined))
-};
-
-for (const product of PRODUCTS) {
-  const catalog = catalogTotals[product.id];
-  if (!catalog) {
-    fail(`pricing-catalog.js has no entry for the sellable product ${product.id}.`);
-    continue;
-  }
-  for (const term of TERMS) {
-    const dollars = product.totals[term.id];
-    const cents = catalog[term.id];
-    if (dollars === undefined && cents === undefined) continue;
-    if (dollars === undefined || cents === undefined) {
-      fail(`${product.id} is offered on ${term.id} in one catalogue and not the other.`);
-      continue;
-    }
-    if (Math.round(dollars * 100) !== cents) {
-      fail(`${product.id} ${term.id}: pricing.js says $${dollars}, pricing-catalog.js says ${cents} cents.`);
-    }
-  }
-}
-
-if (Math.round(PAY_PER_EXPORT.price * 100) !== PRICING.export.totalCents) {
-  fail(`Pay-per-export: pricing.js says $${PAY_PER_EXPORT.price}, pricing-catalog.js says ${PRICING.export.totalCents} cents.`);
-}
-
-// price() must refuse a term the product is not sold on, or a truthy record
-// with an undefined total lets a customer open a checkout for a missing SKU.
+// A truthy record with an undefined total lets a customer open a checkout for a
+// SKU the licence service does not sell, so a term a product is not offered on
+// has to come back null rather than incomplete.
 for (const product of PRODUCTS) {
   for (const term of TERMS) {
     const quoted = price(product.id, term.id);
@@ -68,61 +44,44 @@ for (const product of PRODUCTS) {
   }
 }
 
-// --- 2. Published page prices must match the catalogue ----------------------
+// --- 2. Published page prices must match the catalogue, both ways ------------
 
 const indexHtml = read("index.html");
-const TERM_CLASS = { monthly: "price-monthly", quarterly: "price-quarterly", yearly: "price-yearly" };
-// The page card a catalogue product is published under. A product with no card
-// is unbuyable from the site; a card with no product cannot be sold at all.
-const CARD_FOR_PRODUCT = {
-  voice_starter: "Voice Starter",
-  single_photo: "Single Studio",
-  single_video: "Single Studio",
-  single_voice: "Single Studio",
-  full: "Full Studio"
-};
 
-const cards = new Map();
-for (const match of indexHtml.matchAll(/<article class="plan[^"]*">([\s\S]*?)<\/article>/g)) {
-  const body = match[1];
-  const name = body.match(/<h3>([^<]+)<\/h3>/)?.[1]?.trim();
-  if (name) cards.set(name, body);
+// One card can publish more than one plan: Single Studio carries Standard and
+// Pro behind a switch, and each price node names the plan and term it belongs
+// to. `plan` is the family the page publishes; the catalogue splits a family
+// into the Studios a customer picks between, and every member of a family is
+// sold at the family price.
+const published = new Map();
+for (const match of indexHtml.matchAll(/<div class="price[^"]*"([^>]*)>\s*\$([0-9]+(?:\.[0-9]{2})?)/g)) {
+  const attributes = match[1];
+  const plan = attributes.match(/data-plan="([^"]+)"/)?.[1];
+  const term = attributes.match(/data-term="([^"]+)"/)?.[1];
+  if (!plan || !term) continue;
+  published.set(`${plan}:${term}`, Number(match[2]));
 }
-if (!cards.size) fail("No pricing cards were found in index.html; the price gate cannot run.");
-
-const publishedPrice = (body, termId) => {
-  const node = body.match(new RegExp(`<div class="price[^"]*${TERM_CLASS[termId]}[^"]*">\\s*\\$([0-9]+(?:\\.[0-9]{2})?)`));
-  if (node) return Number(node[1]);
-  const plain = body.match(/<div class="price">\s*\$([0-9]+(?:\.[0-9]{2})?)/);
-  return plain ? Number(plain[1]) : null;
-};
+if (!published.size) fail("No published price carries data-plan and data-term; the price gate cannot run.");
 
 for (const product of PRODUCTS) {
-  const cardName = CARD_FOR_PRODUCT[product.id];
-  const body = cards.get(cardName);
-  if (!body) {
-    fail(`${product.id} is sellable but no "${cardName}" card is published on index.html.`);
-    continue;
-  }
   for (const term of TERMS) {
     const expected = product.totals[term.id];
     if (expected === undefined) continue;
-    const published = publishedPrice(body, term.id);
-    if (published === null) {
-      fail(`"${cardName}" publishes no ${term.id} price for ${product.id}.`);
-    } else if (published !== expected) {
-      fail(`"${cardName}" publishes $${published} for ${term.id} but the catalogue charges $${expected}.`);
+    const shown = published.get(`${product.plan}:${term.id}`);
+    if (shown === undefined) {
+      fail(`${product.id} is sellable on ${term.id} but index.html publishes no ${term.id} price for the ${product.plan} plan.`);
+    } else if (shown !== expected) {
+      fail(`index.html publishes $${shown} for ${product.plan} ${term.id} but the catalogue charges $${expected}.`);
     }
   }
 }
 
-// Every card that is not backed by a sellable product must say it cannot be
-// bought, so the page never advertises a tier the licence service cannot issue.
-const sellableCards = new Set(Object.values(CARD_FOR_PRODUCT));
-for (const [name, body] of cards) {
-  if (name === "Free Preview" || sellableCards.has(name)) continue;
-  if (!/not yet available to buy online/i.test(body)) {
-    fail(`"${name}" has no catalogue product and does not tell the customer it cannot be bought yet.`);
+// The other direction: a price on the page that no product backs is a tier the
+// customer can read and the licence service cannot issue.
+for (const key of published.keys()) {
+  const [plan, term] = key.split(":");
+  if (!PRODUCTS.some((product) => product.plan === plan && product.totals[term] !== undefined)) {
+    fail(`index.html publishes a ${term} price for "${plan}", which no sellable product offers on that term.`);
   }
 }
 
@@ -169,12 +128,41 @@ for (const file of htmlFiles) {
 
 // --- 5. Robots, sitemap and redirects must agree on the canonical homepage --
 
-const redirects = read("_redirects");
-for (const line of redirects.split("\n")) {
-  const [from, to] = line.trim().split(/\s+/);
-  if (!from || from.startsWith("#")) continue;
-  if ((from === "/" || from === "/index.html") && to?.startsWith("/studio")) {
-    fail(`_redirects sends ${from} to ${to}, but robots.txt disallows /studio/ and sitemap.xml publishes the homepage as canonical.`);
+// Pages advanced mode serves this site through _worker.js, so `_redirects` no
+// longer applies and has been removed; the routing table is the worker's. The
+// executable proof is tests/worker.test.mjs, which drives the real handler.
+// This is the static backstop: no branch may send the canonical homepage into
+// the path robots.txt disallows.
+if (existsSync(join(root, "_redirects"))) {
+  for (const line of read("_redirects").split("\n")) {
+    const [from, to] = line.trim().split(/\s+/);
+    if (!from || from.startsWith("#")) continue;
+    if ((from === "/" || from === "/index.html") && to?.startsWith("/studio")) {
+      fail(`_redirects sends ${from} to ${to}, but robots.txt disallows /studio/ and sitemap.xml publishes the homepage as canonical.`);
+    }
+  }
+}
+
+// Asked of the real handler rather than of its source: which branch a path
+// takes depends on the host, and the same `/ -> /studio/` line is correct for
+// app.materiallogix.com and wrong for the canonical host.
+// HTMLRewriter is a Workers runtime global; the homepage path reaches it, so
+// the handler needs one to run at all. Nothing here inspects what it appends.
+globalThis.HTMLRewriter = class {
+  on(_selector, handlers) { this.handlers = handlers; return this; }
+  transform(response) {
+    this.handlers?.element?.({ append: () => {} });
+    return response;
+  }
+};
+const { default: worker } = await import(pathToFileURL(join(root, "_worker.js")).href);
+const assets = {
+  fetch: () => new Response("<html><body>site</body></html>", { status: 200, headers: { "Content-Type": "text/html" } })
+};
+for (const path of ["/", "/index.html"]) {
+  const response = await worker.fetch(new Request(`https://materiallogix.com${path}`), { ASSETS: assets });
+  if (response.status >= 300 && response.status < 400) {
+    fail(`_worker.js redirects the canonical homepage ${path} to ${response.headers.get("location")}, but robots.txt disallows /studio/ and sitemap.xml publishes the homepage as canonical.`);
   }
 }
 if (!read("sitemap.xml").includes("<loc>https://materiallogix.com/</loc>")) {
@@ -186,4 +174,4 @@ if (failures.length) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exit(1);
 }
-console.log(`[site] PASS: catalogues agree, ${cards.size} published tiers reconcile, service-worker shell resolves, ${htmlFiles.length} pages have no broken internal links.`);
+console.log(`[site] PASS: ${published.size} published prices reconcile with ${PRODUCTS.length} sellable products, service-worker shell resolves, ${htmlFiles.length} pages have no broken internal links.`);

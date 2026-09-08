@@ -1,0 +1,506 @@
+// The controls a customer touches, and the two ways they used to fail without
+// saying anything: a promise that never settled, and a machine code on screen.
+//
+// `studio/js/app.js` is the Studio's entry module - importing it boots the
+// application - so the contracts it owns are read out of its source, the way
+// wiring.test.mjs and claims.test.mjs already read the shipped code. Everything
+// crop.js owns is executed here against a scripted media element, because that
+// is where the blocker lived.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { grabVideoFrame } from '../studio/js/crop.js';
+import { colorExportDecision } from '../studio/js/color-management.js';
+import { preflight } from '../studio/js/analyze.js';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const app = readFileSync(resolve(ROOT, 'studio/js/app.js'), 'utf8');
+const read = file => readFileSync(resolve(ROOT, file), 'utf8');
+
+// --- a video frame ----------------------------------------------------------
+
+/**
+ * A scripted <video>, driven by the same property writes the real one is.
+ *
+ * `headerDuration: Infinity` is what Chromium reports for anything muxed as a
+ * stream, and `recovered` is the length it fills in once a seek past the end
+ * has made it walk the file.
+ */
+function scriptedVideo(script) {
+  const video = {
+    preload: '', muted: false, seeks: [],
+    videoWidth: script.width ?? 1280, videoHeight: script.height ?? 720,
+    duration: script.headerDuration ?? 8,
+    onloadeddata: null, onseeked: null, onerror: null
+  };
+  let position = 0;
+  Object.defineProperty(video, 'currentTime', {
+    get: () => position,
+    set(value) {
+      video.seeks.push(value);
+      // The exact refusal the browser raises, and the one that used to unwind
+      // into the event loop instead of into the caller.
+      if (!Number.isFinite(value)) {
+        throw new TypeError("Failed to set the 'currentTime' property on 'HTMLMediaElement': The provided double value is non-finite.");
+      }
+      if (!Number.isFinite(video.duration) && value > 1e9) video.duration = script.recovered ?? Infinity;
+      position = Number.isFinite(video.duration) ? Math.min(value, video.duration) : value;
+      video.onseeked?.();
+    }
+  });
+  Object.defineProperty(video, 'src', {
+    set() {
+      if (script.silent) return;
+      if (script.unreadable) return void video.onerror?.();
+      video.onloadeddata?.();
+    }
+  });
+  return video;
+}
+
+let lastVideo = null;
+globalThis.document = {
+  createElement(tag) {
+    if (tag === 'video') return (lastVideo = scriptedVideo(globalThis.__videoScript));
+    return { width: 0, height: 0, getContext: () => ({ drawImage() {} }) };
+  }
+};
+const withVideo = (script, fn) => { globalThis.__videoScript = script; return fn(); };
+
+test('a clip whose header carries a duration is grabbed at the time asked for', async () => {
+  const frame = await withVideo({ headerDuration: 8 }, () => grabVideoFrame('blob:clip', 2.4));
+  assert.equal(frame.duration, 8);
+  assert.equal(frame.width, 1280);
+  assert.deepEqual(lastVideo.seeks, [2.4]);
+});
+
+test('a clip whose header carries no duration imports instead of hanging', async () => {
+  // A browser recorder, a screen recorder, an action camera: anything muxed as
+  // a stream reports Infinity until the file has been walked.
+  const frame = await withVideo({ headerDuration: Infinity, recovered: 7.96 },
+    () => grabVideoFrame('blob:rec', 2.39));
+  assert.equal(frame.duration, 7.96, 'the recovered length is what the library stores');
+  for (const target of lastVideo.seeks) {
+    assert.ok(Number.isFinite(target), `seeked to ${target}, which the browser refuses`);
+  }
+  assert.equal(lastVideo.seeks.at(-1), 2.39, 'the frame asked for is the frame taken');
+});
+
+test('a non-finite time asked for is clamped rather than passed to the browser', async () => {
+  // `+(Infinity * 0.3).toFixed(2)` is Infinity, and app.js used to hand that
+  // straight to currentTime.
+  for (const time of [Infinity, NaN, -5, undefined]) {
+    const frame = await withVideo({ headerDuration: 8 }, () => grabVideoFrame('blob:clip', time));
+    assert.equal(frame.duration, 8);
+    assert.ok(lastVideo.seeks.every(Number.isFinite), `${time} produced ${lastVideo.seeks}`);
+  }
+});
+
+test('a clip that is still unusable rejects with a reason', async () => {
+  // The walk finished and the length is still unreadable: this has to settle,
+  // because the import awaits it and the tab-close guard follows state.busy.
+  await assert.rejects(
+    withVideo({ headerDuration: Infinity, recovered: Infinity }, () => grabVideoFrame('blob:broken', 0)),
+    /no duration the browser can read/);
+  await assert.rejects(
+    withVideo({ unreadable: true }, () => grabVideoFrame('blob:junk', 0)),
+    /could not be read by the browser/);
+});
+
+test('a throw inside a media event handler rejects the promise it came from', async () => {
+  // A handler that throws unwinds into the event loop, not into the caller's
+  // await, so the promise stayed pending forever and no try/catch anywhere
+  // above it could see the failure.
+  const realCreateElement = globalThis.document.createElement;
+  globalThis.document.createElement = function (tag) {
+    if (tag === 'canvas') throw new Error('the frame could not be drawn');
+    return realCreateElement.call(this, tag);
+  };
+  try {
+    await assert.rejects(withVideo({ headerDuration: 8 }, () => grabVideoFrame('blob:clip', 1)),
+      /the frame could not be drawn/);
+  } finally {
+    globalThis.document.createElement = realCreateElement;
+  }
+
+  // A duration of NaN is not finite either, and Math.max(0, NaN - 0.05) is the
+  // seek target that used to throw straight out of onloadeddata.
+  await assert.rejects(withVideo({ headerDuration: NaN, recovered: NaN }, () => grabVideoFrame('blob:nan', 0)),
+    /no duration the browser can read/);
+});
+
+test('a video that answers nothing at all rejects on a timeout', async () => {
+  const fired = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = fn => { fired.push(fn); return 0; };
+  try {
+    const pending = withVideo({ silent: true }, () => grabVideoFrame('blob:silent', 0));
+    assert.equal(fired.length, 1, 'grabVideoFrame armed no timeout');
+    fired[0]();
+    await assert.rejects(pending, /produced no frame/);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+// --- Escape, and where focus lands -------------------------------------------
+
+const keydownHandler = (() => {
+  const start = app.indexOf("window.addEventListener('keydown'");
+  assert.ok(start > 0, 'the workspace keydown handler moved');
+  return app.slice(start, app.indexOf("window.addEventListener('beforeunload'", start));
+})();
+
+test('an open dialog owns Escape before the sidebar branch sees it', () => {
+  // The sidebar branch calls preventDefault(), so while it ran first the
+  // dialog's own cancel never fired: Escape silently collapsed the panel
+  // behind the modal and left the modal open.
+  const guard = keydownHandler.indexOf("if ($('#dlg').open) return;");
+  const sidebarEscape = keydownHandler.indexOf("e.key === 'Escape'");
+  assert.ok(guard >= 0, 'the dialog guard is gone from the keydown handler');
+  assert.ok(sidebarEscape >= 0, 'the sidebar Escape branch is gone from the keydown handler');
+  assert.ok(guard < sidebarEscape,
+    'the sidebar Escape branch runs before the dialog guard, so Escape cannot close a dialog');
+});
+
+test('a re-render puts keyboard focus back where it took it from', () => {
+  // `replaceChildren` destroys the node the customer is standing on; without
+  // this the reviewer tabs in from the top of the page for every asset.
+  for (const name of ['render', 'renderReview']) {
+    const start = app.indexOf(`\nfunction ${name}() {`);
+    assert.ok(start > 0, `${name}() moved`);
+    const body = app.slice(start, app.indexOf('\n}\n', start));
+    assert.match(body, /captureFocus\(\)/, `${name}() does not record where focus was`);
+    assert.match(body, /restoreFocus\(/, `${name}() does not put focus back`);
+  }
+  assert.match(app, /function focusSignature\(node\) \{[\s\S]*?node\.id/,
+    'the focus key no longer prefers a stable id');
+  assert.doesNotMatch(app.slice(app.indexOf('function focusSignature'), app.indexOf('function captureFocus')),
+    /className/, 'a toggle changes class when activated, so the class cannot be part of the key');
+});
+
+// --- what a failed delivery says ---------------------------------------------
+
+/** Every line that puts a caught failure onto the screen. */
+const screenWrites = app.split('\n')
+  .map((text, index) => ({ text, line: index + 1 }))
+  .filter(({ text }) => /toast\(|textContent\s*=|detail:/.test(text))
+  .filter(({ text }) => /\b(err|error)\b|\.reason \|\|/.test(text));
+
+test('no delivery failure reaches the customer as a machine code', () => {
+  assert.ok(screenWrites.length >= 24, `only ${screenWrites.length} failure messages found; the scan missed some`);
+  for (const { text, line } of screenWrites) {
+    assert.match(text, /deliveryReason\(/,
+      `app.js:${line} prints a raw error to the customer: ${text.trim()}`);
+  }
+});
+
+test('the delivery codes the shared helper has no sentence for get one here', () => {
+  const codes = app.slice(app.indexOf('const DELIVERY_CODES'), app.indexOf('function deliveryReason'));
+  for (const code of ['authorization_required', 'online_authorization_required', 'authorization_failed',
+                      'billing_request_failed', 'license_required']) {
+    assert.match(codes, new RegExp(`\\b${code}: '[a-z]`), `${code} has no sentence`);
+  }
+  assert.doesNotMatch(codes, /: '[a-z0-9]+_[a-z0-9_]+'/, 'a code was spelled with another code');
+});
+
+test('every colour refusal the export path can raise has words of its own', () => {
+  // `buildPackage` throws `color_export_blocked:<file>:<reason>`, and the
+  // reason comes from here. A reason with no entry reaches the screen as a
+  // machine code inside a sentence, which is worse than either.
+  const reasons = new Set();
+  for (const color of [{}, { profile: 'unknown' }, { profile: 'cmyk' }, { profile: 'adobe-rgb' },
+                       { profile: 'display-p3' }, { profile: 'embedded-icc-unclassified' },
+                       { hdrSignaled: true, toneMappingApplied: false }]) {
+    const decision = colorExportDecision(color);
+    if (!decision.allowed) reasons.add(decision.reason);
+  }
+  assert.ok(reasons.size >= 6, `only ${reasons.size} refusals exercised`);
+  const table = app.slice(app.indexOf('const COLOR_EXPORT_BLOCKS'), app.indexOf('const DELIVERY_CODES'));
+  for (const reason of reasons) {
+    assert.match(table, new RegExp(`\\b${reason}: \\{`), `${reason} has no sentence in COLOR_EXPORT_BLOCKS`);
+  }
+  assert.match(app, /raw\.startsWith\('color_export_blocked:'\)/, 'the packed colour code is no longer unpacked');
+});
+
+// --- pre-flight and the export path -------------------------------------------
+
+
+/**
+ * `preflightResult` lifted out of app.js and run against the real modules it
+ * uses. Grepping its body proves the words are present; running it proves the
+ * merge happens, which is the only thing the test is for.
+ */
+function runPreflightResult(project, assets) {
+  const body = app.slice(app.indexOf('function preflightResult()'),
+    app.indexOf('\n}', app.indexOf('function preflightResult()')) + 2);
+  const make = new Function('preflight', 'approvedPairs', 'colorExportDecision',
+    'COLOR_EXPORT_BLOCKS', 'Object', 'readableServiceError', 'state',
+    `${body}; return preflightResult;`);
+  const blocks = JSON.parse(JSON.stringify(COLOR_EXPORT_BLOCKS_FROM_APP()));
+  return make(preflight,
+    list => list.flatMap(a => Object.entries(a.placements || {})
+      .filter(([, p]) => p.decision === 'approved').map(([surfaceId]) => ({ asset: a, surfaceId }))),
+    colorExportDecision, blocks, Object, code => String(code).replaceAll('_', ' '),
+    { project, assets })();
+}
+
+/** The shipped block table, read from app.js so the words cannot drift. */
+function COLOR_EXPORT_BLOCKS_FROM_APP() {
+  const start = app.indexOf('const COLOR_EXPORT_BLOCKS');
+  assert.notEqual(start, -1, 'COLOR_EXPORT_BLOCKS moved');
+  // Brace-match rather than guess a terminator: the table is wrapped in
+  // Object.freeze(...), so it does not end at a line that is just `};`.
+  const open = app.indexOf('{', start);
+  let depth = 0, end = open;
+  for (let i = open; i < app.length; i++) {
+    if (app[i] === '{') depth++;
+    else if (app[i] === '}' && --depth === 0) { end = i + 1; break; }
+  }
+  return new Function(`return ${app.slice(open, end)}`)();
+}
+
+test('pre-flight cannot see the colour refusal on its own, so app.js merges it', () => {
+  // The gap this covers, proven against the shipped modules: an approved asset
+  // that never analysed raises nothing blocking, and the export refuses it.
+  const asset = {
+    id: 'a1', filename: 'empty.png', kind: 'image', width: 0, height: 0, auto: null,
+    altText: 'x', provenance: 'x', labels: {}, fixes: [],
+    placements: { 'web-hero-desktop': { decision: 'approved', crop: { x: 0, y: 0, w: 1, h: 1 }, fill: 'crop' } }
+  };
+  const result = preflight({ surfaces: ['web-hero-desktop'], qaPreset: 'human', brief: {} }, [asset]);
+  assert.equal(result.blocks, 0, 'analyze.js now blocks this on its own; the merge below can be reconsidered');
+  assert.equal(colorExportDecision(asset.auto?.color || {}).allowed, false, 'the export path would ship this');
+
+  // Run the shipped merge, do not grep it. Both assertions here used to be
+  // source-shape matches that still passed with the merge functionally
+  // removed - a test that cannot fail for the thing it is attached to.
+  const merged = runPreflightResult({ surfaces: ['web-hero-desktop'], qaPreset: 'human', brief: {} }, [asset]);
+  assert.equal(merged.blocks, 1, 'the colour refusal is not counted as blocking');
+  const raised = merged.items.filter(i => i.level === 'block');
+  assert.equal(raised.length, 1);
+  assert.match(raised[0].message, /colour profile of this asset has not been read/);
+  assert.equal(raised[0].assetId, 'a1');
+  assert.ok(raised[0].fix, 'a blocking item must say what to do about it');
+
+  // An asset the export path would accept must not be invented as a blocker.
+  // `auto` has to carry what assetIssues reads, or the failure is the fixture's.
+  const fine = {
+    ...asset, id: 'a2', width: 2400, height: 1800,
+    auto: {
+      color: { profile: 'srgb' }, sharpness: 70,
+      exposure: { blown: 0, crushed: 0, meanLuma: 0.5 }, noise: 0.1
+    }
+  };
+  assert.equal(colorExportDecision(fine.auto.color).allowed, true, 'the fixture must be exportable');
+  const clean = runPreflightResult({ surfaces: ['web-hero-desktop'], qaPreset: 'human', brief: {} }, [fine]);
+  assert.equal(clean.refusals.length, 0, 'a deliverable asset was invented as a colour refusal');
+});
+
+test('every pre-flight surface reads the merged result, not the raw one', () => {
+  const raw = app.match(/preflight\(state\.project, state\.assets\)/g) || [];
+  assert.equal(raw.length, 1, 'preflight() is called somewhere other than preflightResult()');
+  const merged = app.match(/preflightResult\(\)/g) || [];
+  assert.ok(merged.length >= 4, `the merged result is used at only ${merged.length} sites`);
+  const dialog = app.slice(app.indexOf('function preflightDialog'), app.indexOf('async function openPrintDelivery'));
+  assert.match(dialog, /result\.refusals\.length > 0 \|\|/,
+    '"Export anyway" can still be ticked past a refusal the export itself enforces');
+});
+
+// --- colour is never the only signal ------------------------------------------
+
+test('an issue says its level in words, not only in the fill of a 5px dot', () => {
+  const list = app.slice(app.indexOf('const ISSUE_LEVELS'), app.indexOf('function metricsBlock'));
+  for (const [level, word] of [['block', 'Blocking'], ['warn', 'Warning'], ['info', 'Note']]) {
+    assert.match(list, new RegExp(`${level}: '${word}'`), `the ${level} level has no word`);
+  }
+  assert.match(list, /ISSUE_LEVELS\[i\.level\]/, 'the level word is not rendered on the row');
+  assert.match(list, /className: 'dot', 'aria-hidden': 'true'/, 'the decorative dot is still announced');
+});
+
+test('a toggle reports being pressed, and nothing reports it by class alone', () => {
+  assert.match(app, /const pressed = \(node, on\) => \{[^}]*aria-pressed/, 'pressed() no longer sets the state');
+  const byClassAlone = app.match(/\?\s*'on'\s*:\s*''/g) || [];
+  assert.deepEqual(byClassAlone, [],
+    `${byClassAlone.length} toggles still say "selected" with a background tint and nothing else`);
+  // The stage, the board and the rail all have to go through it.
+  assert.ok((app.match(/pressed\(/g) || []).length >= 14, 'most toggles no longer route through pressed()');
+});
+
+// --- nothing prints the word "null" -------------------------------------------
+
+/** The text between a call's parentheses, brackets balanced. */
+function callArguments(source, open) {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '(') depth++;
+    else if (source[i] === ')' && --depth === 0) return source.slice(open + 1, i);
+  }
+  return '';
+}
+
+test('no raw DOM insertion is handed a conditional that can be null', () => {
+  // `el()` drops a null child; replaceChildren and append stringify one, and
+  // the word "null" was rendering in the Print-ready photo dialog.
+  for (const method of ['replaceChildren', 'append']) {
+    for (const match of app.matchAll(new RegExp(`\\.${method}\\(`, 'g'))) {
+      const args = callArguments(app, match.index + method.length + 1);
+      let depth = 0, argument = '';
+      const check = text => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        assert.doesNotMatch(trimmed, /(^|[^.\w])null$/,
+          `.${method}() is passed a value that can be null, which inserts the text "null": ${trimmed.slice(-70)}`);
+      };
+      for (const character of args) {
+        if ('([{'.includes(character)) depth++;
+        else if (')]}'.includes(character)) depth--;
+        if (character === ',' && depth === 0) { check(argument); argument = ''; continue; }
+        argument += character;
+      }
+      check(argument);
+    }
+  }
+});
+
+test('the people-review promise is not made unconditionally', () => {
+  // `analyzeGeometry` is the product's one networked extra and returns null
+  // when the vision models are unreachable, which `peopleReview` records as
+  // `manual-review-needed`. The workspace said "Every new photo is checked for
+  // faces, hands, and bodies before editing" whatever had happened, so the one
+  // sentence a customer reads before importing was false exactly when the
+  // check had not run.
+  const source = app;
+  assert.ok(!/Every new photo is checked for faces, hands, and bodies/.test(source),
+    'the unconditional promise is back');
+  assert.match(source, /manual-review-needed'\s*\n?\s*\?\s*'Automatic people review is unavailable/,
+    'the offline case must say the check did not run');
+  assert.match(source, /whenever the review models are reachable/,
+    'the available case must still be conditional');
+  // And the status it branches on has to be the one the analyser writes.
+  assert.match(source, /status: asset\.geometry \? 'complete' : 'manual-review-needed'/);
+});
+
+test('a file the browser cannot decode is refused, whatever kind it is', () => {
+  // The guard read `asset.kind === 'video'`, so a photograph past the browser's
+  // decode ceiling took the other branch: stored at 0x0, never analysed, and
+  // reporting no issues because there were no pixels to find any in - under a
+  // toast that said it had been imported and analysed. Measured at the break:
+  // 500 MP imported, 600 MP produced the silent 0x0 row.
+  assert.ok(!/asset\.kind === 'video' && !\(measured\.width && measured\.height\)/.test(app),
+    'the decode guard is video-only again');
+  assert.match(app, /if \(!\(measured\.width && measured\.height\)\) \{/,
+    'anything without pixels must be refused');
+  // And the advice has to fit the file: a 0-byte or truncated image was being
+  // told to reduce its dimensions.
+  assert.match(app, /No frame could be decoded from it\./);
+  assert.match(app, /const oversized = asset\.kind === 'image' && sourceFile\.size > /,
+    'only a large file should be told it is too large');
+  assert.match(app, /Check it opens elsewhere, then re-import\./);
+  assert.match(app, /reduce its dimensions and re-import\./);
+});
+
+test('a decode cache bounded by count is bounded by the customer camera', () => {
+  // Five entries held as RGBA is 40 MB of phone photos or two gigabytes of
+  // 100 MP stills. Renderer RSS went 173 -> 769 MB holding decodes of assets
+  // that were no longer in the library at all.
+  assert.match(app, /const DECODE_CACHE_BYTES = /, 'the cache needs a weight bound, not only a count');
+  assert.match(app, /function trimDecodeCache\(\)/);
+  assert.match(app, /held > DECODE_CACHE_BYTES/, 'the weight bound has to be enforced');
+  assert.match(app, /function forgetDecodesOutside\(/, 'decodes must not outlive their assets');
+  assert.match(app, /entry\.source\?\.close\?\.\(\)/, 'a dropped bitmap should be closed, not just dereferenced');
+  // Every reload of the asset list is a chance the cache outlived its assets.
+  const reloads = (app.match(/state\.assets = await store\.listAssets\(state\.project\.id\);/g) || []).length;
+  const sweeps = (app.match(/forgetDecodesOutside\(state\.assets\.map\(a => a\.id\)\);/g) || []).length;
+  assert.equal(sweeps, reloads, `${reloads} asset reloads but ${sweeps} cache sweeps`);
+});
+
+test('every board filter says what it filters, to a listener as well as a reader', () => {
+  // Six filters in a row, each labelled only by its placeholder option, so
+  // Chromium's accessibility tree reported six unnamed comboboxes. Driven on
+  // the board: 6 unnamed before, 0 after.
+  assert.match(app, /const mk = \(key, label, options\) => \{\s*\n\s*const s = el\('select', \{ 'aria-label': label \}\)/,
+    'the filter helper must name what it builds');
+  // The rating filter is hand-rolled and was missed when the other five were named.
+  assert.match(app, /const sel = el\('select', \{ 'aria-label': 'Any rating' \}\)/);
+  assert.match(app, /el\('input', \{ type: 'text', 'aria-label': 'Search files, notes, labels'/,
+    'a placeholder is not an accessible name');
+});
+
+test('the review switcher gets its own row where the head cannot hold it', () => {
+  // At 390x844 the 50px head could not fit a 250px switcher beside the title:
+  // Placement and Compare were clipped off-screen and Full source sat under
+  // the floating "Review tools" button. Measured with elementFromPoint at each
+  // button's own centre - three unreachable before, three reachable after,
+  // desktop unchanged at a 50px head.
+  const css = read('studio/css/app.css');
+  const phone = /@media \(max-width: 720px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] || '';
+  assert.ok(phone, 'the phone rule for the review head is gone');
+  assert.match(phone, /\.stage-head \{[\s\S]*?flex-wrap: wrap;/, 'the head must be allowed to wrap');
+  assert.match(phone, /\.stage-head \.seg \{ flex: 1 0 100%/, 'the switcher needs a row of its own');
+  assert.match(phone, /\.stage-head \.seg button \{ flex: 1; min-height: 44px/, 'a tap target needs 44px');
+  // The desktop head stays one fixed row.
+  assert.match(css, /\.stage-head \{\s*\n\s*display: flex; align-items: center; gap: 14px; padding: 0 20px; height: 50px;/);
+});
+
+test('the two controls that undo a purchase ask, or check, before they act', () => {
+  // "Manage billing" called location.assign(result.url) with no guard, so a
+  // response without a url sent the customer to /studio/undefined and a
+  // "not found" page - on the one control that cancels a subscription.
+  const billing = read('studio/js/billing-client.js');
+  assert.match(billing, /if \(typeof result\?\.url !== 'string' \|\| !\/\^https:\\\/\\\/\/\.test\(result\.url\)\) throw new Error\('billing_portal_unavailable'\)/,
+    'the portal url must be checked before it is navigated to');
+  assert.ok(billing.indexOf('billing_portal_unavailable') < billing.indexOf('location.assign(result.url)'),
+    'the guard must come before the navigation');
+
+  // Deleting a project asks first. Removing the licence did not, and it is the
+  // less recoverable of the two.
+  assert.ok(!/btn\('Deactivate on this device', 'btn sm', \(\) => \{ deactivate\(\); render\(\); \}\)/.test(app),
+    'deactivation is unconfirmed again');
+  assert.match(app, /btn\('Deactivate on this device', 'btn sm', \(\) => dialog\('Remove this licence from this device\?'/);
+  assert.match(app, /btn\('Keep it', 'btn', closeDialog\)/, 'the customer needs a way out of the dialog');
+  assert.match(app, /Your projects and files stay where they are\./, 'say what is not being deleted');
+});
+
+test('the only channel a failure has is announced, not just drawn', () => {
+  // A live region must exist in the document before its text changes. Every
+  // toast was a fresh node inserted already holding its message, which is
+  // frequently not announced at all — on the product's only report of a
+  // failure, including the one that says an import was refused.
+  assert.match(app, /function announcer\(\)/, 'there must be one persistent region');
+  assert.match(app, /region\.setAttribute\('aria-live'/);
+  assert.match(app, /region\.textContent = '';/, 'clearing first re-announces a repeated message');
+  assert.match(app, /setTimeout\(\(\) => \{ region\.textContent = msg; \}, \d+\);/);
+  // The toast node itself no longer pretends to be the live region.
+  const body = /function toast\(msg, bad = false\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';
+  assert.ok(body, 'toast() moved');
+  assert.ok(!/t\.setAttribute\('aria-live'/.test(body),
+    'the transient node must not carry the live region any more');
+  assert.match(read('studio/css/app.css'), /\.sr-only \{[\s\S]*?clip-path: inset\(50%\)/,
+    'the region must stay in the accessibility tree, not be display:none');
+  // Standing it up at boot means even the first message lands in a region the
+  // reader was already watching. Driven in a browser: regionExistedFirst true.
+  assert.match(app, /wire\(\);\n[\s\S]{0,180}?announcer\(\);/,
+    'the region must exist before the first message, not be made by it');
+});
+
+test('there is one issue renderer, so a severity word cannot be added to half of them', () => {
+  // The level word and the aria-hidden dot were added to `issueList` while the
+  // placement card kept its own copy, so half the issues in the product stayed
+  // a 5px dot whose colour was the only thing saying whether they blocked a
+  // delivery — at 1.09:1 against its neighbour. Two renderers for one thing is
+  // the defect; the missing word was the symptom.
+  const inline = app.match(/el\('div', \{ className: 'issue ' \+ i\.level/g) || [];
+  assert.equal(inline.length, 1, `${inline.length} places build an issue row; there must be one`);
+  assert.match(app, /function issueRow\(i, style = ''\)/, 'the shared renderer is gone');
+  assert.match(app, /card\.append\(issueRow\(i, 'border:0;padding:6px 0 0'\)\);/,
+    'the placement card must use the shared renderer, not its own copy');
+  assert.match(app, /return el\('div', \{\}, \.\.\.items\.map\(i => issueRow\(i\)\)\);/,
+    'the list must use it too');
+  // And what the shared one guarantees.
+  const row = /function issueRow\(i, style = ''\) \{[\s\S]*?\n\}/.exec(app)?.[0] || '';
+  assert.match(row, /ISSUE_LEVELS\[i\.level\] \|\| i\.level/, 'the level must be a word');
+  assert.match(row, /'aria-hidden': 'true'/, 'the decorative dot must not be announced');
+});
