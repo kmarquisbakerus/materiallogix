@@ -233,7 +233,17 @@ try {
   ok('the edit is stored on the asset', await app.evaluate(() => window.__cros.state.assets.some(a => a.edit?.adjustments?.exposure !== 0)));
   await app.keyboard.press('Control+z');
   await settle(app, 1000);
-  ok('undo puts it back', /^Undid/.test(await toast(app)), await toast(app));
+  ok('undo reverses the last slider', await app.evaluate(() => {
+    const asset = window.__cros.state.assets.find(a => a.kind === 'image');
+    return asset?.edit?.adjustments?.denoise === 0;
+  }), await toast(app));
+  await app.evaluate(() => {
+    [...document.querySelectorAll('button')]
+      .find(button => button.textContent?.trim() === 'Reset adjustments')?.click();
+  });
+  await settle(app, 1000);
+  ok('reset restores the original rendered picture', beforeEdit === await fingerprint(app),
+    await app.evaluate(() => JSON.stringify(window.__cros.state.assets.find(a => a.kind === 'image')?.edit?.adjustments)));
   await captureViews(app, 'photo-editing');
 
   step('Generate a photo');
