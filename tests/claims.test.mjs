@@ -155,15 +155,21 @@ test('the release register quotes the cloud video price the code charges', () =>
 });
 
 test('the pages a regulator opens first say something', () => {
-  for (const heading of ['<h2>Who provides this service</h2>', '<h2>Accessibility</h2>',
-    '<h2>Complaints, disputes and governing law</h2>']) {
-    assert.ok(terms.includes(heading), `legal/terms.html is missing ${heading}`);
+  // The terms are numbered clauses, and clauses get renumbered when one is
+  // inserted. These match the heading rather than the number it happens to
+  // carry, so adding a section moves the numbers without moving the promise.
+  for (const heading of ['Who provides this service', 'Accessibility', 'Disputes']) {
+    assert.match(terms, new RegExp(`<h2>\\d+\\. ${heading}</h2>`),
+      `legal/terms.html is missing a "${heading}" section`);
   }
   assert.match(terms, /at least 18 years old/, 'the age rule is gone');
   assert.match(terms, /do not knowingly accept an account or a payment from anyone younger/,
     'the age rule states no consequence');
   assert.match(terms, /laws of the District of Columbia/, 'the governing law is gone');
-  assert.match(terms, /mandatory consumer law of the country you live in/,
+  // The savings clause, in the words the published terms use for it. A District
+  // of Columbia choice of law with no such clause is unenforceable against a
+  // consumer who has mandatory protection at home.
+  assert.match(terms, /protection of the mandatory law, or the right to bring proceedings in the courts, of the country where you live/,
     'a District of Columbia choice of law with no savings clause is unenforceable against an EU consumer');
   assert.match(terms, /WCAG 2\.2 Level AA/, 'the accessibility statement claims no standard');
 
