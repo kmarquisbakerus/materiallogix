@@ -32,6 +32,13 @@ the billing service. It stops all of them when it finishes.
 | `engine-stub.mjs` | A ComfyUI-compatible stand-in that returns a real PNG |
 | `harness.mjs` | Mints a run-scoped licence, stubs billing, opens a session |
 | `journey.mjs` | The journey itself |
+| `music.mjs` | Music creation, native capture, project recovery and offline render checks |
+| `run-journeys.mjs` | Runs both journeys and fails if either fails |
+
+`npm run journey:music` runs the Music journey alone. It needs the same Chromium
+installation and uses a synthetic microphone. Its WAV checks exercise the real
+browser render engine; they do not authorize or certify a paid customer export,
+physical audio interface, or the full DJ/Pro feature set.
 
 The licence is signed with a keypair generated for that run, and the shipped
 public key is swapped at the network edge so it verifies. No product code is

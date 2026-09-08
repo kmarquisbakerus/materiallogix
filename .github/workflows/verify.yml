@@ -42,6 +42,17 @@ jobs:
 
       - name: Run the browser journey
         run: npm run journey
+        env:
+          MUSIC_QA_DIR: ${{ runner.temp }}/music-qa
+
+      - name: Keep Music screenshots and diagnostic audio
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: music-qa
+          path: ${{ runner.temp }}/music-qa
+          if-no-files-found: ignore
+          retention-days: 14
 
       # The journey serves the repository directly and never touches _worker.js,
       # so the policy the customer actually receives has no browser coverage

@@ -9,6 +9,34 @@ import { serve } from './serve.mjs';
 import { engineStub } from './engine-stub.mjs';
 import { mintLicence, studioContext, photoScript } from './harness.mjs';
 import { CLOUD_PRICING } from '../../studio/js/pricing.js';
+import { mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
+
+const evidenceDirectory = process.env.MUSIC_QA_DIR;
+if (evidenceDirectory) await mkdir(evidenceDirectory, { recursive: true });
+const captureViews = async (page, name) => {
+  if (!evidenceDirectory) return;
+  const original = page.viewportSize();
+  const originalMenus = await page.evaluate(() => {
+    const sidebar = document.querySelector('#sidebar'), more = document.querySelector('.topbar-more');
+    const state = { sidebar: sidebar?.classList.contains('open'), more: more?.open };
+    sidebar?.querySelector('.sidebar-head button')?.click();
+    if (more) more.open = false;
+    return state;
+  });
+  try {
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-desktop.png`), fullPage: true, animations: 'disabled' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Finish the finite drawer transition before recording the phone view.
+    await page.screenshot({ path: join(evidenceDirectory, `${name}-phone.png`), fullPage: true, animations: 'disabled' });
+  } finally {
+    await page.setViewportSize(original);
+    await page.evaluate(state => {
+      if (state.sidebar) document.querySelector('#menuBtn')?.click();
+      const more = document.querySelector('.topbar-more'); if (more) more.open = !!state.more;
+    }, originalMenus);
+  }
+};
 
 let BASE, SITE;   // set once the site server has a port
 let passed = 0;
@@ -205,7 +233,18 @@ try {
   ok('the edit is stored on the asset', await app.evaluate(() => window.__cros.state.assets.some(a => a.edit?.adjustments?.exposure !== 0)));
   await app.keyboard.press('Control+z');
   await settle(app, 1000);
-  ok('undo puts it back', /^Undid/.test(await toast(app)), await toast(app));
+  ok('undo reverses the last slider', await app.evaluate(() => {
+    const asset = window.__cros.state.assets.find(a => a.kind === 'image');
+    return asset?.edit?.adjustments?.denoise === 0;
+  }), await toast(app));
+  await app.evaluate(() => {
+    [...document.querySelectorAll('button')]
+      .find(button => button.textContent?.trim() === 'Reset adjustments')?.click();
+  });
+  await settle(app, 1000);
+  ok('reset restores the original rendered picture', beforeEdit === await fingerprint(app),
+    await app.evaluate(() => JSON.stringify(window.__cros.state.assets.find(a => a.kind === 'image')?.edit?.adjustments)));
+  await captureViews(app, 'photo-editing');
 
   step('Generate a photo');
   await openSidebar(app);
@@ -278,6 +317,7 @@ try {
   const editorial = await app.evaluate(() => [...document.querySelectorAll('.video-delivery-grid select')]
     .map(s => s.closest('label')?.querySelector('span')?.textContent).filter(Boolean));
   ok('the editorial controls are present', editorial.length >= 4, editorial.join(', '));
+  await captureViews(app, 'video-editing');
   const trims = await app.evaluate(async () => {
     const { resolveVideoTrim } = await import('./js/video-plan.js');
     const duration = window.__cros.state.assets.find(a => a.kind === 'video')?.duration || 2;
@@ -419,6 +459,7 @@ try {
     ok('render is refused with a plain reason while the engine is offline',
       await page.evaluate(() => document.querySelector('#render')?.disabled === true), await text('#engineState'));
     allErrors.push(...voice.errors);
+    await captureViews(page, 'voice-editing');
     await voice.context.close();
   }
 
