@@ -26,6 +26,7 @@ const SHELL = [
   'js/pricing.js', 'js/license.js', 'js/license-key.js',
   'js/billing-client.js', 'js/usage.js', 'js/admin.js', 'js/checkout-result.js',
   'js/video-engine.js', 'js/model-licence.js', 'js/region.js',
+  'js/room-sound.js', 'js/loudness.js', 'js/mixer.js',
   'assets/raw/worker.js'
 ];
 
